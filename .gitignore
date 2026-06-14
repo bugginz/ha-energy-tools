@@ -1,0 +1,10 @@
+# never commit runtime data / secrets
+**/data/
+*.bak
+*.bak.*
+.DS_Store
+__pycache__/
+*.pyc
+# local config files that may hold secrets (the add-on injects these at runtime)
+**/.config/
+options.json

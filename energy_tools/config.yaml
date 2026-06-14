@@ -1,0 +1,54 @@
+name: Energy Tools (foxctl + nemfuel)
+version: "1.3.1"
+slug: energy_tools
+description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
+arch:
+  - aarch64
+init: false
+homeassistant_api: true
+hassio_api: true
+ports:
+  "8770/tcp": 8770
+ports_description:
+  "8770/tcp": foxctl web UI
+webui: "http://[HOST]:8770"
+options:
+  foxess_token: ""
+  foxess_sn: ""
+  oe_key: ""
+  region: "NSW1"
+  mqtt_user: ""
+  mqtt_pass: ""
+  charge_start_price: 0.12
+  charge_stop_margin: 0.04
+  target_soc: 80
+  reserve_soc: 20
+  force_charge_power_kw: 10.5
+  solar_defer_kw: 0.5
+  defer_if_cheaper_by: 0.04
+  poll_seconds: 300
+  avoid_demand_window: true
+  allow_control: true
+  auto_apply: true
+  set_work_mode: true
+  set_force_charge: true
+schema:
+  foxess_token: str
+  foxess_sn: str
+  oe_key: str
+  region: str
+  mqtt_user: str
+  mqtt_pass: str
+  charge_start_price: float
+  charge_stop_margin: float
+  target_soc: int(0,100)
+  reserve_soc: int(0,100)
+  force_charge_power_kw: float
+  solar_defer_kw: float
+  defer_if_cheaper_by: float
+  poll_seconds: int(60,3600)
+  avoid_demand_window: bool
+  allow_control: bool
+  auto_apply: bool
+  set_work_mode: bool
+  set_force_charge: bool

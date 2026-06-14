@@ -1,0 +1,7 @@
+{
+  "api_key": "",
+  "network": "NEM",
+  "region": "NSW1",
+  "interval_seconds": 300,
+  "include_rooftop": false
+}

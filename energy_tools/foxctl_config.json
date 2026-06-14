@@ -1,0 +1,81 @@
+{
+  "foxess": {
+    "token": "",
+    "sn": ""
+  },
+  "ha": {
+    "url": "http://homeassistant.local:8123",
+    "token_file": "~/.config/sen66/ha_token",
+    "amber_price_entity": "sensor.home_general_price",
+    "amber_forecast_entity": "sensor.home_general_forecast",
+    "aemo_forecast_entity": "sensor.aemo_nem_nsw1_current_30min_forecast",
+    "amber_feedin_entity": "sensor.home_feed_in_price",
+    "soc_entity": "sensor.foxess_bat_soc",
+    "pv_entity": "sensor.foxess_pv_power",
+    "load_entity": "sensor.foxess_load_power"
+  },
+  "strategy": {
+    "cheap_price": 0.1,
+    "expensive_price": 0.35,
+    "target_soc": 80,
+    "reserve_soc": 20,
+    "precharge_lookahead_h": 3,
+    "force_charge_power_kw": 10.5,
+    "min_soc_on_grid": 10,
+    "aemo_expensive": 0.2,
+    "aemo_cheap": 0.05,
+    "bands": [
+      {
+        "name": "ludicrous",
+        "upto": 0.0
+      },
+      {
+        "name": "extremely_low",
+        "upto": 0.1
+      },
+      {
+        "name": "low",
+        "upto": 0.2
+      },
+      {
+        "name": "normal",
+        "upto": 0.35
+      },
+      {
+        "name": "high",
+        "upto": 1.0
+      },
+      {
+        "name": "spike",
+        "upto": null
+      }
+    ],
+    "charge_bands": [
+      "ludicrous",
+      "extremely_low"
+    ],
+    "avoid_bands": [
+      "high",
+      "spike"
+    ],
+    "charge_start_price": 0.12,
+    "defer_lookahead_h": 3,
+    "defer_if_cheaper_by": 0.04,
+    "force_charge_minutes": 120,
+    "charge_stop_margin": 0.04,
+    "solar_defer_kw": 0.5
+  },
+  "control": {
+    "allow_control": true,
+    "auto_apply": true,
+    "set_work_mode": true,
+    "set_force_charge": true,
+    "allow_actions": false
+  },
+  "poll_seconds": 300,
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8770
+  },
+  "actions": {}
+}
