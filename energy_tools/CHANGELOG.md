@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.2
+- Fix: webui must use [PORT:8770] placeholder (HA OS 18 supervisor rejected the literal port, detaching the add-on).
+
 ## 1.3.1
 - Clearer demand-window card label ("won’t grid-charge battery").
 

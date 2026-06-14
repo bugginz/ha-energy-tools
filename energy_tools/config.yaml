@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.3.1"
+version: "1.3.2"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -11,7 +11,7 @@ ports:
   "8770/tcp": 8770
 ports_description:
   "8770/tcp": foxctl web UI
-webui: "http://[HOST]:8770"
+webui: "http://[HOST]:[PORT:8770]"
 options:
   foxess_token: ""
   foxess_sn: ""
