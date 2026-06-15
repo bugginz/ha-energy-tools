@@ -694,16 +694,19 @@ def gather_and_decide(cfg: dict) -> dict:
     soc, soc_ts = ha.get_value_age(cfg["ha"].get("soc_entity"))
     pv = ha.get_num(cfg["ha"].get("pv_entity"))
     load = ha.get_num(cfg["ha"].get("load_entity"))
-    real = {}
-    if soc is None or pv is None:
+    # The foxess-ha integration can silently go stale (keeps old values). If the HA telemetry is
+    # missing OR older than telemetry_stale_s, pull authoritative values straight from FoxESS.
+    stale_s = cfg.get("telemetry_stale_s", 900)
+    ha_stale = (soc_ts is None) or ((time.time() - soc_ts) > stale_s)
+    real = {}; tsrc = "HA"
+    if soc is None or pv is None or ha_stale:
         try:
-            real = fox.real(["SoC", "pvPower"])
-            if soc is None:
-                soc = real.get("SoC")
-            if pv is None:
-                pv = real.get("pvPower")
+            real = fox.real(["SoC", "pvPower", "loadsPower"])
+            soc = real.get("SoC"); pv = real.get("pvPower"); load = real.get("loadsPower")
+            tsrc = "FoxESS"
         except Exception as e:
-            print(f"FoxESS telemetry fallback failed: {e}", file=sys.stderr)
+            print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
+            tsrc = "HA(stale)"
     soc = float(soc or 0)
     pv = float(pv or 0)
     load = float(load or 0)
@@ -729,6 +732,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "data_age_s": int(now_epoch - soc_ts) if soc_ts else None,
         "load_kw": load,
         "solar_surplus_kw": round(pv - load, 2),
+        "telemetry_source": tsrc,
         "price": prices.get("price"),
         "descriptor": prices.get("descriptor"),
         "aemo_price": prices.get("aemo_price"),
