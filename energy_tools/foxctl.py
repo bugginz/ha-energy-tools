@@ -81,6 +81,9 @@ DEFAULT_CONFIG = {
         "force_charge_power_kw": 10.5,  # 10500 W
         "solar_defer_kw": 0.5,      # if PV exceeds load by this much, let solar charge (skip grid)
         "avoid_demand_window": True,  # skip grid force-charge while Amber demand window is active
+        "horizon_charge": True,       # pre-charge in the cheapest forward window before a forecast peak
+        "horizon_hours": 18,          # how far ahead to scan the price forecast
+        "horizon_window_margin": 0.03,  # "near cheapest" = within this of the forward minimum
         "min_soc_on_grid": 10,
         # Price bands ($/kWh, retail). Ordered low->high; "upto" is the exclusive upper bound,
         # last band (upto null) is the catch-all. charge_bands grid-charge; avoid_bands hold battery.
@@ -105,6 +108,8 @@ DEFAULT_CONFIG = {
     # Edge-triggered shell commands run when ENTERING a band (needs control.allow_actions).
     # e.g. {"ludicrous": ["/home/robwil/bin/force-downloads.sh"], "spike": ["/home/robwil/bin/shed-load.sh"]}
     "actions": {},
+    # Advisory LLM review of each decision (Anthropic API) — never controls anything.
+    "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-4-5-20251001", "interval_min": 30},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -384,6 +389,18 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     solar_defer = strat.get("solar_defer_kw", 0.5)
     solar_covering = solar_surplus >= solar_defer
 
+    # Horizon view: cheapest / most-expensive price across the forward forecast window.
+    horizon_h = strat.get("horizon_hours", 18)
+    fwin = [p.get("price") for p in fc
+            if _parse_t(p.get("t") or "") and 0 < (_parse_t(p["t"]) - now).total_seconds() <= horizon_h * 3600
+            and p.get("price") is not None]
+    min_future_h = round(min(fwin), 3) if fwin else None
+    peak_future_h = round(max(fwin), 3) if fwin else None
+    win_margin = strat.get("horizon_window_margin", 0.03)
+    horizon_on = strat.get("horizon_charge", True)
+    peak_coming = peak_future_h is not None and peak_future_h >= exp
+    near_cheapest = (min_future_h is not None and price is not None and price <= min_future_h + win_margin)
+
     if price is None:
         reasons.append("No price available; defaulting to SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
@@ -419,6 +436,10 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     elif currently_charging and price < stop_p:
         reasons.append(f"Already charging and price {price:.3f} < stop {stop_p:.3f} (hysteresis) → keep charging.")
         action, force_charge = "FORCE_CHARGE", True
+    elif horizon_on and peak_coming and near_cheapest and not solar_covering and soc < target:
+        reasons.append(f"Forecast peak {peak_future_h:.2f} within {horizon_h}h and now {price:.3f} is near the cheapest "
+                       f"pre-peak window (min {min_future_h:.3f}+{win_margin:.2f}) → pre-charge in the cheap window now.")
+        action, force_charge = "FORCE_CHARGE", True
     elif peak_soon and not aemo_trough_soon and solar_covering:
         reasons.append(f"Peak within {look_h}h but solar surplus {solar_surplus:.1f}kW is charging → "
                        f"let the sun pre-charge. SelfUse.")
@@ -442,6 +463,8 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
         "target_mode": target_mode,
         "force_charge": force_charge,
         "band": band,
+        "min_future_h": min_future_h,
+        "peak_future_h": peak_future_h,
         "reason": " ".join(reasons),
     }
     if force_charge:
@@ -458,7 +481,61 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
 LAST: dict = {}
 LAST_LOCK = Lock()
 _WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every Nth cycle)
+_LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
+
+
+def _call_anthropic(api_key, model, snap):
+    rec = snap.get("recommendation", {})
+    ctx = {
+        "amber_price": snap.get("price"), "band": rec.get("band"), "aemo_price": snap.get("aemo_price"),
+        "soc_pct": snap.get("soc"), "solar_kw": snap.get("pv_kw"), "load_kw": snap.get("load_kw"),
+        "demand_window": snap.get("demand_window"),
+        "forecast_min_18h": rec.get("min_future_h"), "forecast_peak_18h": rec.get("peak_future_h"),
+        "next_forecast": snap.get("forecast_next"),
+        "controller_decision": {"action": rec.get("action"), "target_mode": rec.get("target_mode"),
+                                "force_charge": rec.get("force_charge"), "reason": rec.get("reason")},
+    }
+    system = ("You review an automated home solar-battery charging decision in the Australian NEM. The controller "
+              "grid-charges the battery when cheap (Amber retail $/kWh), avoids charging during demand windows, "
+              "lets solar charge when there's surplus, and pre-charges before forecast price peaks. Be concise, practical.")
+    user = ("State + the controller's decision (JSON):\n" + json.dumps(ctx) +
+            "\n\nIn 2-3 sentences: do you AGREE with the decision? If not, what would you do and why? "
+            "Begin your reply with exactly 'AGREE' or 'DISAGREE'.")
+    body = json.dumps({"model": model, "max_tokens": 250, "system": system,
+                       "messages": [{"role": "user", "content": user}]}).encode()
+    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        d = json.loads(r.read().decode())
+    text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text").strip()
+    return {"agree": text.upper().startswith("AGREE"), "text": text,
+            "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
+
+
+def maybe_llm_review(cfg, snap, force=False):
+    """Advisory LLM review of the decision. Never controls anything. Gated by interval +
+    force-charge transitions to keep cost trivial; cached verdict reused between calls."""
+    llm = cfg.get("llm", {})
+    if not llm.get("enabled") or not llm.get("api_key"):
+        return None
+    rec = snap.get("recommendation", {})
+    fc_now = bool(rec.get("force_charge"))
+    now = time.time()
+    due = (now - _LLM["last_ts"]) >= llm.get("interval_min", 30) * 60
+    transition = fc_now and not _LLM["last_fc"]
+    _LLM["last_fc"] = fc_now
+    if not (force or due or transition):
+        return _LLM["last"]
+    _LLM["last_ts"] = now
+    try:
+        v = _call_anthropic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"), snap)
+        log_event("llm", ("AGREE" if v["agree"] else "REVIEW") + ": " + v["text"][:200])
+    except Exception as e:
+        v = {"agree": None, "text": f"LLM review unavailable: {e}",
+             "ts": datetime.now().isoformat(timespec="seconds")}
+    _LLM["last"] = v
+    return v
 _BAND_STATE = {"band": None}   # for edge-triggered actions
 
 
@@ -697,6 +774,7 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
     if do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
     run_band_actions(cfg, snap)
+    snap["llm"] = maybe_llm_review(cfg, snap)
     append_log(snap)
     with LAST_LOCK:
         LAST.clear(); LAST.update(snap)
@@ -760,6 +838,13 @@ def render(snap: dict, cfg: dict) -> str:
         for p in fc)
     atable = f"<table><tr><th>time</th><th>Amber $/kWh</th><th>band</th></tr>{arows}</table>" if arows else "<small>none</small>"
     ctrl = cfg["control"]
+    llm = snap.get("llm")
+    if llm:
+        verdict = "✅ AGREE" if llm.get("agree") else ("🔍 REVIEW" if llm.get("agree") is False else "⚠️ n/a")
+        llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 LLM REVIEW ({llm.get("model","")} · {llm.get("ts","")})</small>'
+                    f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div></div>')
+    else:
+        llm_html = '<div class="card"><small>🤖 LLM review</small><div>off (enable + set API key in add-on options)</div></div>'
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta http-equiv=refresh content=60><title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl — {snap.get('ts','-')}</h1>
@@ -785,9 +870,11 @@ def render(snap: dict, cfg: dict) -> str:
  <div>{rec.get('reason','')}</div>
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
 </div>
+{llm_html}
 <h3>Make things happen</h3>
 <button onclick="post('/api/evaluate')">Evaluate now</button>
 <button onclick="post('/api/apply')">Apply recommendation</button>
+<button onclick="post('/api/review')">🤖 LLM review now</button>
 <button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
 <button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
 <div id=msg></div>
@@ -867,6 +954,15 @@ def make_handler(cfg):
                     msg = f"ERROR: {e}"
                 log_action(f"scheduler_off -> {msg}")
                 self._send(200, json.dumps({"scheduler_off": msg}, default=str), "application/json")
+            elif self.path.startswith("/api/review"):
+                with LAST_LOCK:
+                    snap = dict(LAST)
+                if not snap:
+                    snap = run_once(cfg, do_apply=False)
+                v = maybe_llm_review(cfg, snap, force=True)
+                with LAST_LOCK:
+                    LAST["llm"] = v
+                self._send(200, json.dumps(v or {"text": "LLM review disabled / no key"}, default=str), "application/json")
             else:
                 self._send(404, "not found")
     return H

@@ -28,11 +28,24 @@ if "poll_seconds" in opt:
     fc["poll_seconds"] = int(opt["poll_seconds"])
 if "avoid_demand_window" in opt:
     S["avoid_demand_window"] = bool(opt["avoid_demand_window"])
+if "horizon_charge" in opt:
+    S["horizon_charge"] = bool(opt["horizon_charge"])
+if "horizon_hours" in opt:
+    S["horizon_hours"] = int(opt["horizon_hours"])
+if "horizon_window_margin" in opt:
+    S["horizon_window_margin"] = float(opt["horizon_window_margin"])
 
 C = fc["control"]
 for k in ("allow_control", "auto_apply", "set_work_mode", "set_force_charge"):
     if k in opt:
         C[k] = bool(opt[k])
+
+# ---- LLM review (advisory) ----
+L = fc.setdefault("llm", {})
+L["enabled"] = bool(opt.get("llm_review", False))
+L["api_key"] = opt.get("anthropic_api_key", "")
+L["model"] = opt.get("llm_model", "claude-haiku-4-5-20251001")
+L["interval_min"] = int(opt.get("llm_interval_min", 30))
 
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
 
