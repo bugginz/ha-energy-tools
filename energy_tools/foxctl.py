@@ -33,7 +33,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
@@ -523,6 +523,30 @@ GOAL = ("Goal priority, strict order: (1) SPEND $0 — do not import from the gr
         "unavoidable, buy at the CHEAPEST point in the forecast horizon, never at a mediocre price now.")
 
 
+def _forecast_digest(fc, hours=18, step_min=30):
+    """Condense a fine-grained forecast into a compact forward view for the LLM:
+    a ~30-min-spaced series over `hours` plus the cheapest/most-expensive points + their times."""
+    now = datetime.now(timezone.utc)
+    pts = []
+    for p in fc:
+        t = _parse_t(p.get("t") or "")
+        if t and p.get("price") is not None:
+            dt = (t - now).total_seconds()
+            if 0 <= dt <= hours * 3600:
+                pts.append((dt, t, p["price"]))
+    if not pts:
+        return {"series": [], "cheapest": None, "most_expensive": None}
+    mn = min(pts, key=lambda x: x[2])
+    mx = max(pts, key=lambda x: x[2])
+    series, last = [], -1e9
+    for dt, t, pr in pts:
+        if dt - last >= step_min * 60 - 1:
+            series.append({"t": t.strftime("%H:%M"), "p": round(pr, 3)})
+            last = dt
+    lbl = lambda x: {"t": x[1].strftime("%H:%M"), "p": round(x[2], 3)}
+    return {"series": series, "cheapest": lbl(mn), "most_expensive": lbl(mx)}
+
+
 def _extract_json(text):
     s, e = text.find("{"), text.rfind("}")
     if s < 0 or e <= s:
@@ -796,8 +820,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "soc_pct": round(soc), "solar_kw": round(pv, 2), "load_kw": round(load, 2),
         "solar_surplus_kw": round(pv - load, 2), "demand_window": demand_window,
         "currently_charging": charging,
-        "amber_forecast": prices.get("forecast", [])[:12],
-        "aemo_forecast": prices.get("aemo_forecast", [])[:12],
+        "amber_forecast_18h": _forecast_digest(prices.get("forecast", []), 18, 30),
+        "aemo_forecast_18h": _forecast_digest(prices.get("aemo_forecast", []), 18, 60),
         "foundation": {**foundation, "reserve_soc": strat.get("reserve_soc")},
         "baseline": {"charge_start_price": strat.get("charge_start_price"), "target_soc": strat.get("target_soc")},
     }
@@ -831,6 +855,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "feedin": prices.get("feedin"),
         "forecast_next": prices.get("forecast", [])[:6],
         "aemo_forecast_next": prices.get("aemo_forecast", [])[:6],
+        "forecast_h": prices.get("forecast", []),
+        "aemo_forecast_h": prices.get("aemo_forecast", []),
         "soc": soc,
         "pv_kw": pv,
         "real": real,
@@ -974,6 +1000,91 @@ setInterval(tick,1000);tick();
 refreshLog();refreshEvents();"""
 
 
+def render_forecast_svg(snap: dict) -> str:
+    """SVG of the 18h price horizon the controller reasons over: Amber + AEMO curves, the
+    LLM-set charge-start price, the foundation ceiling, shaded 'would-charge' windows, and the
+    cheapest/peak markers. Makes it visible whether the future schedule is actually considered."""
+    dyn = snap.get("dynamic") or {}
+    now = datetime.now(timezone.utc)
+    amber, aemo = [], []
+    for p in snap.get("forecast_h") or []:
+        t = _parse_t(p.get("t") or "")
+        if t and p.get("price") is not None:
+            h = (t - now).total_seconds() / 3600.0
+            if -0.3 <= h <= 18:
+                amber.append((h, p["price"], t))
+    for p in snap.get("aemo_forecast_h") or []:
+        t = _parse_t(p.get("t") or "")
+        if t and p.get("price") is not None:
+            h = (t - now).total_seconds() / 3600.0
+            if -0.3 <= h <= 18:
+                aemo.append((h, p["price"]))
+    if not amber:
+        return "<small>no forecast to chart yet</small>"
+    W, H, padL, padR, padT, padB = 820, 250, 46, 14, 14, 30
+    iw, ih = W - padL - padR, H - padT - padB
+    csp = dyn.get("charge_start_price") or 0.0
+    ceil = dyn.get("price_ceiling") or 0.20
+    allp = [pr for _, pr, _ in amber] + [pr for _, pr in aemo] + [ceil, csp]
+    ymax = max(allp) * 1.12 or 0.3
+    ymin = min(min(allp), 0.0)
+    xmin = min(h for h, _, _ in amber)
+    xmax = max(h for h, _, _ in amber) or 1
+    X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
+    Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
+    out = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:{W}px;font:11px system-ui">']
+    # shaded "would grid-charge" bands (Amber price <= charge-start price)
+    seg_start = None
+    pts_ext = amber + [(amber[-1][0], 1e9, None)]
+    for i, (h, pr, _) in enumerate(pts_ext):
+        below = pr <= csp
+        if below and seg_start is None:
+            seg_start = h
+        elif not below and seg_start is not None:
+            out.append(f'<rect x="{X(seg_start):.1f}" y="{padT}" width="{max(1,X(h)-X(seg_start)):.1f}" '
+                       f'height="{ih}" fill="#2ecc71" opacity="0.16"/>')
+            seg_start = None
+    # threshold lines
+    out.append(f'<line x1="{padL}" y1="{Y(ceil):.1f}" x2="{W-padR}" y2="{Y(ceil):.1f}" stroke="#c0392b" '
+               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{W-padR}" y="{Y(ceil)-3:.1f}" '
+               f'text-anchor="end" fill="#c0392b">ceiling ${ceil:.2f}</text>')
+    out.append(f'<line x1="{padL}" y1="{Y(csp):.1f}" x2="{W-padR}" y2="{Y(csp):.1f}" stroke="#1a9e4b" '
+               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{W-padR}" y="{Y(csp)-3:.1f}" '
+               f'text-anchor="end" fill="#1a9e4b">charge ≤ ${csp:.2f}</text>')
+    # y axis ticks
+    for k in range(5):
+        yv = ymin + (ymax - ymin) * k / 4
+        out.append(f'<text x="{padL-6}" y="{Y(yv)+3:.1f}" text-anchor="end" fill="#999">${yv:.2f}</text>'
+                   f'<line x1="{padL}" y1="{Y(yv):.1f}" x2="{W-padR}" y2="{Y(yv):.1f}" stroke="#8884" stroke-width="0.5"/>')
+    # x axis ticks every 3h
+    for hh in range(0, 19, 3):
+        if xmin <= hh <= xmax:
+            lt = (now + timedelta(hours=hh)).astimezone()
+            out.append(f'<line x1="{X(hh):.1f}" y1="{padT}" x2="{X(hh):.1f}" y2="{H-padB}" stroke="#8883" stroke-width="0.5"/>'
+                       f'<text x="{X(hh):.1f}" y="{H-padB+14}" text-anchor="middle" fill="#999">+{hh}h</text>')
+    # now marker
+    out.append(f'<line x1="{X(0):.1f}" y1="{padT}" x2="{X(0):.1f}" y2="{H-padB}" stroke="#3498db" stroke-width="1.2"/>'
+               f'<text x="{X(0)+3:.1f}" y="{padT+10}" fill="#3498db">now</text>')
+    # AEMO line (wholesale)
+    if aemo:
+        pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr in aemo)
+        out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.3" stroke-dasharray="3 3" opacity="0.8"/>')
+    # Amber line (retail) — what the policy charges on
+    pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr, _ in amber)
+    out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2"/>')
+    # cheapest / peak markers
+    cheapest = min(amber, key=lambda x: x[1]); peak = max(amber, key=lambda x: x[1])
+    for (h, pr, _), col, txt in ((cheapest, "#1a9e4b", f"min ${cheapest[1]:.2f}"),
+                                 (peak, "#c0392b", f"peak ${peak[1]:.2f}")):
+        out.append(f'<circle cx="{X(h):.1f}" cy="{Y(pr):.1f}" r="3.5" fill="{col}"/>'
+                   f'<text x="{X(h):.1f}" y="{Y(pr)-6:.1f}" text-anchor="middle" fill="{col}">{txt}</text>')
+    out.append("</svg>")
+    legend = ('<small>— Amber retail (charges on this) · '
+              '<span style="color:#e67e22">- - AEMO wholesale</span> · '
+              '<span style="color:#2ecc71">green = would grid-charge</span></small>')
+    return "".join(out) + legend
+
+
 def render(snap: dict, cfg: dict) -> str:
     rec = snap.get("recommendation", {})
     band = rec.get("band", "unknown")
@@ -1024,6 +1135,8 @@ def render(snap: dict, cfg: dict) -> str:
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
 </div>
 {llm_html}
+<h3>Forecast horizon <small>(what the policy reasons over — 18h ahead)</small></h3>
+<div class=card>{render_forecast_svg(snap)}</div>
 <h3>Make things happen</h3>
 <button onclick="post('/api/evaluate')">Evaluate now</button>
 <button onclick="post('/api/apply')">Apply recommendation</button>

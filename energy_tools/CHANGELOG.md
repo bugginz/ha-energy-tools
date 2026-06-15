@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1
+- **The LLM now sees the whole 18h forecast.** It was only handed 1h of Amber (`forecast[:12]`); it now gets a ~30-min-spaced digest of the next 18h with the cheapest/peak points + times, so it can actually plan against tonight's trough and the evening peak instead of extrapolating.
+- **Forecast-horizon chart** on the web UI: an SVG of the 18h Amber + AEMO curves with the LLM's charge-start price, the foundation ceiling, shaded "would grid-charge" windows, the now marker, and the cheapest/peak points — so you can see what the policy is reasoning over.
+
 ## 1.6.0
 - **Two-tier policy.** A deterministic **foundation** (hard guardrails you must override yourself): absolute price ceiling (`price_ceiling`, never grid-charge above it), SoC floor/cap (`reserve_soc`/`max_soc`), stale-telemetry hold, and "spend $0, else cheapest point only". On top, a **dynamic** layer where the LLM tunes two knobs each interval — `charge_start_price` and `target_soc` — always clamped to the foundation. Toggle with `dynamic_policy`.
 - The LLM is now given the goal (spend $0 → capture all solar → cheapest import) and site facts: no feed-in (surplus solar is wasted, so store it / leave headroom only when real solar is coming), EA116 flat network with no demand charge, and the season, so it tops up cheaply in low-solar winter and leaves headroom in high-solar summer.
