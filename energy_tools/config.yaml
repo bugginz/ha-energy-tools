@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.5.1"
+version: "1.5.2"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -44,6 +44,7 @@ options:
   notify_on_llm_disagree: true
   notify_on_spike: true
   notify_on_ludicrous: true
+  notify_on_stale: true
 schema:
   foxess_token: str
   foxess_sn: str
@@ -76,3 +77,4 @@ schema:
   notify_on_llm_disagree: bool
   notify_on_spike: bool
   notify_on_ludicrous: bool
+  notify_on_stale: bool

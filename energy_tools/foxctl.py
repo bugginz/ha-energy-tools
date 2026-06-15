@@ -488,23 +488,43 @@ _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + ca
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
-def _call_anthropic(api_key, model, snap):
+def _call_anthropic(api_key, model, snap, strat=None):
     rec = snap.get("recommendation", {})
+    strat = strat or {}
+    start_p = float(strat.get("charge_start_price", 0.12))
+    policy = {
+        "grid_charge_at_or_below": start_p,
+        "stop_charge_above": round(start_p + float(strat.get("charge_stop_margin", 0.04)), 3),
+        "target_soc_pct": strat.get("target_soc"),
+        "reserve_soc_pct": strat.get("reserve_soc"),
+        "force_charge_power_kw": strat.get("force_charge_power_kw"),
+        "skip_grid_charge_if_solar_surplus_kw_ge": strat.get("solar_defer_kw"),
+        "defer_if_forecast_cheaper_by": strat.get("defer_if_cheaper_by"),
+        "avoid_grid_charge_in_demand_window": strat.get("avoid_demand_window"),
+        "horizon_precharge_enabled": strat.get("horizon_charge"),
+        "horizon_hours": strat.get("horizon_hours"),
+        "precharge_only_if_forecast_peak_at_or_above": 0.35,
+    }
     ctx = {
         "amber_price": snap.get("price"), "band": rec.get("band"), "aemo_price": snap.get("aemo_price"),
         "soc_pct": snap.get("soc"), "solar_kw": snap.get("pv_kw"), "load_kw": snap.get("load_kw"),
         "demand_window": snap.get("demand_window"),
         "forecast_min_18h": rec.get("min_future_h"), "forecast_peak_18h": rec.get("peak_future_h"),
         "next_forecast": snap.get("forecast_next"),
+        "telemetry_source": snap.get("telemetry_source"),
+        "controller_policy": policy,
         "controller_decision": {"action": rec.get("action"), "target_mode": rec.get("target_mode"),
                                 "force_charge": rec.get("force_charge"), "reason": rec.get("reason")},
     }
-    system = ("You review an automated home solar-battery charging decision in the Australian NEM. The controller "
-              "grid-charges the battery when cheap (Amber retail $/kWh), avoids charging during demand windows, "
-              "lets solar charge when there's surplus, and pre-charges before forecast price peaks. Be concise, practical.")
-    user = ("State + the controller's decision (JSON):\n" + json.dumps(ctx) +
-            "\n\nIn 2-3 sentences: do you AGREE with the decision? If not, what would you do and why? "
-            "Begin your reply with exactly 'AGREE' or 'DISAGREE'.")
+    system = ("You review an automated home solar-battery charging decision in the Australian NEM. The controller's "
+              "actual policy and thresholds are given in 'controller_policy' and its full reasoning in "
+              "'controller_decision.reason'. Critique the decision AGAINST that stated policy — do not invent rules it "
+              "doesn't have or fault it for behaviour the policy already covers. Be concise and practical.")
+    user = ("State, the controller's policy, and its decision (JSON):\n" + json.dumps(ctx) +
+            "\n\nRate the decision and explain in 2-3 sentences. Begin your reply with exactly one of:\n"
+            "'AGREE' — decision is correct given the policy;\n"
+            "'REFINE' — decision is acceptable but a threshold/tweak would improve it (say which);\n"
+            "'DISAGREE' — decision is wrong given the policy or current state (say what you'd do instead).")
     body = json.dumps({"model": model, "max_tokens": 250, "system": system,
                        "messages": [{"role": "user", "content": user}]}).encode()
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
@@ -512,7 +532,9 @@ def _call_anthropic(api_key, model, snap):
     with urllib.request.urlopen(req, timeout=30) as r:
         d = json.loads(r.read().decode())
     text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text").strip()
-    return {"agree": text.upper().startswith("AGREE"), "text": text,
+    up = text.upper()
+    rating = "DISAGREE" if up.startswith("DISAGREE") else ("REFINE" if up.startswith("REFINE") else "AGREE")
+    return {"rating": rating, "agree": rating == "AGREE", "text": text,
             "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
 
 
@@ -532,16 +554,17 @@ def maybe_llm_review(cfg, snap, force=False):
         return _LLM["last"]
     _LLM["last_ts"] = now
     try:
-        v = _call_anthropic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"), snap)
-        log_event("llm", ("AGREE" if v["agree"] else "REVIEW") + ": " + v["text"][:200])
+        v = _call_anthropic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"),
+                            snap, cfg.get("strategy", {}))
+        log_event("llm", v.get("rating", "?") + ": " + v["text"][:200])
     except Exception as e:
-        v = {"agree": None, "text": f"LLM review unavailable: {e}",
+        v = {"agree": None, "rating": None, "text": f"LLM review unavailable: {e}",
              "ts": datetime.now().isoformat(timespec="seconds")}
     _LLM["last"] = v
     return v
 
 
-_NOTIFY = {"last_band": None, "last_llm_ts": None}
+_NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False}
 
 
 def ha_notify(cfg, title, message):
@@ -572,9 +595,14 @@ def maybe_notify(cfg, snap):
         out.append(("⚡ Price spike", f"Amber ${snap.get('price')}/kWh — consider cutting usage / lean on battery."))
     if nc.get("on_ludicrous", True) and band == "ludicrous" and _NOTIFY["last_band"] != "ludicrous":
         out.append(("💸 Negative price!", f"Amber ${snap.get('price')}/kWh — great time to charge the car / run appliances."))
-    if nc.get("on_llm_disagree", True) and llm.get("agree") is False and llm.get("ts") != _NOTIFY["last_llm_ts"]:
+    if nc.get("on_llm_disagree", True) and llm.get("rating") == "DISAGREE" and llm.get("ts") != _NOTIFY["last_llm_ts"]:
         _NOTIFY["last_llm_ts"] = llm.get("ts")
         out.append(("🤖 foxctl review", "Claude disagrees with the plan: " + llm.get("text", "")[:150]))
+    stale = snap.get("telemetry_source") == "HA(stale)"
+    if nc.get("on_stale", True) and stale and not _NOTIFY["last_stale"]:
+        out.append(("⚠️ foxctl telemetry stale",
+                    "HA sensors frozen and FoxESS fallback failed — control on safety hold until data recovers."))
+    _NOTIFY["last_stale"] = stale
     _NOTIFY["last_band"] = band
     for t, m in out:
         ha_notify(cfg, t, m)
@@ -754,6 +782,10 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     rec = snap["recommendation"]
     if not ctrl.get("allow_control"):
         return "control disabled (control.allow_control=false) — not applying"
+    # Safety: never act on stale telemetry. tsrc="HA(stale)" means HA was stale AND the
+    # FoxESS fallback fetch failed, so SoC/PV may be wrong — refuse to write to the inverter.
+    if snap.get("telemetry_source") == "HA(stale)":
+        return "telemetry STALE (HA frozen + FoxESS fetch failed) — not applying (safety hold)"
     msgs = []
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     strat = cfg["strategy"]
@@ -889,7 +921,8 @@ def render(snap: dict, cfg: dict) -> str:
     ctrl = cfg["control"]
     llm = snap.get("llm")
     if llm:
-        verdict = "✅ AGREE" if llm.get("agree") else ("🔍 REVIEW" if llm.get("agree") is False else "⚠️ n/a")
+        verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",
+                   "DISAGREE": "🔍 DISAGREE"}.get(llm.get("rating"), "⚠️ n/a")
         llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 LLM REVIEW ({llm.get("model","")} · {llm.get("ts","")})</small>'
                     f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div></div>')
     else:
@@ -906,10 +939,10 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card style="{'border-color:#e67e22' if snap.get('demand_window') else ''}"><small>Demand window</small><div class=big>{'⚠️ ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'won’t grid-charge battery' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
- <div class=card><small>Data age / next update</small>
+ <div class=card style="{'background:#fff3e0;border-color:#e67e22' if snap.get('telemetry_source') != 'HA' else ''}"><small>Data age / source</small>
    <div class=big><span id=age>{snap.get('data_age_s') if snap.get('data_age_s') is not None else '–'}</span>s
    · <span id=countdown>–</span></div>
-   <small>synced to foxess 5-min refresh</small></div>
+   <small>{'⚠️ STALE — control on hold' if snap.get('telemetry_source')=='HA(stale)' else ('via FoxESS (HA stale)' if snap.get('telemetry_source')=='FoxESS' else 'via HA · foxess 5-min refresh')}</small></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ''}">
    <small>Force-charge</small><div class=big>{('⚡ ON' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ('sched on' if (snap.get('scheduler') or {}).get('enabled') else 'OFF'))}</div>
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>

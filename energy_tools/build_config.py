@@ -54,6 +54,7 @@ N["service"] = opt.get("notify_service", "notify.mobile_app_phoney")
 N["on_llm_disagree"] = bool(opt.get("notify_on_llm_disagree", True))
 N["on_spike"] = bool(opt.get("notify_on_spike", True))
 N["on_ludicrous"] = bool(opt.get("notify_on_ludicrous", True))
+N["on_stale"] = bool(opt.get("notify_on_stale", True))
 
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
 
