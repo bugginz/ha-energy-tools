@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.7.1
+- Forecast chart: **estimated solar overlay** (sunny times + intensity, half-sine scaled to forecast kWh, on a right kW axis), **real clock times** on the x-axis (was +Nh), Amber legend now **blue** to match the line, and a **wider page** (1280px) with a bigger chart.
+
 ## 1.7.0
 - **Forecast.Solar wired into the dynamic policy.** foxctl sums the per-plane `energy_production_*` sensors (remaining-today + tomorrow kWh) and feeds them to the LLM, so it leaves battery headroom when real solar is coming and only grid-charges overnight when tomorrow looks poor — replacing the coarse weather string. New solar-forecast card on the web UI. Entity lists in `foxctl_config.json` (`solar_fc_remaining_entities` / `solar_fc_tomorrow_entities`).
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -547,6 +548,34 @@ def _forecast_digest(fc, hours=18, step_min=30):
     return {"series": series, "cheapest": lbl(mn), "most_expensive": lbl(mx)}
 
 
+def _solar_bells(rise_iso, set_iso, kwh_tomorrow, kwh_remaining):
+    """Approximate solar power as a half-sine over daylight, scaled so the area = forecast kWh.
+    Returns bells (hours-from-now) for the chart: a 'sunny times / high solar' overlay."""
+    now = datetime.now(timezone.utc)
+    R = _parse_t(rise_iso) if rise_iso else None
+    S = _parse_t(set_iso) if set_iso else None
+    bells = []
+
+    def mk(start, end, kwh):
+        if not (start and end) or end <= start or not kwh:
+            return None
+        daylen = (end - start).total_seconds() / 3600.0
+        pmax = kwh * math.pi / (2 * daylen) if daylen > 0 else 0
+        return {"s": (start - now).total_seconds() / 3600.0,
+                "e": (end - now).total_seconds() / 3600.0,
+                "pmax": round(pmax, 2), "kwh": round(kwh, 1)}
+    if R and S:
+        if R < S:   # nighttime now → next daylight [R,S] is tomorrow
+            b = mk(R, S, kwh_tomorrow)
+            if b: bells.append(b)
+        else:       # daytime now → rest of today (to S) + tomorrow (from R, ~10h day)
+            b = mk(S - timedelta(hours=10), S, kwh_remaining)
+            if b: bells.append(b)
+            b = mk(R, R + timedelta(hours=10), kwh_tomorrow)
+            if b: bells.append(b)
+    return bells
+
+
 def _extract_json(text):
     s, e = text.find("{"), text.rfind("}")
     if s < 0 or e <= s:
@@ -820,6 +849,12 @@ def gather_and_decide(cfg: dict) -> dict:
         return round(tot, 2) if seen else None
     solar_remaining = _sum_ents(cfg["ha"].get("solar_fc_remaining_entities"))
     solar_tomorrow = _sum_ents(cfg["ha"].get("solar_fc_tomorrow_entities"))
+    try:
+        sa = ha._state("sun.sun")["attributes"]
+        sun_rise, sun_set = sa.get("next_rising"), sa.get("next_setting")
+    except Exception:
+        sun_rise = sun_set = None
+    solar_bells = _solar_bells(sun_rise, sun_set, solar_tomorrow, solar_remaining)
 
     strat = cfg["strategy"]
     foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90)}
@@ -852,6 +887,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "demand_window": demand_window,
         "weather": weather,
         "solar_forecast": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow},
+        "solar_bells": solar_bells,
         "llm": plan,
         "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
                     "target_soc": working.get("target_soc"),
@@ -972,8 +1008,8 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
 BAND_COLOR = {"ludicrous": "#7b2ff7", "extremely_low": "#0a8f3c", "low": "#3c9", "normal": "#888",
               "high": "#e67e22", "spike": "#c0392b", "unknown": "#aaa"}
 
-CSS = """body{font:15px system-ui;margin:2rem;max-width:860px}
-h1{font-size:1.3rem} .big{font-size:2rem;font-weight:600}
+CSS = """body{font:16px system-ui;margin:1.5rem auto;max-width:1280px;padding:0 1rem}
+h1{font-size:1.4rem} .big{font-size:2rem;font-weight:600}
 .row{display:flex;gap:1.2rem;flex-wrap:wrap;margin:1rem 0}
 .card{border:1px solid #ddd;border-radius:10px;padding:.8rem 1.1rem;min-width:130px}
 .rec{background:#f3f8ff;border-color:#9cf} .pill{color:#fff;padding:2px 9px;border-radius:20px;font-size:.8rem}
@@ -1035,7 +1071,8 @@ def render_forecast_svg(snap: dict) -> str:
                 aemo.append((h, p["price"]))
     if not amber:
         return "<small>no forecast to chart yet</small>"
-    W, H, padL, padR, padT, padB = 820, 250, 46, 14, 14, 30
+    tz = amber[0][2].tzinfo   # label the x-axis in the forecast's own (Sydney) time
+    W, H, padL, padR, padT, padB = 1180, 310, 50, 50, 16, 34
     iw, ih = W - padL - padR, H - padT - padB
     csp = dyn.get("charge_start_price") or 0.0
     ceil = dyn.get("price_ceiling") or 0.20
@@ -1044,13 +1081,33 @@ def render_forecast_svg(snap: dict) -> str:
     ymin = min(min(allp), 0.0)
     xmin = min(h for h, _, _ in amber)
     xmax = max(h for h, _, _ in amber) or 1
+    bells = snap.get("solar_bells") or []
+    skw = max([b["pmax"] for b in bells] + [1.0]) * 1.15   # right-axis solar scale (kW)
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
-    out = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:{W}px;font:11px system-ui">']
+    SY = lambda kw: padT + ih * (1 - kw / skw)   # solar power → y (right axis)
+    out = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:{W}px;font:12px system-ui">']
+    # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis
+    for b in bells:
+        s, e = max(b["s"], xmin), min(b["e"], xmax)
+        if e <= s or b["pmax"] <= 0:
+            continue
+        steps = 40
+        pts = [f"{X(s):.1f},{SY(0):.1f}"]
+        for k in range(steps + 1):
+            h = s + (e - s) * k / steps
+            frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
+            kw = b["pmax"] * math.sin(math.pi * min(max(frac, 0), 1))
+            pts.append(f"{X(h):.1f},{SY(kw):.1f}")
+        pts.append(f"{X(e):.1f},{SY(0):.1f}")
+        out.append(f'<polygon points="{" ".join(pts)}" fill="#f5c518" opacity="0.22"/>')
+        hpk = b["s"] + (b["e"] - b["s"]) / 2
+        if xmin <= hpk <= xmax:
+            out.append(f'<text x="{X(hpk):.1f}" y="{SY(b["pmax"])-4:.1f}" text-anchor="middle" '
+                       f'fill="#b8860b">☀ {b["kwh"]}kWh (~{b["pmax"]}kW)</text>')
     # shaded "would grid-charge" bands (Amber price <= charge-start price)
     seg_start = None
-    pts_ext = amber + [(amber[-1][0], 1e9, None)]
-    for i, (h, pr, _) in enumerate(pts_ext):
+    for h, pr, _ in amber + [(amber[-1][0], 1e9, None)]:
         below = pr <= csp
         if below and seg_start is None:
             seg_start = h
@@ -1060,42 +1117,42 @@ def render_forecast_svg(snap: dict) -> str:
             seg_start = None
     # threshold lines
     out.append(f'<line x1="{padL}" y1="{Y(ceil):.1f}" x2="{W-padR}" y2="{Y(ceil):.1f}" stroke="#c0392b" '
-               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{W-padR}" y="{Y(ceil)-3:.1f}" '
-               f'text-anchor="end" fill="#c0392b">ceiling ${ceil:.2f}</text>')
+               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{padL+3}" y="{Y(ceil)-3:.1f}" '
+               f'fill="#c0392b">ceiling ${ceil:.2f}</text>')
     out.append(f'<line x1="{padL}" y1="{Y(csp):.1f}" x2="{W-padR}" y2="{Y(csp):.1f}" stroke="#1a9e4b" '
-               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{W-padR}" y="{Y(csp)-3:.1f}" '
-               f'text-anchor="end" fill="#1a9e4b">charge ≤ ${csp:.2f}</text>')
-    # y axis ticks
+               f'stroke-dasharray="5 4" stroke-width="1"/><text x="{padL+3}" y="{Y(csp)-3:.1f}" '
+               f'fill="#1a9e4b">charge ≤ ${csp:.2f}</text>')
+    # left y axis ($) + right y axis (kW solar)
     for k in range(5):
         yv = ymin + (ymax - ymin) * k / 4
-        out.append(f'<text x="{padL-6}" y="{Y(yv)+3:.1f}" text-anchor="end" fill="#999">${yv:.2f}</text>'
+        out.append(f'<text x="{padL-6}" y="{Y(yv)+4:.1f}" text-anchor="end" fill="#999">${yv:.2f}</text>'
                    f'<line x1="{padL}" y1="{Y(yv):.1f}" x2="{W-padR}" y2="{Y(yv):.1f}" stroke="#8884" stroke-width="0.5"/>')
-    # x axis ticks every 3h
+        kv = skw * k / 4
+        out.append(f'<text x="{W-padR+6}" y="{SY(kv)+4:.1f}" text-anchor="start" fill="#b8860b">{kv:.1f}kW</text>')
+    # x axis ticks every 3h — REAL clock times
     for hh in range(0, 19, 3):
         if xmin <= hh <= xmax:
-            lt = (now + timedelta(hours=hh)).astimezone()
+            lab = (now + timedelta(hours=hh)).astimezone(tz).strftime("%H:%M")
             out.append(f'<line x1="{X(hh):.1f}" y1="{padT}" x2="{X(hh):.1f}" y2="{H-padB}" stroke="#8883" stroke-width="0.5"/>'
-                       f'<text x="{X(hh):.1f}" y="{H-padB+14}" text-anchor="middle" fill="#999">+{hh}h</text>')
+                       f'<text x="{X(hh):.1f}" y="{H-padB+16}" text-anchor="middle" fill="#999">{lab}</text>')
     # now marker
     out.append(f'<line x1="{X(0):.1f}" y1="{padT}" x2="{X(0):.1f}" y2="{H-padB}" stroke="#3498db" stroke-width="1.2"/>'
-               f'<text x="{X(0)+3:.1f}" y="{padT+10}" fill="#3498db">now</text>')
-    # AEMO line (wholesale)
+               f'<text x="{X(0)+3:.1f}" y="{padT+11}" fill="#3498db">now</text>')
     if aemo:
         pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr in aemo)
-        out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.3" stroke-dasharray="3 3" opacity="0.8"/>')
-    # Amber line (retail) — what the policy charges on
+        out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>')
     pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr, _ in amber)
-    out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2"/>')
-    # cheapest / peak markers
+    out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2.2"/>')
     cheapest = min(amber, key=lambda x: x[1]); peak = max(amber, key=lambda x: x[1])
     for (h, pr, _), col, txt in ((cheapest, "#1a9e4b", f"min ${cheapest[1]:.2f}"),
                                  (peak, "#c0392b", f"peak ${peak[1]:.2f}")):
         out.append(f'<circle cx="{X(h):.1f}" cy="{Y(pr):.1f}" r="3.5" fill="{col}"/>'
                    f'<text x="{X(h):.1f}" y="{Y(pr)-6:.1f}" text-anchor="middle" fill="{col}">{txt}</text>')
     out.append("</svg>")
-    legend = ('<small>— Amber retail (charges on this) · '
+    legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
-              '<span style="color:#2ecc71">green = would grid-charge</span></small>')
+              '<span style="color:#b8860b">▮ est. solar (right kW axis)</span> · '
+              '<span style="color:#2ecc71">▮ would grid-charge</span></small>')
     return "".join(out) + legend
 
 
