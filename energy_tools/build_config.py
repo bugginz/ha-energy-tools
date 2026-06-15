@@ -47,6 +47,14 @@ L["api_key"] = opt.get("anthropic_api_key", "")
 L["model"] = opt.get("llm_model", "claude-haiku-4-5-20251001")
 L["interval_min"] = int(opt.get("llm_interval_min", 30))
 
+# ---- notifications ----
+N = fc.setdefault("notify", {})
+N["enabled"] = bool(opt.get("notify_enabled", False))
+N["service"] = opt.get("notify_service", "notify.mobile_app_phoney")
+N["on_llm_disagree"] = bool(opt.get("notify_on_llm_disagree", True))
+N["on_spike"] = bool(opt.get("notify_on_spike", True))
+N["on_ludicrous"] = bool(opt.get("notify_on_ludicrous", True))
+
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
 
 # ---- nemfuel ----

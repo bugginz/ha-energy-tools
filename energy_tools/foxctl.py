@@ -110,6 +110,9 @@ DEFAULT_CONFIG = {
     "actions": {},
     # Advisory LLM review of each decision (Anthropic API) — never controls anything.
     "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-4-5-20251001", "interval_min": 30},
+    # Push notifications when a decision is worth a human look (via HA notify service).
+    "notify": {"enabled": False, "service": "notify.mobile_app_phoney",
+               "on_llm_disagree": True, "on_spike": True, "on_ludicrous": True},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -536,6 +539,47 @@ def maybe_llm_review(cfg, snap, force=False):
              "ts": datetime.now().isoformat(timespec="seconds")}
     _LLM["last"] = v
     return v
+
+
+_NOTIFY = {"last_band": None, "last_llm_ts": None}
+
+
+def ha_notify(cfg, title, message):
+    try:
+        url = cfg["ha"]["url"].rstrip("/")
+        token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+        svc = cfg.get("notify", {}).get("service", "notify.mobile_app_phoney")
+        name = svc.split(".", 1)[1] if "." in svc else svc
+        body = json.dumps({"title": title, "message": message}).encode()
+        req = urllib.request.Request(f"{url}/api/services/notify/{name}", data=body, method="POST",
+            headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=15).read()
+        log_event("notify", f"{title}: {message[:120]}")
+    except Exception as e:
+        print(f"notify failed: {e}", file=sys.stderr)
+
+
+def maybe_notify(cfg, snap):
+    """Ping the phone when a decision is worth a human look. Edge-triggered, de-duped."""
+    nc = cfg.get("notify", {})
+    if not nc.get("enabled"):
+        return
+    rec = snap.get("recommendation", {})
+    band = rec.get("band")
+    llm = snap.get("llm") or {}
+    out = []
+    if nc.get("on_spike", True) and band == "spike" and _NOTIFY["last_band"] != "spike":
+        out.append(("⚡ Price spike", f"Amber ${snap.get('price')}/kWh — consider cutting usage / lean on battery."))
+    if nc.get("on_ludicrous", True) and band == "ludicrous" and _NOTIFY["last_band"] != "ludicrous":
+        out.append(("💸 Negative price!", f"Amber ${snap.get('price')}/kWh — great time to charge the car / run appliances."))
+    if nc.get("on_llm_disagree", True) and llm.get("agree") is False and llm.get("ts") != _NOTIFY["last_llm_ts"]:
+        _NOTIFY["last_llm_ts"] = llm.get("ts")
+        out.append(("🤖 foxctl review", "Claude disagrees with the plan: " + llm.get("text", "")[:150]))
+    _NOTIFY["last_band"] = band
+    for t, m in out:
+        ha_notify(cfg, t, m)
+
+
 _BAND_STATE = {"band": None}   # for edge-triggered actions
 
 
@@ -775,6 +819,7 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
         snap["applied"] = apply_recommendation(cfg, snap)
     run_band_actions(cfg, snap)
     snap["llm"] = maybe_llm_review(cfg, snap)
+    maybe_notify(cfg, snap)
     append_log(snap)
     with LAST_LOCK:
         LAST.clear(); LAST.update(snap)
