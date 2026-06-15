@@ -352,7 +352,11 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     start_p = strat.get("charge_start_price", cheap)   # begin charging at/below this
     stop_p = start_p + strat.get("charge_stop_margin", 0.05)  # keep charging until price > start + margin
     aemo_exp, aemo_cheap = strat.get("aemo_expensive", 0.20), strat.get("aemo_cheap", 0.05)
-    target, reserve = strat["target_soc"], strat["reserve_soc"]
+    reserve = strat["reserve_soc"]
+    # FOUNDATION: hard SoC cap — never charge above max_soc, whatever the dynamic layer asks.
+    max_soc = strat.get("max_soc", 90)
+    target = min(strat["target_soc"], max_soc)
+    ceiling = strat.get("price_ceiling", 0.20)   # FOUNDATION: never grid-charge above this $
     now = datetime.now(timezone.utc)
     look_h = strat.get("precharge_lookahead_h", 3)
 
@@ -458,6 +462,13 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
         reasons.append(f"Price {price:.3f} [{why}] → SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
 
+    # FOUNDATION guardrail: never grid-charge above the absolute price ceiling (ludicrous/negative
+    # is free money and exempt). Vetoes anything the dynamic layer or a branch above proposed.
+    if force_charge and band != "ludicrous" and price is not None and price > ceiling:
+        force_charge = False
+        action, target_mode = "SET_MODE", "SelfUse"
+        reasons.append(f"FOUNDATION: price {price:.3f} > ceiling {ceiling:.3f} → refuse grid-charge. SelfUse.")
+
     if soc <= reserve:
         reasons.append(f"SoC {soc:.0f}% at/below reserve {reserve}%.")
 
@@ -488,77 +499,102 @@ _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + ca
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
-def _call_anthropic(api_key, model, snap, strat=None):
-    rec = snap.get("recommendation", {})
-    strat = strat or {}
-    start_p = float(strat.get("charge_start_price", 0.12))
-    policy = {
-        "grid_charge_at_or_below": start_p,
-        "stop_charge_above": round(start_p + float(strat.get("charge_stop_margin", 0.04)), 3),
-        "target_soc_pct": strat.get("target_soc"),
-        "reserve_soc_pct": strat.get("reserve_soc"),
-        "force_charge_power_kw": strat.get("force_charge_power_kw"),
-        "skip_grid_charge_if_solar_surplus_kw_ge": strat.get("solar_defer_kw"),
-        "defer_if_forecast_cheaper_by": strat.get("defer_if_cheaper_by"),
-        "avoid_grid_charge_in_demand_window": strat.get("avoid_demand_window"),
-        "horizon_precharge_enabled": strat.get("horizon_charge"),
-        "horizon_hours": strat.get("horizon_hours"),
-        "precharge_only_if_forecast_peak_at_or_above": 0.35,
-    }
-    ctx = {
-        "amber_price": snap.get("price"), "band": rec.get("band"), "aemo_price": snap.get("aemo_price"),
-        "soc_pct": snap.get("soc"), "solar_kw": snap.get("pv_kw"), "load_kw": snap.get("load_kw"),
-        "demand_window": snap.get("demand_window"),
-        "forecast_min_18h": rec.get("min_future_h"), "forecast_peak_18h": rec.get("peak_future_h"),
-        "next_forecast": snap.get("forecast_next"),
-        "telemetry_source": snap.get("telemetry_source"),
-        "controller_policy": policy,
-        "controller_decision": {"action": rec.get("action"), "target_mode": rec.get("target_mode"),
-                                "force_charge": rec.get("force_charge"), "reason": rec.get("reason")},
-    }
-    system = ("You review an automated home solar-battery charging decision in the Australian NEM. The controller's "
-              "actual policy and thresholds are given in 'controller_policy' and its full reasoning in "
-              "'controller_decision.reason'. Critique the decision AGAINST that stated policy — do not invent rules it "
-              "doesn't have or fault it for behaviour the policy already covers. Be concise and practical.")
-    user = ("State, the controller's policy, and its decision (JSON):\n" + json.dumps(ctx) +
-            "\n\nRate the decision and explain in 2-3 sentences. Begin your reply with exactly one of:\n"
-            "'AGREE' — decision is correct given the policy;\n"
-            "'REFINE' — decision is acceptable but a threshold/tweak would improve it (say which);\n"
-            "'DISAGREE' — decision is wrong given the policy or current state (say what you'd do instead).")
-    body = json.dumps({"model": model, "max_tokens": 250, "system": system,
+# ---- DYNAMIC POLICY: the LLM tunes two knobs within the FOUNDATION guardrails ----
+# The foundation (deterministic, in decide()) is the part you must override yourself: an absolute
+# price ceiling, the SoC floor/cap, the stale-telemetry hold, and "cheapest point only". The LLM
+# only nudges charge_start_price (0..ceiling) and target_soc (reserve+10..max_soc) each interval,
+# then deterministic code clamps and executes. It can optimise; it can't break the guardrails.
+
+# Site facts the model must reason with (NSW). Update these if the meter/plan changes.
+SITE_FACTS = {
+    "network": "Essential Energy EA116 ~flat ~2c/kWh network (NO kW demand charge) — "
+               "the Amber 'demand window' is therefore NOT a cost risk; charge in it when cheap.",
+    "feed_in": "Meter is NOT configured for feed-in/export — ANY solar above current household use "
+               "is WASTED (no credit). So storing/self-consuming solar is pure savings, and exporting "
+               "earns nothing. Leave battery headroom for solar ONLY when meaningful solar is expected.",
+    "season_note": "Winter / low generation right now: little solar to capture, so topping the battery "
+                   "up from the grid at genuinely cheap prices to bridge to a peak is reasonable. In "
+                   "summer/high-solar, keep charge_start_price near 0 and leave headroom for free solar.",
+}
+
+GOAL = ("Goal priority, strict order: (1) SPEND $0 — do not import from the grid to charge unless it "
+        "avoids a worse outcome; (2) CAPTURE ALL SOLAR — there is no feed-in, surplus solar is wasted, "
+        "so prefer to store it and leave headroom when real solar is coming; (3) if grid import is "
+        "unavoidable, buy at the CHEAPEST point in the forecast horizon, never at a mediocre price now.")
+
+
+def _extract_json(text):
+    s, e = text.find("{"), text.rfind("}")
+    if s < 0 or e <= s:
+        raise ValueError("no JSON object in reply")
+    return json.loads(text[s:e + 1])
+
+
+def _llm_dynamic(api_key, model, ctx):
+    """Ask the LLM for the two dynamic knobs. Returns {params, rating, text, ts, model}."""
+    system = ("You are the DYNAMIC POLICY layer of an automated home solar-battery controller in the "
+              "Australian NEM (NSW). " + GOAL + " You set two knobs the deterministic controller will "
+              "use: charge_start_price ($/kWh at/below which it grid-charges) and target_soc (%). Stay "
+              "within the foundation guardrails in the context (your values are hard-clamped anyway). "
+              "Default charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing. "
+              "Reply with ONLY a JSON object: "
+              '{"charge_start_price": <num>, "target_soc": <int>, '
+              '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences"}. '
+              "rating = how much your knobs differ from the current baseline (AGREE=same, REFINE=minor, "
+              "DISAGREE=material change worth a human glance).")
+    user = "Context (JSON):\n" + json.dumps(ctx)
+    body = json.dumps({"model": model, "max_tokens": 300, "system": system,
                        "messages": [{"role": "user", "content": user}]}).encode()
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         d = json.loads(r.read().decode())
     text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text").strip()
-    up = text.upper()
-    rating = "DISAGREE" if up.startswith("DISAGREE") else ("REFINE" if up.startswith("REFINE") else "AGREE")
-    return {"rating": rating, "agree": rating == "AGREE", "text": text,
+    obj = _extract_json(text)
+    rating = str(obj.get("rating", "")).upper()
+    rating = rating if rating in ("AGREE", "REFINE", "DISAGREE") else "REFINE"
+    params = {}
+    if isinstance(obj.get("charge_start_price"), (int, float)):
+        params["charge_start_price"] = float(obj["charge_start_price"])
+    if isinstance(obj.get("target_soc"), (int, float)):
+        params["target_soc"] = int(obj["target_soc"])
+    return {"params": params, "rating": rating, "agree": rating == "AGREE",
+            "text": obj.get("reason", text)[:400],
             "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
 
 
-def maybe_llm_review(cfg, snap, force=False):
-    """Advisory LLM review of the decision. Never controls anything. Gated by interval +
-    force-charge transitions to keep cost trivial; cached verdict reused between calls."""
+def apply_dynamic_params(strat, params, foundation):
+    """Merge the LLM's knobs into a copy of strat, hard-clamped to the foundation guardrails."""
+    out = dict(strat)
+    csp = params.get("charge_start_price")
+    if isinstance(csp, (int, float)):
+        out["charge_start_price"] = round(max(0.0, min(float(csp), foundation["price_ceiling"])), 3)
+    ts = params.get("target_soc")
+    if isinstance(ts, (int, float)):
+        lo, hi = strat.get("reserve_soc", 20) + 10, foundation["max_soc"]
+        out["target_soc"] = int(max(lo, min(int(ts), hi)))
+    return out
+
+
+def maybe_llm_review(cfg, ctx, force=False):
+    """Run the dynamic-policy LLM, gated by interval (+ force) to keep cost trivial; cache + reuse the
+    knobs between cycles. ctx is the decision context (state + forecasts + foundation). Returns the
+    cached plan dict or None when disabled."""
     llm = cfg.get("llm", {})
     if not llm.get("enabled") or not llm.get("api_key"):
         return None
-    rec = snap.get("recommendation", {})
-    fc_now = bool(rec.get("force_charge"))
     now = time.time()
     due = (now - _LLM["last_ts"]) >= llm.get("interval_min", 30) * 60
-    transition = fc_now and not _LLM["last_fc"]
-    _LLM["last_fc"] = fc_now
-    if not (force or due or transition):
+    if not (force or due or _LLM["last"] is None):
         return _LLM["last"]
     _LLM["last_ts"] = now
     try:
-        v = _call_anthropic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"),
-                            snap, cfg.get("strategy", {}))
-        log_event("llm", v.get("rating", "?") + ": " + v["text"][:200])
+        v = _llm_dynamic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"), ctx)
+        log_event("llm", f'{v["rating"]} csp={v["params"].get("charge_start_price")} '
+                         f'target={v["params"].get("target_soc")}: {v["text"][:160]}')
     except Exception as e:
-        v = {"agree": None, "rating": None, "text": f"LLM review unavailable: {e}",
+        v = {"params": {}, "agree": None, "rating": None,
+             "text": f"LLM dynamic-policy unavailable: {e}",
              "ts": datetime.now().isoformat(timespec="seconds")}
     _LLM["last"] = v
     return v
@@ -748,12 +784,40 @@ def gather_and_decide(cfg: dict) -> dict:
     sched = fox.scheduler_status()
     charging = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
     demand_window = (ha.get_state(cfg["ha"].get("demand_window_entity")) == "on")
-    rec = decide(prices, soc, pv, wm.get("value"), cfg["strategy"],
+    weather = ha.get_state(cfg["ha"].get("weather_entity", "weather.forecast_home"))
+
+    strat = cfg["strategy"]
+    foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90)}
+    # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
+    plan_ctx = {
+        "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
+        "amber_price": prices.get("price"), "amber_descriptor": prices.get("descriptor"),
+        "aemo_price": prices.get("aemo_price"),
+        "soc_pct": round(soc), "solar_kw": round(pv, 2), "load_kw": round(load, 2),
+        "solar_surplus_kw": round(pv - load, 2), "demand_window": demand_window,
+        "currently_charging": charging,
+        "amber_forecast": prices.get("forecast", [])[:12],
+        "aemo_forecast": prices.get("aemo_forecast", [])[:12],
+        "foundation": {**foundation, "reserve_soc": strat.get("reserve_soc")},
+        "baseline": {"charge_start_price": strat.get("charge_start_price"), "target_soc": strat.get("target_soc")},
+    }
+    _LLM["last_ctx"] = plan_ctx
+    plan = maybe_llm_review(cfg, plan_ctx)
+    working, dyn_src = strat, "static"
+    if plan and plan.get("params") and strat.get("dynamic_policy", True):
+        working = apply_dynamic_params(strat, plan["params"], foundation)
+        dyn_src = "LLM"
+    rec = decide(prices, soc, pv, wm.get("value"), working,
                  currently_charging=charging, load_kw=load, demand_window=demand_window)
 
     now_epoch = time.time()
     return {
         "demand_window": demand_window,
+        "weather": weather,
+        "llm": plan,
+        "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
+                    "target_soc": working.get("target_soc"),
+                    "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"]},
         "ts": datetime.now().isoformat(timespec="seconds"),
         "scheduler": sched,
         "soc_updated_epoch": soc_ts,
@@ -789,6 +853,8 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     msgs = []
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     strat = cfg["strategy"]
+    # Use the dynamic (LLM-tuned, foundation-clamped) target SoC for the actual charge cap.
+    eff_target = (snap.get("dynamic") or {}).get("target_soc") or strat["target_soc"]
     sch = snap.get("scheduler") or {}
     already_charging = bool(sch.get("enabled") and sch.get("active")
                             and sch["active"].get("mode") == "ForceCharge")
@@ -803,9 +869,9 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             tot = now.hour * 60 + now.minute + mins
             eh, em = (tot // 60) % 24, tot % 60
             fox.enable_force_charge((now.hour, now.minute), (eh, em),
-                                    strat["min_soc_on_grid"], strat["target_soc"],
+                                    strat["min_soc_on_grid"], eff_target,
                                     strat["force_charge_power_kw"])
-            m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {strat['target_soc']}% @ {strat['force_charge_power_kw']}kW)"
+            m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
             msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
     else:
         # Stop only on the transition out of charging — one write, not every cycle.
@@ -854,7 +920,6 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
     if do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
     run_band_actions(cfg, snap)
-    snap["llm"] = maybe_llm_review(cfg, snap)
     maybe_notify(cfg, snap)
     append_log(snap)
     with LAST_LOCK:
@@ -919,14 +984,20 @@ def render(snap: dict, cfg: dict) -> str:
         for p in fc)
     atable = f"<table><tr><th>time</th><th>Amber $/kWh</th><th>band</th></tr>{arows}</table>" if arows else "<small>none</small>"
     ctrl = cfg["control"]
+    dyn = snap.get("dynamic") or {}
+    dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
+                f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
+                f'<small>(set by {dyn.get("source","static")})</small></div>'
+                f'<small>foundation: never charge &gt; ${dyn.get("price_ceiling","?")} · max SoC {dyn.get("max_soc","?")}% · spend $0 then cheapest</small></div>')
     llm = snap.get("llm")
     if llm:
         verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",
                    "DISAGREE": "🔍 DISAGREE"}.get(llm.get("rating"), "⚠️ n/a")
-        llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 LLM REVIEW ({llm.get("model","")} · {llm.get("ts","")})</small>'
+        llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 DYNAMIC LLM ({llm.get("model","")} · {llm.get("ts","")})</small>'
                     f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div></div>')
     else:
-        llm_html = '<div class="card"><small>🤖 LLM review</small><div>off (enable + set API key in add-on options)</div></div>'
+        llm_html = '<div class="card"><small>🤖 Dynamic LLM</small><div>off (enable llm_review + set API key in add-on options)</div></div>'
+    llm_html = dyn_html + llm_html
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta http-equiv=refresh content=60><title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl — {snap.get('ts','-')}</h1>
@@ -937,7 +1008,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
- <div class=card style="{'border-color:#e67e22' if snap.get('demand_window') else ''}"><small>Demand window</small><div class=big>{'⚠️ ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'won’t grid-charge battery' if snap.get('demand_window') else ''}</small></div>
+ <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if snap.get('telemetry_source') != 'HA' else ''}"><small>Data age / source</small>
    <div class=big><span id=age>{snap.get('data_age_s') if snap.get('data_age_s') is not None else '–'}</span>s
@@ -1037,11 +1108,11 @@ def make_handler(cfg):
                 log_action(f"scheduler_off -> {msg}")
                 self._send(200, json.dumps({"scheduler_off": msg}, default=str), "application/json")
             elif self.path.startswith("/api/review"):
-                with LAST_LOCK:
-                    snap = dict(LAST)
-                if not snap:
-                    snap = run_once(cfg, do_apply=False)
-                v = maybe_llm_review(cfg, snap, force=True)
+                ctx = _LLM.get("last_ctx")
+                if not ctx:
+                    run_once(cfg, do_apply=False)
+                    ctx = _LLM.get("last_ctx")
+                v = maybe_llm_review(cfg, ctx, force=True) if ctx else None
                 with LAST_LOCK:
                     LAST["llm"] = v
                 self._send(200, json.dumps(v or {"text": "LLM review disabled / no key"}, default=str), "application/json")

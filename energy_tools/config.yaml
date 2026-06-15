@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.5.2"
+version: "1.6.0"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -27,7 +27,10 @@ options:
   solar_defer_kw: 0.5
   defer_if_cheaper_by: 0.04
   poll_seconds: 300
-  avoid_demand_window: true
+  avoid_demand_window: false
+  price_ceiling: 0.20
+  max_soc: 90
+  dynamic_policy: true
   horizon_charge: true
   horizon_hours: 18
   horizon_window_margin: 0.03
@@ -61,6 +64,9 @@ schema:
   defer_if_cheaper_by: float
   poll_seconds: int(60,3600)
   avoid_demand_window: bool
+  price_ceiling: float
+  max_soc: int(0,100)
+  dynamic_policy: bool
   horizon_charge: bool
   horizon_hours: int(1,48)
   horizon_window_margin: float

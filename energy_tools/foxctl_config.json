@@ -63,7 +63,11 @@
     "defer_if_cheaper_by": 0.04,
     "force_charge_minutes": 120,
     "charge_stop_margin": 0.04,
-    "solar_defer_kw": 0.5
+    "solar_defer_kw": 0.5,
+    "price_ceiling": 0.20,
+    "max_soc": 90,
+    "dynamic_policy": true,
+    "avoid_demand_window": false
   },
   "control": {
     "allow_control": true,

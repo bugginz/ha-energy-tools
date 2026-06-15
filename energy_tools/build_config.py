@@ -18,16 +18,18 @@ fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 
 S = fc["strategy"]
 for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",
-          "solar_defer_kw", "defer_if_cheaper_by"):
+          "solar_defer_kw", "defer_if_cheaper_by", "price_ceiling"):
     if k in opt:
         S[k] = float(opt[k])
-for k in ("target_soc", "reserve_soc"):
+for k in ("target_soc", "reserve_soc", "max_soc"):
     if k in opt:
         S[k] = int(opt[k])
 if "poll_seconds" in opt:
     fc["poll_seconds"] = int(opt["poll_seconds"])
 if "avoid_demand_window" in opt:
     S["avoid_demand_window"] = bool(opt["avoid_demand_window"])
+if "dynamic_policy" in opt:
+    S["dynamic_policy"] = bool(opt["dynamic_policy"])
 if "horizon_charge" in opt:
     S["horizon_charge"] = bool(opt["horizon_charge"])
 if "horizon_hours" in opt:
