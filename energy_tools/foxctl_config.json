@@ -12,7 +12,20 @@
     "amber_feedin_entity": "sensor.home_feed_in_price",
     "soc_entity": "sensor.foxess_bat_soc",
     "pv_entity": "sensor.foxess_pv_power",
-    "load_entity": "sensor.foxess_load_power"
+    "load_entity": "sensor.foxess_load_power",
+    "weather_entity": "weather.forecast_home",
+    "solar_fc_remaining_entities": [
+      "sensor.energy_production_today_remaining",
+      "sensor.energy_production_today_remaining_2",
+      "sensor.energy_production_today_remaining_3",
+      "sensor.energy_production_today_remaining_4"
+    ],
+    "solar_fc_tomorrow_entities": [
+      "sensor.energy_production_tomorrow",
+      "sensor.energy_production_tomorrow_2",
+      "sensor.energy_production_tomorrow_3",
+      "sensor.energy_production_tomorrow_4"
+    ]
   },
   "strategy": {
     "cheap_price": 0.1,

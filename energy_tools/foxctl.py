@@ -810,11 +810,24 @@ def gather_and_decide(cfg: dict) -> dict:
     demand_window = (ha.get_state(cfg["ha"].get("demand_window_entity")) == "on")
     weather = ha.get_state(cfg["ha"].get("weather_entity", "weather.forecast_home"))
 
+    # Forecast.Solar: sum the per-plane sensors into a single forward solar view (kWh).
+    def _sum_ents(ids):
+        tot, seen = 0.0, False
+        for e in ids or []:
+            v = ha.get_num(e)
+            if v is not None:
+                tot += v; seen = True
+        return round(tot, 2) if seen else None
+    solar_remaining = _sum_ents(cfg["ha"].get("solar_fc_remaining_entities"))
+    solar_tomorrow = _sum_ents(cfg["ha"].get("solar_fc_tomorrow_entities"))
+
     strat = cfg["strategy"]
     foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90)}
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
+        "solar_forecast_kwh": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow,
+                               "system_size_kw": 6.975},
         "amber_price": prices.get("price"), "amber_descriptor": prices.get("descriptor"),
         "aemo_price": prices.get("aemo_price"),
         "soc_pct": round(soc), "solar_kw": round(pv, 2), "load_kw": round(load, 2),
@@ -838,6 +851,7 @@ def gather_and_decide(cfg: dict) -> dict:
     return {
         "demand_window": demand_window,
         "weather": weather,
+        "solar_forecast": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow},
         "llm": plan,
         "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
                     "target_soc": working.get("target_soc"),
@@ -1119,6 +1133,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
+ <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('tomorrow','?')} <small>kWh</small></div><small>tomorrow · {(snap.get('solar_forecast') or {}).get('remaining_today','?')} left today</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if snap.get('telemetry_source') != 'HA' else ''}"><small>Data age / source</small>
