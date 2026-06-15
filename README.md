@@ -47,7 +47,10 @@ with a FoxESS inverter + battery:
 | `solar_defer_kw` | `0.5` | skip grid-charge if solar surplus ≥ this |
 | `defer_if_cheaper_by` | `0.04` | wait for a forecast trough this much cheaper |
 | `poll_seconds` | `300` | evaluation interval |
-| `avoid_demand_window` | `true` | skip grid-charge during Amber demand windows |
+| `avoid_demand_window` | `false` | skip grid-charge during Amber demand windows (off — no $/kW demand charge on EA116) |
+| `price_ceiling` | `0.20` | **foundation**: never grid-charge above this $/kWh, whatever the dynamic layer asks |
+| `max_soc` | `90` | **foundation**: hard charge cap |
+| `dynamic_policy` | `true` | let the LLM tune `charge_start_price` + `target_soc` each interval, clamped to the foundation |
 | `allow_control` / `auto_apply` / `set_work_mode` / `set_force_charge` | `true` | control switches |
 
 ## Notes
