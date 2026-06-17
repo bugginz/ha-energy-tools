@@ -209,6 +209,15 @@ class FoxESS:
               "fdPwr": int(power_kw * 1000), "enable": 1}
         return self.call("/op/v0/device/scheduler/enable", {"deviceSN": self.sn, "groups": [fc]})
 
+    def enable_force_discharge(self, start_hm, end_hm, min_soc, power_kw) -> dict:
+        """Activate ONE ForceDischarge window — sell battery to the grid (export) down to min_soc.
+        Same scheduler/enable schema as force-charge; fdSoc is the SoC floor to discharge to."""
+        sh, sm = start_hm; eh, em = end_hm
+        fc = {"startHour": sh, "startMinute": sm, "endHour": eh, "endMinute": em,
+              "workMode": "ForceDischarge", "minSocOnGrid": int(min_soc), "fdSoc": int(min_soc),
+              "fdPwr": int(power_kw * 1000), "enable": 1}
+        return self.call("/op/v0/device/scheduler/enable", {"deviceSN": self.sn, "groups": [fc]})
+
     def scheduler_status(self) -> dict:
         """Compact view for the dashboard: is a schedule active, and which window."""
         r = self.scheduler() or {}
@@ -500,10 +509,54 @@ _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + ca
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
 _NOTE = {"text": None}  # free-text operator steering note fed to the LLM
+# Overrides: floor = a persisted base charge-floor override (None = use config); manual = a temporary
+# forced action {mode: 'charge'|'sell', until: epoch, power, min_soc, cap} that the loop enforces.
+_OV = {"floor": None, "manual": None, "loaded": False}
 
 
 def _state_dir(cfg):
     return Path(cfg.get("state_dir") or str(Path.home() / "foxctl"))
+
+
+def load_ov(cfg):
+    if not _OV["loaded"]:
+        try:
+            d = json.loads((_state_dir(cfg) / "overrides.json").read_text())
+            _OV["floor"], _OV["manual"] = d.get("floor"), d.get("manual")
+        except Exception:
+            pass
+        _OV["loaded"] = True
+
+
+def save_ov(cfg):
+    try:
+        p = _state_dir(cfg) / "overrides.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"floor": _OV["floor"], "manual": _OV["manual"]}))
+    except Exception as e:
+        print(f"overrides persist failed: {e}", file=sys.stderr)
+
+
+def set_floor_override(cfg, floor, ceiling):
+    load_ov(cfg)
+    _OV["floor"] = None if floor is None else round(max(0.0, min(float(floor), ceiling)), 3)
+    save_ov(cfg)
+    _LLM["last_ts"] = 0.0; _LLM["last"] = None
+    log_event("override", f"charge floor → {_OV['floor']}")
+    return _OV["floor"]
+
+
+def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None):
+    load_ov(cfg)
+    if mode is None:
+        _OV["manual"] = None
+    else:
+        _OV["manual"] = {"mode": mode, "until": time.time() + hours * 3600,
+                         "power": power_kw, "min_soc": int(min_soc),
+                         "cap": int(cap) if cap is not None else None}
+    save_ov(cfg)
+    log_event("override", f"manual {mode or 'cancel'}" + (f" {hours}h" if mode else ""))
+    return _OV["manual"]
 
 
 def get_note(cfg):
@@ -679,7 +732,9 @@ def _llm_dynamic(api_key, model, ctx):
               '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
               '"operator_action": "<short suggestion that REQUIRES the human operator — e.g. change a '
               'foundation setting they control (price_ceiling, charge_start_floor, max_soc, '
-              'battery_capacity_kwh) — or empty string if nothing needs them>"}. '
+              'battery_capacity_kwh) — or empty string if nothing needs them>", '
+              '"base_floor": <number or null — set ONLY when the operator_note clearly asks for a LASTING '
+              'change to the minimum price always willing to charge at (the base floor); else null>}. '
               "Only fill operator_action when you genuinely want a human to change something you cannot; "
               "leave it empty for normal auto-applied tuning. rating: AGREE=same as baseline, REFINE=minor "
               "auto tweak, DISAGREE=you think the policy/state is wrong.")
@@ -700,8 +755,10 @@ def _llm_dynamic(api_key, model, ctx):
     if isinstance(obj.get("target_soc"), (int, float)):
         params["target_soc"] = int(obj["target_soc"])
     action = str(obj.get("operator_action", "") or "").strip()
+    bf = obj.get("base_floor")
     return {"params": params, "rating": rating, "agree": rating == "AGREE",
             "text": obj.get("reason", text)[:400], "operator_action": action[:300],
+            "base_floor": float(bf) if isinstance(bf, (int, float)) else None,
             "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
 
 
@@ -740,6 +797,15 @@ def maybe_llm_review(cfg, ctx, force=False):
         v = _llm_dynamic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"), ctx)
         log_event("llm", f'{v["rating"]} csp={v["params"].get("charge_start_price")} '
                          f'target={v["params"].get("target_soc")}: {v["text"][:160]}')
+        # A forceful note can lastingly change the base floor — apply it (bounded, logged).
+        bf = v.get("base_floor")
+        ceil = cfg.get("strategy", {}).get("price_ceiling", 0.20)
+        if bf is not None:
+            load_ov(cfg)
+            new = round(max(0.0, min(float(bf), ceil)), 3)
+            if new != _OV["floor"]:
+                _OV["floor"] = new; save_ov(cfg)
+                log_event("override", f"base charge floor → {new} (from operator note via LLM)")
     except Exception as e:
         v = {"params": {}, "agree": None, "rating": None,
              "text": f"LLM dynamic-policy unavailable: {e}",
@@ -972,9 +1038,11 @@ def gather_and_decide(cfg: dict) -> dict:
     consumption = update_consumption(cfg, load, ev_kw)
 
     note = get_note(cfg)
+    load_ov(cfg)
     strat = cfg["strategy"]
+    floor_eff = _OV["floor"] if _OV["floor"] is not None else strat.get("charge_start_floor", 0.0)
     foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90),
-                  "charge_start_floor": strat.get("charge_start_floor", 0.0), "note_active": bool(note)}
+                  "charge_start_floor": floor_eff, "note_active": bool(note)}
     cap_kwh = float(strat.get("battery_capacity_kwh", 30))
     stored_kwh = round(cap_kwh * soc / 100.0, 1)
     # Use the measured rolling base load if we have enough history; else the static estimate.
@@ -1030,6 +1098,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "consumption": consumption,
         "feedin": prices.get("feedin"),
         "sched_active": sched_active,
+        "note": note,
+        "override": {"floor": _OV["floor"], "manual": _OV["manual"]},
         "ts": datetime.now().isoformat(timespec="seconds"),
         "scheduler": sched,
         "soc_updated_epoch": soc_ts,
@@ -1053,6 +1123,45 @@ def gather_and_decide(cfg: dict) -> dict:
         "recommendation": rec,
         "applied": None,
     }
+
+
+def manual_tick(cfg, snap):
+    """If a manual override (force-charge / sell) is active, enforce it and return a status string.
+    Reverts and returns None when it has expired or none is set. Honours allow_control."""
+    load_ov(cfg)
+    mo = _OV["manual"]
+    if not mo:
+        return None
+    if not cfg["control"].get("allow_control"):
+        return "manual override set but control disabled"
+    fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
+    now = time.time()
+    if now >= mo["until"]:                      # expired → revert to auto
+        try:
+            fox.disable_scheduler()
+        except Exception as e:
+            print(f"manual revert failed: {e}", file=sys.stderr)
+        _CHARGE["until"] = 0.0
+        _OV["manual"] = None; save_ov(cfg)
+        log_event("override", f"manual {mo['mode']} expired → revert to auto")
+        return None
+    want = "ForceCharge" if mo["mode"] == "charge" else "ForceDischarge"
+    active = (snap.get("scheduler") or {}).get("active") or {}
+    end = datetime.now() + timedelta(seconds=mo["until"] - now)
+    hhmm = end.strftime("%H:%M")
+    if active.get("mode") == want:
+        return f"MANUAL {mo['mode']} until {hhmm} (active)"
+    nd = datetime.now()
+    if mo["mode"] == "charge":
+        fox.enable_force_charge((nd.hour, nd.minute), (end.hour, end.minute),
+                                cfg["strategy"]["min_soc_on_grid"], mo["cap"], mo["power"])
+        _CHARGE["until"] = mo["until"]
+    else:
+        fox.enable_force_discharge((nd.hour, nd.minute), (end.hour, end.minute),
+                                   mo["min_soc"], mo["power"])
+    msg = f"MANUAL {mo['mode']} START until {hhmm} @ {mo['power']}kW"
+    log_event("override", msg)
+    return msg
 
 
 def apply_recommendation(cfg: dict, snap: dict) -> str:
@@ -1134,7 +1243,12 @@ def scheduler_off(cfg: dict) -> str:
 def run_once(cfg: dict, do_apply: bool) -> dict:
     snap = gather_and_decide(cfg)
     snap["band"] = snap.get("recommendation", {}).get("band")
-    if do_apply:
+    # A manual override (force-charge / sell) takes precedence and is enforced every cycle regardless
+    # of auto_apply, so a button press isn't undone by the next automatic evaluation.
+    mo_msg = manual_tick(cfg, snap)
+    if mo_msg is not None:
+        snap["applied"] = mo_msg
+    elif do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
     run_band_actions(cfg, snap)
     maybe_notify(cfg, snap)
@@ -1179,6 +1293,9 @@ async function saveNote(){const t=document.getElementById('note').value;
  const j=await r.json();document.getElementById('msg').textContent=JSON.stringify(j);
  setTimeout(()=>location.reload(),1800);}
 function clearNote(){document.getElementById('note').value='';saveNote();}
+async function ov(p){document.getElementById('msg').textContent='…';
+ const r=await fetch(p,{method:'POST'});const j=await r.json();
+ document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>location.reload(),1500);}
 async function post(p){document.getElementById('msg').textContent='…';
  const r=await fetch(p,{method:'POST'});const j=await r.json();
  document.getElementById('msg').textContent=JSON.stringify(j);
@@ -1329,6 +1446,26 @@ def render(snap: dict, cfg: dict) -> str:
                  f'<div style="margin-top:.4rem"><button onclick="saveNote()">Save note</button>'
                  f'<button onclick="clearNote()">Clear</button> '
                  f'<small>{"📣 active — floor relaxed, LLM following your note" if note_esc else "no note set"}</small></div></div>')
+    ov = snap.get("override") or {}
+    mo = ov.get("manual")
+    eff_floor = ov.get("floor") if ov.get("floor") is not None else cfg["strategy"].get("charge_start_floor", 0.0)
+    if mo:
+        import time as _t
+        mins = max(0, int((mo.get("until", 0) - _t.time()) / 60))
+        ov_status = f'⚡ MANUAL {mo.get("mode","?").upper()} active — ~{mins} min left'
+    else:
+        ov_status = "no manual override — running on auto policy"
+    fcbtns = "".join(f'<button onclick="ov(\'/api/force_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
+    sellbtns = "".join(f'<button class=danger onclick="if(confirm(\'Force-discharge (SELL) to grid for {h}h?\'))ov(\'/api/sell?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
+    controls_html = (f'<h3>Quick controls <small>(manual overrides — auto-revert when the timer ends)</small></h3>'
+                     f'<div class=card><div><b>Status:</b> {ov_status} · floor ${round(eff_floor,3)}'
+                     f'{" (override)" if ov.get("floor") is not None else ""}</div>'
+                     f'<div style="margin-top:.5rem">⚡ <b>Force-charge:</b> {fcbtns}</div>'
+                     f'<div style="margin-top:.4rem">💰 <b>SELL (discharge to grid):</b> {sellbtns}</div>'
+                     f'<div style="margin-top:.4rem">🪙 <b>Floor:</b> '
+                     f'<button onclick="ov(\'/api/floor?delta=-0.03\')">– relax</button>'
+                     f'<button onclick="ov(\'/api/floor?delta=0.03\')">+ increase</button> '
+                     f'<button onclick="ov(\'/api/cancel_override\')">✖ cancel override → auto</button></div></div>')
     dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
                 f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
                 f'<small>(set by {dyn.get("source","static")})</small></div>'
@@ -1376,6 +1513,7 @@ def render(snap: dict, cfg: dict) -> str:
 </div>
 {llm_html}
 {note_html}
+{controls_html}
 <h3>Forecast horizon <small>(what the policy reasons over — 18h ahead · drag the corner ↘ to resize)</small></h3>
 <div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap)}</div></div>
 <h3>Make things happen</h3>
@@ -1480,6 +1618,52 @@ def make_handler(cfg):
                     self._send(200, json.dumps({"note": text or "(cleared)",
                                                 "now": f"{rec.get('action')} fc={rec.get('force_charge')}",
                                                 "charge_start": (snap.get('dynamic') or {}).get('charge_start_price')},
+                                               default=str), "application/json")
+                except Exception as e:
+                    self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/force_charge") or self.path.startswith("/api/sell"):
+                try:
+                    q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                    h = 1
+                    for kv in q.split("&"):
+                        if kv.startswith("h="):
+                            h = max(1, min(6, int(float(kv[2:]))))
+                    strat = cfg["strategy"]
+                    pwr = strat.get("force_charge_power_kw", 10.5)
+                    if self.path.startswith("/api/sell"):
+                        set_manual(cfg, "sell", h, pwr, strat.get("reserve_soc", 20))
+                    else:
+                        set_manual(cfg, "charge", h, pwr, strat.get("min_soc_on_grid", 10),
+                                   cap=strat.get("max_soc", 90))
+                    snap = run_once(cfg, do_apply=True)
+                    self._send(200, json.dumps({"override": _OV["manual"], "applied": snap.get("applied")},
+                                               default=str), "application/json")
+                except Exception as e:
+                    self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/floor"):
+                try:
+                    q = self.path.split("?", 1)[1] if "?" in self.path else ""
+                    delta = 0.0
+                    for kv in q.split("&"):
+                        if kv.startswith("delta="):
+                            delta = float(kv[6:])
+                    strat = cfg["strategy"]
+                    cur = _OV["floor"] if _OV["floor"] is not None else strat.get("charge_start_floor", 0.0)
+                    new = set_floor_override(cfg, cur + delta, strat.get("price_ceiling", 0.20))
+                    snap = run_once(cfg, do_apply=False)
+                    self._send(200, json.dumps({"charge_start_floor": new,
+                                                "charge_start": (snap.get("dynamic") or {}).get("charge_start_price")},
+                                               default=str), "application/json")
+                except Exception as e:
+                    self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/cancel_override"):
+                try:
+                    set_manual(cfg, None, 0, 0, 0)
+                    if cfg["control"].get("allow_control"):
+                        FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]).disable_scheduler()
+                    _CHARGE["until"] = 0.0
+                    snap = run_once(cfg, do_apply=True)
+                    self._send(200, json.dumps({"cancelled": True, "applied": snap.get("applied")},
                                                default=str), "application/json")
                 except Exception as e:
                     self._send(200, json.dumps({"error": str(e)}), "application/json")

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.12.0
+- **Quick-control buttons** on the foxctl page, backed by a manual-override engine the auto-loop respects (a press isn't undone by the next cycle) and that auto-reverts when its timer ends:
+  - ⚡ **Force-charge 1–6 h** (charge battery from grid to max SoC).
+  - 💰 **SELL 1–6 h** — force-discharge the battery to the grid (export/sell). NOTE: uses the FoxESS ForceDischarge scheduler mode — verify on your device.
+  - 🪙 **Relax / increase floor** (±0.03) and **cancel override → auto**.
+- **Persisted floor override:** the charge floor is now a saved base setting the floor buttons change, and that a *forceful* operator note can update lastingly (the LLM may set `base_floor`, bounded by the ceiling, logged). Notes guide the dynamic layer; forceful notes can move the base.
+
 ## 1.11.0
 - **Operator steering note.** A free-text box on the foxctl page (persisted to /data) that's fed to the dynamic LLM as a *priority* instruction — e.g. "let the battery discharge until the ~9c midday trough, then charge." While a note is active the charge floor is relaxed (still capped by the ceiling + SoC limits) so guidance to wait for cheaper prices actually takes effect; saving a note forces an immediate re-evaluation. Clear the box to return to normal.
 
