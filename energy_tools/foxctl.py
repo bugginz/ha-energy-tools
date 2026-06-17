@@ -1798,10 +1798,14 @@ def loop(cfg: dict):
         except Exception as e:
             snap = None
             print(f"{datetime.now().isoformat(timespec='seconds')} ERROR: {e}", file=sys.stderr)
-        # Sync next poll to the foxess-ha update cycle: next HA refresh ≈ last_updated + poll.
+        # Sync next poll to the foxess-ha update cycle ONLY when that sensor is fresh — otherwise
+        # (frozen integration → FoxESS fallback) anchoring to its dead timestamp drifts the cadence
+        # and the price goes stale. In that case just poll on a steady fixed interval.
         now = time.time()
         ts = (snap or {}).get("soc_updated_epoch")
-        if ts:
+        tsrc = (snap or {}).get("telemetry_source")
+        stale_s = cfg.get("telemetry_stale_s", 900)
+        if ts and tsrc == "HA" and (now - ts) < stale_s:
             nxt = ts + poll + lag
             while nxt <= now + 5:
                 nxt += poll

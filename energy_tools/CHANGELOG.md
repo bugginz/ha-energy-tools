@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.13.1
+- Fix stale price: foxctl only syncs its poll cadence to the foxess-HA sensor when that sensor is fresh. When foxess-HA is frozen (it intermittently does), it was anchoring the schedule to a dead timestamp and drifting, so the displayed Amber price went several minutes stale. Now falls back to a steady fixed poll interval, keeping the price current.
+
 ## 1.13.0
 - **Auto-sell on silly-high feed-in.** When the Amber feed-in price reaches `sell_price` (default $0.50), the auto-policy force-discharges the battery to the grid — but only down to a computed **overnight survival floor** (covers expected load until tomorrow's solar ramp, minus remaining solar today), so it never strands you. Sends a notification when it starts (`notify_on_sell`). Toggle with `auto_sell`.
 - **Set-baseline panel** at the bottom of the foxctl page: type permanent **buy floor** and **sell threshold** values (persisted) — no need to open the add-on config page. Relax/increase remain the quick temporary nudges.
