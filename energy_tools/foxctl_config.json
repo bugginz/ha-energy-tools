@@ -86,6 +86,8 @@
     "solar_defer_kw": 0.5,
     "price_ceiling": 0.20,
     "charge_start_floor": 0.15,
+    "sell_price": 0.50,
+    "sell_enabled": true,
     "max_soc": 90,
     "battery_capacity_kwh": 30,
     "typical_daily_load_kwh": 30,

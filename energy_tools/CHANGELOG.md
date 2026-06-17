@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.0
+- **Auto-sell on silly-high feed-in.** When the Amber feed-in price reaches `sell_price` (default $0.50), the auto-policy force-discharges the battery to the grid — but only down to a computed **overnight survival floor** (covers expected load until tomorrow's solar ramp, minus remaining solar today), so it never strands you. Sends a notification when it starts (`notify_on_sell`). Toggle with `auto_sell`.
+- **Set-baseline panel** at the bottom of the foxctl page: type permanent **buy floor** and **sell threshold** values (persisted) — no need to open the add-on config page. Relax/increase remain the quick temporary nudges.
+
 ## 1.12.0
 - **Quick-control buttons** on the foxctl page, backed by a manual-override engine the auto-loop respects (a press isn't undone by the next cycle) and that auto-reverts when its timer ends:
   - ⚡ **Force-charge 1–6 h** (charge battery from grid to max SoC).

@@ -378,6 +378,11 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     action = "HOLD"
     target_mode = work_mode or "SelfUse"
     force_charge = False
+    force_discharge = False
+    feedin = prices.get("feedin")
+    sell_p = strat.get("sell_price", 0.50)            # auto-sell when feed-in ≥ this ("silly" high)
+    sell_enabled = strat.get("sell_enabled", True)
+    sell_floor = strat.get("sell_floor_soc", reserve)  # survival SoC floor (computed in gather)
 
     def within(p, hours, thresh, cmp_ge=True):
         t = _parse_t(p.get("t") or "")
@@ -421,6 +426,11 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     if price is None:
         reasons.append("No price available; defaulting to SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
+    elif (sell_enabled and feedin is not None and feedin >= sell_p
+          and soc > sell_floor + 1 and not currently_charging and not solar_covering):
+        action, force_discharge = "SELL", True
+        reasons.append(f"Feed-in {feedin:.2f} ≥ sell {sell_p:.2f} (silly high) and SoC {soc:.0f}% > survival "
+                       f"floor {sell_floor:.0f}% → SELL to grid down to {sell_floor:.0f}% (keeps overnight buffer).")
     elif soc >= target:
         reasons.append(f"SoC {soc:.0f}% ≥ target {target}% → battery full, no grid charge. SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
@@ -486,6 +496,8 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
         "action": action,
         "target_mode": target_mode,
         "force_charge": force_charge,
+        "force_discharge": force_discharge,
+        "sell_floor": sell_floor,
         "band": band,
         "min_future_h": min_future_h,
         "peak_future_h": peak_future_h,
@@ -511,7 +523,7 @@ _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling d
 _NOTE = {"text": None}  # free-text operator steering note fed to the LLM
 # Overrides: floor = a persisted base charge-floor override (None = use config); manual = a temporary
 # forced action {mode: 'charge'|'sell', until: epoch, power, min_soc, cap} that the loop enforces.
-_OV = {"floor": None, "manual": None, "loaded": False}
+_OV = {"floor": None, "sell": None, "manual": None, "loaded": False}
 
 
 def _state_dir(cfg):
@@ -522,7 +534,7 @@ def load_ov(cfg):
     if not _OV["loaded"]:
         try:
             d = json.loads((_state_dir(cfg) / "overrides.json").read_text())
-            _OV["floor"], _OV["manual"] = d.get("floor"), d.get("manual")
+            _OV["floor"], _OV["sell"], _OV["manual"] = d.get("floor"), d.get("sell"), d.get("manual")
         except Exception:
             pass
         _OV["loaded"] = True
@@ -532,9 +544,22 @@ def save_ov(cfg):
     try:
         p = _state_dir(cfg) / "overrides.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"floor": _OV["floor"], "manual": _OV["manual"]}))
+        p.write_text(json.dumps({"floor": _OV["floor"], "sell": _OV["sell"], "manual": _OV["manual"]}))
     except Exception as e:
         print(f"overrides persist failed: {e}", file=sys.stderr)
+
+
+def set_baseline(cfg, floor, sell, ceiling):
+    """Permanently set the buy floor and/or sell threshold (persisted overrides)."""
+    load_ov(cfg)
+    if floor is not None:
+        _OV["floor"] = round(max(0.0, min(float(floor), ceiling)), 3)
+    if sell is not None:
+        _OV["sell"] = round(max(0.0, float(sell)), 3)
+    save_ov(cfg)
+    _LLM["last_ts"] = 0.0; _LLM["last"] = None
+    log_event("override", f"baseline set: buy floor={_OV['floor']} sell={_OV['sell']}")
+    return {"floor": _OV["floor"], "sell": _OV["sell"]}
 
 
 def set_floor_override(cfg, floor, ceiling):
@@ -815,7 +840,7 @@ def maybe_llm_review(cfg, ctx, force=False):
 
 
 _NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
-           "last_action": None, "last_action_ts": 0.0}
+           "last_action": None, "last_action_ts": 0.0, "last_selling": False}
 
 
 def ha_notify(cfg, title, message):
@@ -858,6 +883,12 @@ def maybe_notify(cfg, snap):
         _NOTIFY["last_action"] = action
         _NOTIFY["last_action_ts"] = time.time()
         out.append(("🤖 foxctl — review suggestion", action[:200]))
+    selling = bool(rec.get("force_discharge"))
+    if nc.get("on_sell", True) and selling and not _NOTIFY["last_selling"]:
+        out.append(("💰 foxctl auto-selling",
+                    f"Feed-in ${snap.get('feedin')}/kWh is silly high — exporting battery to grid down to "
+                    f"{rec.get('sell_floor')}% (overnight buffer kept)."))
+    _NOTIFY["last_selling"] = selling
     stale = snap.get("telemetry_source") == "HA(stale)"
     if nc.get("on_stale", True) and stale and not _NOTIFY["last_stale"]:
         out.append(("⚠️ foxctl telemetry stale",
@@ -1048,6 +1079,18 @@ def gather_and_decide(cfg: dict) -> dict:
     # Use the measured rolling base load if we have enough history; else the static estimate.
     typical_load = consumption["avg_daily_total_kwh"] if consumption["days_sampled"] >= 2 \
         else strat.get("typical_daily_load_kwh", 30)
+    # Auto-sell survival floor: keep enough SoC to cover load until tomorrow's solar ramp (minus any
+    # solar still to come today), so selling on a silly-high feed-in never strands us overnight.
+    reserve = strat.get("reserve_soc", 20)
+    hrs_to_solar = 12.0
+    if sun_rise:
+        rt = _parse_t(sun_rise)
+        if rt:
+            hrs_to_solar = min(16.0, max(1.0, (rt - datetime.now(timezone.utc)).total_seconds() / 3600.0 + 2))
+    overnight_load = float(typical_load) * (hrs_to_solar / 24.0)
+    survival_kwh = max(0.0, overnight_load - (solar_remaining or 0.0))
+    survival_soc = int(min(strat.get("max_soc", 90), reserve + round(survival_kwh / cap_kwh * 100)))
+    sell_eff = _OV["sell"] if _OV.get("sell") is not None else strat.get("sell_price", 0.50)
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
@@ -1075,10 +1118,14 @@ def gather_and_decide(cfg: dict) -> dict:
     }
     _LLM["last_ctx"] = plan_ctx
     plan = maybe_llm_review(cfg, plan_ctx)
-    working, dyn_src = strat, "static"
+    working, dyn_src = dict(strat), "static"
     if plan and plan.get("params") and strat.get("dynamic_policy", True):
         working = apply_dynamic_params(strat, plan["params"], foundation)
         dyn_src = "LLM"
+    # Inject auto-sell parameters (deterministic foundation behaviour) into the working strategy.
+    working["sell_price"] = sell_eff
+    working["sell_floor_soc"] = survival_soc
+    working["sell_enabled"] = bool(strat.get("sell_enabled", True))
     rec = decide(prices, soc, pv, wm.get("value"), working,
                  currently_charging=charging, load_kw=load, demand_window=demand_window)
 
@@ -1093,7 +1140,9 @@ def gather_and_decide(cfg: dict) -> dict:
         "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
                     "target_soc": working.get("target_soc"),
                     "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
-                    "charge_start_floor": foundation["charge_start_floor"]},
+                    "charge_start_floor": foundation["charge_start_floor"],
+                    "sell_price": sell_eff, "survival_soc": survival_soc,
+                    "sell_enabled": bool(strat.get("sell_enabled", True))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
         "feedin": prices.get("feedin"),
@@ -1181,6 +1230,29 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     sch = snap.get("scheduler") or {}
     already_charging = bool(sch.get("enabled") and sch.get("active")
                             and sch["active"].get("mode") == "ForceCharge")
+    already_selling = bool(sch.get("enabled") and sch.get("active")
+                           and sch["active"].get("mode") == "ForceDischarge")
+    # AUTO-SELL: export to grid on a silly-high feed-in, down to the survival floor.
+    if rec.get("force_discharge"):
+        if not ctrl.get("set_force_charge"):
+            msgs.append("auto-sell wanted but control.set_force_charge=false — skipped")
+        elif already_selling:
+            msgs.append("already selling (no rewrite)")
+        else:
+            now = datetime.now()
+            mins = int(strat.get("force_charge_minutes", 120))
+            tot = now.hour * 60 + now.minute + mins
+            eh, em = (tot // 60) % 24, tot % 60
+            fox.enable_force_discharge((now.hour, now.minute), (eh, em),
+                                       rec.get("sell_floor", strat["reserve_soc"]),
+                                       strat["force_charge_power_kw"])
+            m = f"AUTO-SELL START until ~{eh:02d}:{em:02d} (down to {rec.get('sell_floor')}% @ {strat['force_charge_power_kw']}kW)"
+            msgs.append(m); log_event("sell", m, {"feedin": snap.get("feedin"), "soc": snap.get("soc")})
+        return "; ".join(msgs) or "selling"
+    if already_selling and not rec.get("force_discharge"):
+        fox.disable_scheduler()
+        msgs.append("auto-sell STOP → revert to work mode")
+        log_event("disable", "auto-sell STOP → revert to work mode")
     if rec["force_charge"]:
         if not ctrl.get("set_force_charge"):
             msgs.append("force-charge recommended but control.set_force_charge=false — skipped")
@@ -1293,6 +1365,10 @@ async function saveNote(){const t=document.getElementById('note').value;
  const j=await r.json();document.getElementById('msg').textContent=JSON.stringify(j);
  setTimeout(()=>location.reload(),1800);}
 function clearNote(){document.getElementById('note').value='';saveNote();}
+async function saveBaseline(){const f=document.getElementById('bfloor').value,s=document.getElementById('bsell').value;
+ document.getElementById('msg').textContent='saving baseline…';
+ const r=await fetch('/api/baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({floor:f,sell:s})});
+ const j=await r.json();document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>location.reload(),1500);}
 async function ov(p){document.getElementById('msg').textContent='…';
  const r=await fetch(p,{method:'POST'});const j=await r.json();
  document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>location.reload(),1500);}
@@ -1457,15 +1533,30 @@ def render(snap: dict, cfg: dict) -> str:
         ov_status = "no manual override — running on auto policy"
     fcbtns = "".join(f'<button onclick="ov(\'/api/force_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
     sellbtns = "".join(f'<button class=danger onclick="if(confirm(\'Force-discharge (SELL) to grid for {h}h?\'))ov(\'/api/sell?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
+    dyn2 = snap.get("dynamic") or {}
+    sell_p = dyn2.get("sell_price"); surv = dyn2.get("survival_soc")
+    auto_sell_txt = (f'auto-sell ≥ ${sell_p} (keep ≥{surv}% overnight)' if dyn2.get("sell_enabled")
+                     else "auto-sell off")
     controls_html = (f'<h3>Quick controls <small>(manual overrides — auto-revert when the timer ends)</small></h3>'
-                     f'<div class=card><div><b>Status:</b> {ov_status} · floor ${round(eff_floor,3)}'
-                     f'{" (override)" if ov.get("floor") is not None else ""}</div>'
+                     f'<div class=card><div><b>Status:</b> {ov_status} · buy ≤ ${round(eff_floor,3)}'
+                     f'{" (override)" if ov.get("floor") is not None else ""} · {auto_sell_txt}</div>'
                      f'<div style="margin-top:.5rem">⚡ <b>Force-charge:</b> {fcbtns}</div>'
                      f'<div style="margin-top:.4rem">💰 <b>SELL (discharge to grid):</b> {sellbtns}</div>'
                      f'<div style="margin-top:.4rem">🪙 <b>Floor:</b> '
                      f'<button onclick="ov(\'/api/floor?delta=-0.03\')">– relax</button>'
                      f'<button onclick="ov(\'/api/floor?delta=0.03\')">+ increase</button> '
                      f'<button onclick="ov(\'/api/cancel_override\')">✖ cancel override → auto</button></div></div>')
+    base_buy = ov.get("floor") if ov.get("floor") is not None else cfg["strategy"].get("charge_start_floor", 0.0)
+    base_sell = ov.get("sell") if ov.get("sell") is not None else cfg["strategy"].get("sell_price", 0.50)
+    baseline_html = (f'<h3>Set baseline <small>(permanent buy/sell thresholds — saved here, no need for the '
+                     f'add-on config page)</small></h3>'
+                     f'<div class=card>'
+                     f'<label>Buy floor $ <input id=bfloor type=number step=0.01 value="{round(base_buy,3)}" '
+                     f'style="width:6em"></label> <small>always willing to grid-charge at/below this</small><br>'
+                     f'<label style="display:inline-block;margin-top:.4rem">Sell threshold $ '
+                     f'<input id=bsell type=number step=0.01 value="{round(base_sell,3)}" style="width:6em"></label> '
+                     f'<small>auto-sell when feed-in ≥ this</small><br>'
+                     f'<button style="margin-top:.5rem" onclick="saveBaseline()">Set baseline</button></div>')
     dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
                 f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
                 f'<small>(set by {dyn.get("source","static")})</small></div>'
@@ -1528,6 +1619,7 @@ def render(snap: dict, cfg: dict) -> str:
 <h3>Next forecast</h3>{atable}
 <h3>Decision log <small>(every cycle, recommendation even when not applied)</small></h3>
 <table id=log></table>
+{baseline_html}
 <p><small>auto-refresh 60s · <a href=/api/state>/api/state</a> · <a href=/api/log?n=100>/api/log</a></small></p>
 <script>{JS}</script>
 </body></html>"""
@@ -1654,6 +1746,18 @@ def make_handler(cfg):
                     self._send(200, json.dumps({"charge_start_floor": new,
                                                 "charge_start": (snap.get("dynamic") or {}).get("charge_start_price")},
                                                default=str), "application/json")
+                except Exception as e:
+                    self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/baseline"):
+                try:
+                    n = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(n).decode()) if n else {}
+                    floor = body.get("floor"); sell = body.get("sell")
+                    floor = float(floor) if floor not in (None, "") else None
+                    sell = float(sell) if sell not in (None, "") else None
+                    res = set_baseline(cfg, floor, sell, cfg["strategy"].get("price_ceiling", 0.20))
+                    run_once(cfg, do_apply=False)
+                    self._send(200, json.dumps({"baseline": res}, default=str), "application/json")
                 except Exception as e:
                     self._send(200, json.dumps({"error": str(e)}), "application/json")
             elif self.path.startswith("/api/cancel_override"):

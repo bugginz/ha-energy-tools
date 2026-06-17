@@ -34,6 +34,10 @@ if "avoid_demand_window" in opt:
     S["avoid_demand_window"] = bool(opt["avoid_demand_window"])
 if "dynamic_policy" in opt:
     S["dynamic_policy"] = bool(opt["dynamic_policy"])
+if "sell_price" in opt:
+    S["sell_price"] = float(opt["sell_price"])
+if "auto_sell" in opt:
+    S["sell_enabled"] = bool(opt["auto_sell"])
 if "horizon_charge" in opt:
     S["horizon_charge"] = bool(opt["horizon_charge"])
 if "horizon_hours" in opt:
@@ -61,6 +65,7 @@ N["on_llm_disagree"] = bool(opt.get("notify_on_llm_disagree", True))
 N["on_spike"] = bool(opt.get("notify_on_spike", True))
 N["on_ludicrous"] = bool(opt.get("notify_on_ludicrous", True))
 N["on_stale"] = bool(opt.get("notify_on_stale", True))
+N["on_sell"] = bool(opt.get("notify_on_sell", True))
 N["on_llm_action"] = bool(opt.get("notify_on_llm_action", True))
 N["min_gap_min"] = int(opt.get("notify_min_gap_min", 180))
 
