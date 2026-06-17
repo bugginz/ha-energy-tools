@@ -15,6 +15,9 @@ fc["foxess"]["token"] = opt["foxess_token"]
 fc["foxess"]["sn"] = opt["foxess_sn"]
 fc["ha"]["url"] = "http://supervisor/core"
 fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
+fc["state_dir"] = "/data/.config/foxctl"   # persistent across restarts/updates (rolling consumption)
+if opt.get("ev_power_entity"):
+    fc["ha"]["ev_power_entity"] = opt["ev_power_entity"]
 
 S = fc["strategy"]
 for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",

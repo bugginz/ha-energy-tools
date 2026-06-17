@@ -14,6 +14,7 @@
     "pv_entity": "sensor.foxess_pv_power",
     "load_entity": "sensor.foxess_load_power",
     "weather_entity": "weather.forecast_home",
+    "ev_power_entity": "",
     "solar_fc_remaining_entities": [
       "sensor.energy_production_today_remaining",
       "sensor.energy_production_today_remaining_2",

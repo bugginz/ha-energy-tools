@@ -498,6 +498,49 @@ LAST_LOCK = Lock()
 _WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every Nth cycle)
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
+_CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
+
+
+def _cons_path(cfg):
+    d = cfg.get("state_dir") or str(Path.home() / "foxctl")
+    return Path(d) / "consumption.json"
+
+
+def update_consumption(cfg, load_kw, ev_kw=None):
+    """Integrate house load (and optional EV-plug load) into per-day kWh buckets, persisted across
+    restarts. Returns a rolling-average summary the dynamic policy uses instead of a static guess.
+    EV is tracked separately so an occasional car charge doesn't distort the predictable base load."""
+    if not _CONS["loaded"]:
+        _CONS["path"] = _cons_path(cfg)
+        try:
+            _CONS.update(json.loads(_CONS["path"].read_text())); _CONS["loaded"] = True
+        except Exception:
+            _CONS["loaded"] = True
+    now = time.time()
+    last = _CONS["last_ts"]
+    dt_h = (now - last) / 3600.0 if last else 0.0
+    if 0 < dt_h <= 1.0:   # skip the first sample and any long gap (restart/downtime) to avoid spikes
+        day = datetime.now().strftime("%Y-%m-%d")
+        rec = _CONS["days"].setdefault(day, {"load": 0.0, "ev": 0.0})
+        rec["load"] += max(0.0, load_kw) * dt_h
+        rec["ev"] += max(0.0, ev_kw or 0.0) * dt_h
+    _CONS["last_ts"] = now
+    for k in sorted(_CONS["days"])[:-9]:   # keep last ~9 days
+        _CONS["days"].pop(k, None)
+    try:
+        _CONS["path"].parent.mkdir(parents=True, exist_ok=True)
+        _CONS["path"].write_text(json.dumps({k: _CONS[k] for k in ("days", "last_ts")}))
+    except Exception as e:
+        print(f"consumption persist failed: {e}", file=sys.stderr)
+    today = datetime.now().strftime("%Y-%m-%d")
+    past = [v for k, v in _CONS["days"].items() if k != today]
+    n = len(past)
+    avg_total = round(sum(p["load"] for p in past) / n, 1) if n else None
+    avg_ev = round(sum(p["ev"] for p in past) / n, 1) if n else None
+    avg_base = round(avg_total - avg_ev, 1) if avg_total is not None else None
+    tk = _CONS["days"].get(today, {})
+    return {"days_sampled": n, "avg_daily_total_kwh": avg_total, "avg_daily_ev_kwh": avg_ev,
+            "avg_daily_base_kwh": avg_base, "today_so_far_kwh": round(tk.get("load", 0.0), 1)}
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -871,11 +914,20 @@ def gather_and_decide(cfg: dict) -> dict:
         sun_rise = sun_set = None
     solar_bells = _solar_bells(sun_rise, sun_set, solar_tomorrow, solar_remaining)
 
+    # Rolling household consumption (foxctl integrates load_power itself; EV plug tracked separately).
+    ev_kw = ha.get_num(cfg["ha"].get("ev_power_entity")) if cfg["ha"].get("ev_power_entity") else None
+    if ev_kw is not None and ev_kw > 100:   # entity is in W (Tuya plugs report watts) → kW
+        ev_kw = ev_kw / 1000.0
+    consumption = update_consumption(cfg, load, ev_kw)
+
     strat = cfg["strategy"]
     foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90),
                   "charge_start_floor": strat.get("charge_start_floor", 0.0)}
     cap_kwh = float(strat.get("battery_capacity_kwh", 30))
     stored_kwh = round(cap_kwh * soc / 100.0, 1)
+    # Use the measured rolling base load if we have enough history; else the static estimate.
+    typical_load = consumption["avg_daily_total_kwh"] if consumption["days_sampled"] >= 2 \
+        else strat.get("typical_daily_load_kwh", 30)
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
@@ -883,7 +935,8 @@ def gather_and_decide(cfg: dict) -> dict:
                                "system_size_kw": 6.975},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh, "soc_pct": round(soc),
                     "reserve_soc": strat.get("reserve_soc"),
-                    "typical_daily_load_kwh": strat.get("typical_daily_load_kwh", 30)},
+                    "typical_daily_load_kwh": typical_load},
+        "consumption": consumption,   # measured rolling daily kWh (total / base / EV), days_sampled
         "feedin_price": prices.get("feedin"),
         "amber_price": prices.get("price"), "amber_descriptor": prices.get("descriptor"),
         "aemo_price": prices.get("aemo_price"),
@@ -916,6 +969,7 @@ def gather_and_decide(cfg: dict) -> dict:
                     "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
                     "charge_start_floor": foundation["charge_start_floor"]},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
+        "consumption": consumption,
         "feedin": prices.get("feedin"),
         "sched_active": sched_active,
         "ts": datetime.now().isoformat(timespec="seconds"),
@@ -1223,6 +1277,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('tomorrow','?')} <small>kWh</small></div><small>tomorrow · {(snap.get('solar_forecast') or {}).get('remaining_today','?')} left today</small></div>
+ <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if snap.get('telemetry_source') != 'HA' else ''}"><small>Data age / source</small>
