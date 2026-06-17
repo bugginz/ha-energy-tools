@@ -497,6 +497,7 @@ LAST: dict = {}
 LAST_LOCK = Lock()
 _WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every Nth cycle)
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
+_CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -510,18 +511,25 @@ LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jso
 SITE_FACTS = {
     "network": "Essential Energy EA116 ~flat ~2c/kWh network (NO kW demand charge) — "
                "the Amber 'demand window' is therefore NOT a cost risk; charge in it when cheap.",
-    "feed_in": "Meter is NOT configured for feed-in/export — ANY solar above current household use "
-               "is WASTED (no credit). So storing/self-consuming solar is pure savings, and exporting "
-               "earns nothing. Leave battery headroom for solar ONLY when meaningful solar is expected.",
-    "season_note": "Winter / low generation right now: little solar to capture, so topping the battery "
-                   "up from the grid at genuinely cheap prices to bridge to a peak is reasonable. In "
-                   "summer/high-solar, keep charge_start_price near 0 and leave headroom for free solar.",
+    "feed_in": "Feed-in/export IS now enabled — surplus solar (or battery) exported to the grid earns the "
+               "Amber feed-in price (see feedin_price in context). So solar is no longer wasted: store it "
+               "when it offsets a more expensive import later, but exporting is also a valid use. Do NOT "
+               "grid-charge the battery just to export — that loses money (import price > feed-in).",
+    "battery": "Large battery (~60+ kWh usable). Plan charging by ENERGY BALANCE, not just price: compare "
+               "stored energy (residual_kwh) + expected solar (solar_forecast_kwh) against expected "
+               "household usage to the next solar window, and import enough cheap energy to bridge the gap.",
+    "season_note": "Winter / low generation right now: little solar to capture, so topping the battery up "
+                   "from the grid at genuinely cheap prices to bridge to a peak is reasonable. In "
+                   "summer/high-solar, keep charge_start_price low and leave headroom for free solar.",
 }
 
-GOAL = ("Goal priority, strict order: (1) SPEND $0 — do not import from the grid to charge unless it "
-        "avoids a worse outcome; (2) CAPTURE ALL SOLAR — there is no feed-in, surplus solar is wasted, "
-        "so prefer to store it and leave headroom when real solar is coming; (3) if grid import is "
-        "unavoidable, buy at the CHEAPEST point in the forecast horizon, never at a mediocre price now.")
+GOAL = ("Goal priority: (1) MINIMISE COST — prefer $0 import; only grid-charge when it avoids a more "
+        "expensive import later (energy balance: residual + solar forecast vs expected usage to the next "
+        "solar window). (2) If import is needed, buy at the CHEAPEST forecast point, not a mediocre price "
+        "now. (3) Feed-in is enabled — surplus solar can be exported for the feed-in price, so weigh "
+        "store-vs-export, but never import-to-export. A charge_start_floor sets the minimum price the "
+        "operator is always willing to charge at; you may set charge_start_price higher (up to the "
+        "ceiling) when the energy balance justifies it, but the floor will be applied either way.")
 
 
 def _forecast_digest(fc, hours=18, step_min=30):
@@ -617,11 +625,15 @@ def _llm_dynamic(api_key, model, ctx):
 
 
 def apply_dynamic_params(strat, params, foundation):
-    """Merge the LLM's knobs into a copy of strat, hard-clamped to the foundation guardrails."""
+    """Merge the LLM's knobs into a copy of strat, hard-clamped to the foundation guardrails.
+    charge_start_price is floored at charge_start_floor (always willing to charge that cheap) and
+    capped at the price_ceiling: effective = clamp(max(LLM, floor), 0, ceiling)."""
     out = dict(strat)
+    floor = float(foundation.get("charge_start_floor", 0.0))
+    ceiling = foundation["price_ceiling"]
     csp = params.get("charge_start_price")
-    if isinstance(csp, (int, float)):
-        out["charge_start_price"] = round(max(0.0, min(float(csp), foundation["price_ceiling"])), 3)
+    base = float(csp) if isinstance(csp, (int, float)) else floor
+    out["charge_start_price"] = round(max(0.0, min(max(base, floor), ceiling)), 3)
     ts = params.get("target_soc")
     if isinstance(ts, (int, float)):
         lo, hi = strat.get("reserve_soc", 20) + 10, foundation["max_soc"]
@@ -835,7 +847,10 @@ def gather_and_decide(cfg: dict) -> dict:
         _WM["value"], _WM["options"] = w.get("value"), w.get("enumList")
     wm = {"value": _WM["value"], "enumList": _WM["options"]}
     sched = fox.scheduler_status()
-    charging = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
+    sched_active = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
+    # Persistence: if WE started a force-charge whose window hasn't elapsed, treat as charging even if
+    # this scheduler read came back flaky — so hysteresis doesn't drop a charge mid-window (see 11:22 bug).
+    charging = sched_active or (time.time() < _CHARGE["until"])
     demand_window = (ha.get_state(cfg["ha"].get("demand_window_entity")) == "on")
     weather = ha.get_state(cfg["ha"].get("weather_entity", "weather.forecast_home"))
 
@@ -857,12 +872,19 @@ def gather_and_decide(cfg: dict) -> dict:
     solar_bells = _solar_bells(sun_rise, sun_set, solar_tomorrow, solar_remaining)
 
     strat = cfg["strategy"]
-    foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90)}
+    foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90),
+                  "charge_start_floor": strat.get("charge_start_floor", 0.0)}
+    cap_kwh = float(strat.get("battery_capacity_kwh", 30))
+    stored_kwh = round(cap_kwh * soc / 100.0, 1)
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
         "solar_forecast_kwh": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow,
                                "system_size_kw": 6.975},
+        "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh, "soc_pct": round(soc),
+                    "reserve_soc": strat.get("reserve_soc"),
+                    "typical_daily_load_kwh": strat.get("typical_daily_load_kwh", 30)},
+        "feedin_price": prices.get("feedin"),
         "amber_price": prices.get("price"), "amber_descriptor": prices.get("descriptor"),
         "aemo_price": prices.get("aemo_price"),
         "soc_pct": round(soc), "solar_kw": round(pv, 2), "load_kw": round(load, 2),
@@ -891,7 +913,11 @@ def gather_and_decide(cfg: dict) -> dict:
         "llm": plan,
         "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
                     "target_soc": working.get("target_soc"),
-                    "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"]},
+                    "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
+                    "charge_start_floor": foundation["charge_start_floor"]},
+        "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
+        "feedin": prices.get("feedin"),
+        "sched_active": sched_active,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "scheduler": sched,
         "soc_updated_epoch": soc_ts,
@@ -947,12 +973,14 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             fox.enable_force_charge((now.hour, now.minute), (eh, em),
                                     strat["min_soc_on_grid"], eff_target,
                                     strat["force_charge_power_kw"])
+            _CHARGE["until"] = time.time() + mins * 60   # remember our intended charge window
             m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
             msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
     else:
         # Stop only on the transition out of charging — one write, not every cycle.
-        if ctrl.get("set_force_charge") and already_charging:
+        if ctrl.get("set_force_charge") and (already_charging or time.time() < _CHARGE["until"]):
             fox.disable_scheduler()
+            _CHARGE["until"] = 0.0
             msgs.append("force-charge STOP → revert to work mode")
             log_event("disable", "force-charge STOP → revert to work mode", {"band": rec.get("band")})
     if rec["action"] in ("SET_MODE", "FORCE_CHARGE") and ctrl.get("set_work_mode"):
@@ -986,6 +1014,7 @@ def scheduler_off(cfg: dict) -> str:
     if not cfg["control"].get("allow_control"):
         return "control disabled (control.allow_control=false)"
     FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]).disable_scheduler()
+    _CHARGE["until"] = 0.0
     log_event("disable", "manual: scheduler disabled → reverted to plain work mode")
     return "scheduler disabled → reverted to plain work mode"
 
@@ -1167,10 +1196,13 @@ def render(snap: dict, cfg: dict) -> str:
     atable = f"<table><tr><th>time</th><th>Amber $/kWh</th><th>band</th></tr>{arows}</table>" if arows else "<small>none</small>"
     ctrl = cfg["control"]
     dyn = snap.get("dynamic") or {}
+    bat = snap.get("battery") or {}
     dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
                 f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
                 f'<small>(set by {dyn.get("source","static")})</small></div>'
-                f'<small>foundation: never charge &gt; ${dyn.get("price_ceiling","?")} · max SoC {dyn.get("max_soc","?")}% · spend $0 then cheapest</small></div>')
+                f'<small>floor ${dyn.get("charge_start_floor","?")} ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")} · '
+                f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '
+                f'feed-in ${snap.get("feedin","?")}</small></div>')
     llm = snap.get("llm")
     if llm:
         verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.0
+- **charge_start_floor (default $0.15):** the controller is always willing to grid-charge at/below this price; the LLM may raise charge_start_price up to the ceiling but never below the floor. Stops the dynamic policy from chasing the exact forecast trough and leaving the battery flat in winter. Effective = clamp(max(LLM, floor), 0, ceiling).
+- **Energy-balance inputs to the LLM:** battery capacity + stored kWh (configurable `battery_capacity_kwh`, default 30 → 40 soon), typical daily load, and the live **feed-in price** — so it plans by usage vs capacity vs solar forecast, not price alone.
+- **Feed-in is now enabled** (export earns the Amber feed-in price): SITE_FACTS/GOAL updated — solar is no longer "wasted", store-vs-export is weighed, never import-to-export.
+- **Charge persistence:** once a force-charge starts, a flaky FoxESS scheduler read no longer drops it mid-window (fixes the hysteresis losing track and stopping early).
+
 ## 1.7.1
 - Forecast chart: **estimated solar overlay** (sunny times + intensity, half-sine scaled to forecast kWh, on a right kW axis), **real clock times** on the x-axis (was +Nh), Amber legend now **blue** to match the line, and a **wider page** (1280px) with a bigger chart.
 

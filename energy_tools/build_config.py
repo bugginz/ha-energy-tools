@@ -18,7 +18,8 @@ fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 
 S = fc["strategy"]
 for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",
-          "solar_defer_kw", "defer_if_cheaper_by", "price_ceiling"):
+          "solar_defer_kw", "defer_if_cheaper_by", "price_ceiling", "charge_start_floor",
+          "battery_capacity_kwh", "typical_daily_load_kwh"):
     if k in opt:
         S[k] = float(opt[k])
 for k in ("target_soc", "reserve_soc", "max_soc"):
