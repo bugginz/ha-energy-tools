@@ -499,6 +499,35 @@ _WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
+_NOTE = {"text": None}  # free-text operator steering note fed to the LLM
+
+
+def _state_dir(cfg):
+    return Path(cfg.get("state_dir") or str(Path.home() / "foxctl"))
+
+
+def get_note(cfg):
+    if _NOTE["text"] is None:
+        try:
+            _NOTE["text"] = (_state_dir(cfg) / "operator_note.txt").read_text().strip()
+        except Exception:
+            _NOTE["text"] = ""
+    return _NOTE["text"]
+
+
+def set_note(cfg, text):
+    text = (text or "").strip()[:1000]
+    _NOTE["text"] = text
+    try:
+        p = _state_dir(cfg) / "operator_note.txt"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    except Exception as e:
+        print(f"note persist failed: {e}", file=sys.stderr)
+    _LLM["last_ts"] = 0.0      # force a fresh LLM review so the note takes effect immediately
+    _LLM["last"] = None
+    log_event("note", f"operator note set: {text[:160]}" if text else "operator note cleared")
+    return text
 
 
 def _cons_path(cfg):
@@ -641,6 +670,10 @@ def _llm_dynamic(api_key, model, ctx):
               "use: charge_start_price ($/kWh at/below which it grid-charges) and target_soc (%). Stay "
               "within the foundation guardrails in the context (your values are hard-clamped anyway). "
               "Default charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing. "
+              "If operator_note is present, it is a DIRECT instruction from the human operator — follow it as "
+              "a priority within the guardrails (ceiling + SoC limits; the charge floor is relaxed while a "
+              "note is active). E.g. a note to 'let the battery discharge until the 9c midday trough' means "
+              "set charge_start_price low (~0.09) and don't charge until then. "
               "Reply with ONLY a JSON object: "
               '{"charge_start_price": <num>, "target_soc": <int>, '
               '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
@@ -677,7 +710,9 @@ def apply_dynamic_params(strat, params, foundation):
     charge_start_price is floored at charge_start_floor (always willing to charge that cheap) and
     capped at the price_ceiling: effective = clamp(max(LLM, floor), 0, ceiling)."""
     out = dict(strat)
-    floor = float(foundation.get("charge_start_floor", 0.0))
+    # A live operator note relaxes the charge floor so guidance like "wait for 9c" can take effect
+    # (still capped by the ceiling and SoC limits).
+    floor = 0.0 if foundation.get("note_active") else float(foundation.get("charge_start_floor", 0.0))
     ceiling = foundation["price_ceiling"]
     csp = params.get("charge_start_price")
     base = float(csp) if isinstance(csp, (int, float)) else floor
@@ -936,9 +971,10 @@ def gather_and_decide(cfg: dict) -> dict:
         ev_kw = ev_kw / 1000.0
     consumption = update_consumption(cfg, load, ev_kw)
 
+    note = get_note(cfg)
     strat = cfg["strategy"]
     foundation = {"price_ceiling": strat.get("price_ceiling", 0.20), "max_soc": strat.get("max_soc", 90),
-                  "charge_start_floor": strat.get("charge_start_floor", 0.0)}
+                  "charge_start_floor": strat.get("charge_start_floor", 0.0), "note_active": bool(note)}
     cap_kwh = float(strat.get("battery_capacity_kwh", 30))
     stored_kwh = round(cap_kwh * soc / 100.0, 1)
     # Use the measured rolling base load if we have enough history; else the static estimate.
@@ -947,6 +983,7 @@ def gather_and_decide(cfg: dict) -> dict:
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
+        "operator_note": note or None,
         "solar_forecast_kwh": {"today_total_forecast": solar_today_total,
                                "remaining_today_only": solar_remaining, "tomorrow": solar_tomorrow,
                                "system_size_kw": 6.975,
@@ -1136,6 +1173,12 @@ small{color:#666} #msg{margin:.5rem 0;color:#06c}
 }"""
 
 JS = """
+async function saveNote(){const t=document.getElementById('note').value;
+ document.getElementById('msg').textContent='saving note…';
+ const r=await fetch('/api/note',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+ const j=await r.json();document.getElementById('msg').textContent=JSON.stringify(j);
+ setTimeout(()=>location.reload(),1800);}
+function clearNote(){document.getElementById('note').value='';saveNote();}
 async function post(p){document.getElementById('msg').textContent='…';
  const r=await fetch(p,{method:'POST'});const j=await r.json();
  document.getElementById('msg').textContent=JSON.stringify(j);
@@ -1278,6 +1321,14 @@ def render(snap: dict, cfg: dict) -> str:
     ctrl = cfg["control"]
     dyn = snap.get("dynamic") or {}
     bat = snap.get("battery") or {}
+    note_esc = (get_note(cfg) or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    note_html = (f'<h3>Steering note <small>(free text — the LLM reads this as a priority instruction; '
+                 f'a note relaxes the charge floor)</small></h3>'
+                 f'<div class=card><textarea id=note rows=3 style="width:100%;font:inherit;box-sizing:border-box" '
+                 f'placeholder="e.g. Let the battery discharge until the ~9c midday trough, then charge.">{note_esc}</textarea>'
+                 f'<div style="margin-top:.4rem"><button onclick="saveNote()">Save note</button>'
+                 f'<button onclick="clearNote()">Clear</button> '
+                 f'<small>{"📣 active — floor relaxed, LLM following your note" if note_esc else "no note set"}</small></div></div>')
     dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
                 f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
                 f'<small>(set by {dyn.get("source","static")})</small></div>'
@@ -1324,6 +1375,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
 </div>
 {llm_html}
+{note_html}
 <h3>Forecast horizon <small>(what the policy reasons over — 18h ahead · drag the corner ↘ to resize)</small></h3>
 <div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap)}</div></div>
 <h3>Make things happen</h3>
@@ -1418,6 +1470,19 @@ def make_handler(cfg):
                 with LAST_LOCK:
                     LAST["llm"] = v
                 self._send(200, json.dumps(v or {"text": "LLM review disabled / no key"}, default=str), "application/json")
+            elif self.path.startswith("/api/note"):
+                try:
+                    n = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(n).decode()) if n else {}
+                    text = set_note(cfg, body.get("text", ""))
+                    snap = run_once(cfg, do_apply=False)   # re-evaluate immediately with the note
+                    rec = snap.get("recommendation", {})
+                    self._send(200, json.dumps({"note": text or "(cleared)",
+                                                "now": f"{rec.get('action')} fc={rec.get('force_charge')}",
+                                                "charge_start": (snap.get('dynamic') or {}).get('charge_start_price')},
+                                               default=str), "application/json")
+                except Exception as e:
+                    self._send(200, json.dumps({"error": str(e)}), "application/json")
             else:
                 self._send(404, "not found")
     return H

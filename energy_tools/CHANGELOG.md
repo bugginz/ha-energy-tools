@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.11.0
+- **Operator steering note.** A free-text box on the foxctl page (persisted to /data) that's fed to the dynamic LLM as a *priority* instruction — e.g. "let the battery discharge until the ~9c midday trough, then charge." While a note is active the charge floor is relaxed (still capped by the ceiling + SoC limits) so guidance to wait for cheaper prices actually takes effect; saving a note forces an immediate re-evaluation. Clear the box to return to normal.
+
 ## 1.10.0
 - **"Needs you" notifications.** The dynamic LLM now emits an `operator_action` only when it genuinely wants you to change something it can't (a foundation setting like the ceiling/floor/capacity). foxctl pushes a notification when there's a *new* such suggestion (de-duped, rate-limited by `notify_min_gap_min`, default 180 min) — so you're pinged to review only when it matters, not on every auto-tweak. Shown as a "📣 Needs you" banner on the page too. Options: `notify_on_llm_action`, `notify_min_gap_min`.
 - **Resizable forecast chart.** Drag the bottom-right corner to resize; the size persists across the page's auto-refresh (localStorage). Bigger default size + larger fonts for readability.
