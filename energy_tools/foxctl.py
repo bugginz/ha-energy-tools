@@ -521,6 +521,32 @@ _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + ca
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 _TELE = {"last": None, "ts": None}  # last good FoxESS telemetry (foxctl is the sole poller)
 _MQTT = {"client": None, "disc": False}
+_ENERGY = {"totals": {}, "last_ts": 0.0, "loaded": False}  # cumulative kWh per channel (total_increasing)
+
+
+def update_energy(cfg, powers):
+    """Integrate power channels (kW) into cumulative kWh counters (total_increasing) for the HA Energy
+    dashboard. Persisted to /data so they survive restarts (monotonic)."""
+    if not _ENERGY["loaded"]:
+        try:
+            d = json.loads((_state_dir(cfg) / "energy.json").read_text())
+            _ENERGY["totals"], _ENERGY["last_ts"] = d.get("totals", {}), d.get("last_ts", 0.0)
+        except Exception:
+            pass
+        _ENERGY["loaded"] = True
+    now = time.time()
+    dt_h = (now - _ENERGY["last_ts"]) / 3600.0 if _ENERGY["last_ts"] else 0.0
+    if 0 < dt_h <= 1.0:
+        for ch, kw in powers.items():
+            _ENERGY["totals"][ch] = round(_ENERGY["totals"].get(ch, 0.0) + max(0.0, kw) * dt_h, 4)
+    _ENERGY["last_ts"] = now
+    try:
+        p = _state_dir(cfg) / "energy.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"totals": _ENERGY["totals"], "last_ts": now}))
+    except Exception as e:
+        print(f"energy persist failed: {e}", file=sys.stderr)
+    return _ENERGY["totals"]
 _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
 _NOTE = {"text": None}  # free-text operator steering note fed to the LLM
 # Overrides: floor = a persisted base charge-floor override (None = use config); manual = a temporary
@@ -1004,15 +1030,29 @@ def run_band_actions(cfg: dict, snap: dict):
 
 # Telemetry sensors foxctl publishes to MQTT discovery (object_id, friendly, unit, device_class).
 MQTT_DISCOVERY = "homeassistant"
+# (object_id, friendly, unit, device_class, state_class). state_class total_increasing → Energy dashboard.
 _MQTT_SENSORS = [
-    ("foxctl_soc", "Battery SoC", "%", "battery"),
-    ("foxctl_pv_power", "Solar power", "kW", "power"),
-    ("foxctl_load_power", "House load", "kW", "power"),
-    ("foxctl_grid_power", "Grid import", "kW", "power"),
-    ("foxctl_feedin_power", "Grid export", "kW", "power"),
-    ("foxctl_battery_power", "Battery power", "kW", "power"),
-    ("foxctl_charge_start", "Charge-start price", "$/kWh", None),
-    ("foxctl_target_soc", "Target SoC", "%", None),
+    ("foxctl_soc", "Battery SoC", "%", "battery", "measurement"),
+    ("foxctl_pv_power", "Solar power", "kW", "power", "measurement"),
+    ("foxctl_load_power", "House load", "kW", "power", "measurement"),
+    ("foxctl_grid_power", "Grid import", "kW", "power", "measurement"),
+    ("foxctl_feedin_power", "Grid export", "kW", "power", "measurement"),
+    ("foxctl_battery_power", "Battery power", "kW", "power", "measurement"),
+    ("foxctl_battery_charge_power", "Battery charge power", "kW", "power", "measurement"),
+    ("foxctl_battery_discharge_power", "Battery discharge power", "kW", "power", "measurement"),
+    ("foxctl_pv1_power", "PV string 1", "kW", "power", "measurement"),
+    ("foxctl_pv2_power", "PV string 2", "kW", "power", "measurement"),
+    ("foxctl_pv3_power", "PV string 3", "kW", "power", "measurement"),
+    ("foxctl_pv4_power", "PV string 4", "kW", "power", "measurement"),
+    ("foxctl_pv5_power", "PV string 5", "kW", "power", "measurement"),
+    ("foxctl_pv6_power", "PV string 6", "kW", "power", "measurement"),
+    ("foxctl_grid_import_energy", "Grid import energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_grid_export_energy", "Grid export energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_battery_charge_energy", "Battery charge energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_battery_discharge_energy", "Battery discharge energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_solar_energy", "Solar energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_charge_start", "Charge-start price", "$/kWh", None, None),
+    ("foxctl_target_soc", "Target SoC", "%", None, None),
 ]
 
 
@@ -1042,7 +1082,7 @@ def mqtt_publish(cfg, snap):
         if not _MQTT["disc"]:
             dev = {"identifiers": ["foxctl_foxess"], "name": "FoxESS (foxctl)",
                    "manufacturer": "FoxESS", "model": "foxctl single-poller"}
-            for oid, name, unit, dclass in _MQTT_SENSORS:
+            for oid, name, unit, dclass, sclass in _MQTT_SENSORS:
                 conf = {"name": name, "unique_id": oid, "object_id": oid,
                         "state_topic": "foxctl/telemetry",
                         "value_template": "{{ value_json.%s }}" % oid[len("foxctl_"):],
@@ -1050,16 +1090,25 @@ def mqtt_publish(cfg, snap):
                         "device": dev}
                 if dclass:
                     conf["device_class"] = dclass
-                    conf["state_class"] = "measurement"
+                if sclass:
+                    conf["state_class"] = sclass
                 cli.publish(f"{MQTT_DISCOVERY}/sensor/{oid}/config", json.dumps(conf), qos=1, retain=True)
             cli.publish("foxctl/availability", "online", qos=1, retain=True)
             _MQTT["disc"] = True
             print(f"foxctl published MQTT discovery for {len(_MQTT_SENSORS)} sensors", file=sys.stderr)
         dyn = snap.get("dynamic") or {}
+        et = snap.get("energy_totals") or {}
+        ps = snap.get("pv_strings") or {}
         tele = {"soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
                 "load_power": snap.get("load_kw"), "grid_power": snap.get("grid_power"),
                 "feedin_power": snap.get("feedin_power"), "battery_power": snap.get("battery_power"),
+                "battery_charge_power": snap.get("bat_charge_power"),
+                "battery_discharge_power": snap.get("bat_discharge_power"),
+                "grid_import_energy": et.get("grid_import"), "grid_export_energy": et.get("grid_export"),
+                "battery_charge_energy": et.get("battery_charge"),
+                "battery_discharge_energy": et.get("battery_discharge"), "solar_energy": et.get("solar"),
                 "charge_start": dyn.get("charge_start_price"), "target_soc": dyn.get("target_soc")}
+        tele.update({k: round(v, 3) for k, v in ps.items()})
         cli.publish("foxctl/telemetry", json.dumps(tele), qos=0, retain=True)
     except Exception as e:
         print(f"mqtt publish failed: {e}", file=sys.stderr)
@@ -1077,7 +1126,8 @@ def gather_and_decide(cfg: dict) -> dict:
     # (one call), is published to MQTT for the dashboards, and on a fetch failure we reuse the last
     # good values (cached) and flag stale so control holds. No dependency on the foxess-ha integration.
     VARS = ["SoC", "pvPower", "loadsPower", "gridConsumptionPower", "feedinPower",
-            "batChargePower", "batDischargePower"]
+            "batChargePower", "batDischargePower",
+            "pv1Power", "pv2Power", "pv3Power", "pv4Power", "pv5Power", "pv6Power"]
     real = {}; tsrc = "FoxESS"
     try:
         real = fox.real(VARS)
@@ -1094,7 +1144,14 @@ def gather_and_decide(cfg: dict) -> dict:
     load = float(real.get("loadsPower") or 0)
     grid_power = float(real.get("gridConsumptionPower") or 0)
     feedin_power = float(real.get("feedinPower") or 0)
-    battery_power = round(float(real.get("batChargePower") or 0) - float(real.get("batDischargePower") or 0), 3)
+    bat_charge_power = float(real.get("batChargePower") or 0)
+    bat_discharge_power = float(real.get("batDischargePower") or 0)
+    battery_power = round(bat_charge_power - bat_discharge_power, 3)
+    pv_strings = {f"pv{i}_power": float(real.get(f"pv{i}Power") or 0) for i in range(1, 7)}
+    # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
+    energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
+                                 "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
+                                 "solar": pv}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -1215,6 +1272,10 @@ def gather_and_decide(cfg: dict) -> dict:
         "grid_power": grid_power,
         "feedin_power": feedin_power,
         "battery_power": battery_power,
+        "bat_charge_power": bat_charge_power,
+        "bat_discharge_power": bat_discharge_power,
+        "pv_strings": pv_strings,
+        "energy_totals": energy,
         "sched_active": sched_active,
         "note": note,
         "override": {"floor": _OV["floor"], "manual": _OV["manual"]},

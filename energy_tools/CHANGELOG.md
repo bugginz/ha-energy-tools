@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.15.0
+- Full single-poller telemetry set: foxctl now also publishes per-string PV (pv1-6), battery charge/discharge power, and **cumulative kWh energy counters** (grid import/export, battery charge/discharge, solar) for the HA Energy dashboard. 21 sensors total. Prepares removal of foxess-ha.
+
 ## 1.14.0
 - **foxctl is now the single FoxESS poller.** Telemetry (SoC, PV, load, grid import/export, battery power) comes straight from the FoxESS API each cycle and is **published to MQTT discovery** as `sensor.foxctl_*` (device "FoxESS (foxctl)"), plus the live charge-start price and target SoC. Decisions use foxctl's own poll — no dependency on the foxess-ha integration, which can be disabled to end the dual-poller rate-limit freezes. On a FoxESS fetch failure it reuses the last good values and holds control (stale safety). `publish_telemetry` option.
 
