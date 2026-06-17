@@ -907,6 +907,7 @@ def gather_and_decide(cfg: dict) -> dict:
         return round(tot, 2) if seen else None
     solar_remaining = _sum_ents(cfg["ha"].get("solar_fc_remaining_entities"))
     solar_tomorrow = _sum_ents(cfg["ha"].get("solar_fc_tomorrow_entities"))
+    solar_today_total = _sum_ents(cfg["ha"].get("solar_fc_today_entities"))   # full-day forecast (not leftover)
     try:
         sa = ha._state("sun.sun")["attributes"]
         sun_rise, sun_set = sa.get("next_rising"), sa.get("next_setting")
@@ -931,8 +932,12 @@ def gather_and_decide(cfg: dict) -> dict:
     # Dynamic policy: the LLM tunes charge_start_price + target_soc within the foundation guardrails.
     plan_ctx = {
         "goal": GOAL, "site": SITE_FACTS, "month_now": datetime.now().month, "weather": weather,
-        "solar_forecast_kwh": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow,
-                               "system_size_kw": 6.975},
+        "solar_forecast_kwh": {"today_total_forecast": solar_today_total,
+                               "remaining_today_only": solar_remaining, "tomorrow": solar_tomorrow,
+                               "system_size_kw": 6.975,
+                               "note": "today_total_forecast = whole day; remaining_today_only = future "
+                                       "part still to come (small in the evening). Use remaining + tomorrow "
+                                       "for forward planning, NOT remaining as 'today's solar'."},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh, "soc_pct": round(soc),
                     "reserve_soc": strat.get("reserve_soc"),
                     "typical_daily_load_kwh": typical_load},
@@ -961,7 +966,8 @@ def gather_and_decide(cfg: dict) -> dict:
     return {
         "demand_window": demand_window,
         "weather": weather,
-        "solar_forecast": {"remaining_today": solar_remaining, "tomorrow": solar_tomorrow},
+        "solar_forecast": {"today_total": solar_today_total, "remaining_today": solar_remaining,
+                           "tomorrow": solar_tomorrow},
         "solar_bells": solar_bells,
         "llm": plan,
         "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
@@ -1276,7 +1282,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
- <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('tomorrow','?')} <small>kWh</small></div><small>tomorrow · {(snap.get('solar_forecast') or {}).get('remaining_today','?')} left today</small></div>
+ <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}</small></div>
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.1
+- Fix misleading solar forecast in the LLM context: it was only sent remaining-today (small in the evening), which it mislabelled as "today". Now sends today_total_forecast + remaining_today_only + tomorrow with an explicit note; UI shows today total too.
+
 ## 1.9.0
 - **Rolling measured consumption.** foxctl integrates `foxess_load_power` itself into per-day kWh buckets (persisted to /data, restart-safe) and feeds the dynamic policy a real rolling daily-usage average instead of a static guess — once 2+ days are recorded. New "Usage (rolling avg)" card.
 - **EV-aware (optional).** Set `ev_power_entity` to a Tuya/energy-monitoring plug's power sensor and foxctl tracks EV charging separately (total vs base load), so an occasional car charge doesn't distort the predictable base load fed to the LLM. Inert until configured.
