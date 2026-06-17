@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.8.1
+- Fix feed-in entity: use sensor.amber_feed_in_price (the site's home_feed_in_price is empty) so the export price reaches the LLM.
+
 ## 1.8.0
 - **charge_start_floor (default $0.15):** the controller is always willing to grid-charge at/below this price; the LLM may raise charge_start_price up to the ceiling but never below the floor. Stops the dynamic policy from chasing the exact forecast trough and leaving the battery flat in winter. Effective = clamp(max(LLM, floor), 0, ceiling).
 - **Energy-balance inputs to the LLM:** battery capacity + stored kWh (configurable `battery_capacity_kwh`, default 30 → 40 soon), typical daily load, and the live **feed-in price** — so it plans by usage vs capacity vs solar forecast, not price alone.

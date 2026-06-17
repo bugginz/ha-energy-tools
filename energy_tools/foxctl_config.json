@@ -9,7 +9,7 @@
     "amber_price_entity": "sensor.home_general_price",
     "amber_forecast_entity": "sensor.home_general_forecast",
     "aemo_forecast_entity": "sensor.aemo_nem_nsw1_current_30min_forecast",
-    "amber_feedin_entity": "sensor.home_feed_in_price",
+    "amber_feedin_entity": "sensor.amber_feed_in_price",
     "soc_entity": "sensor.foxess_bat_soc",
     "pv_entity": "sensor.foxess_pv_power",
     "load_entity": "sensor.foxess_load_power",
