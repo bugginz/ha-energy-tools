@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.9.2
+- Packaging fix: the version string had been stuck at 1.8.0, so the 1.8.1/1.9.0/1.9.1 changes (feed-in entity fix, rolling consumption, EV hook, solar today_total) never advanced in the add-on store. This bump ships them all.
+
 ## 1.9.1
 - Fix misleading solar forecast in the LLM context: it was only sent remaining-today (small in the evening), which it mislabelled as "today". Now sends today_total_forecast + remaining_today_only + tomorrow with an explicit note; UI shows today total too.
 
