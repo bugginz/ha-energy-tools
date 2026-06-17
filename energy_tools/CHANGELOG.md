@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.14.0
+- **foxctl is now the single FoxESS poller.** Telemetry (SoC, PV, load, grid import/export, battery power) comes straight from the FoxESS API each cycle and is **published to MQTT discovery** as `sensor.foxctl_*` (device "FoxESS (foxctl)"), plus the live charge-start price and target SoC. Decisions use foxctl's own poll — no dependency on the foxess-ha integration, which can be disabled to end the dual-poller rate-limit freezes. On a FoxESS fetch failure it reuses the last good values and holds control (stale safety). `publish_telemetry` option.
+
 ## 1.13.1
 - Fix stale price: foxctl only syncs its poll cadence to the foxess-HA sensor when that sensor is fresh. When foxess-HA is frozen (it intermittently does), it was anchoring the schedule to a dead timestamp and drifting, so the displayed Amber price went several minutes stale. Now falls back to a steady fixed poll interval, keeping the price current.
 

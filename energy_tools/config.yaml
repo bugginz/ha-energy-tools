@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.13.1"
+version: "1.14.0"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -37,6 +37,7 @@ options:
   dynamic_policy: true
   auto_sell: true
   sell_price: 0.50
+  publish_telemetry: true
   horizon_charge: true
   horizon_hours: 18
   horizon_window_margin: 0.03
@@ -82,6 +83,7 @@ schema:
   dynamic_policy: bool
   auto_sell: bool
   sell_price: float
+  publish_telemetry: bool
   horizon_charge: bool
   horizon_hours: int(1,48)
   horizon_window_margin: float

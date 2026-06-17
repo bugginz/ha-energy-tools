@@ -519,6 +519,8 @@ LAST_LOCK = Lock()
 _WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every Nth cycle)
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
+_TELE = {"last": None, "ts": None}  # last good FoxESS telemetry (foxctl is the sole poller)
+_MQTT = {"client": None, "disc": False}
 _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
 _NOTE = {"text": None}  # free-text operator steering note fed to the LLM
 # Overrides: floor = a persisted base charge-floor override (None = use config); manual = a temporary
@@ -889,7 +891,7 @@ def maybe_notify(cfg, snap):
                     f"Feed-in ${snap.get('feedin')}/kWh is silly high — exporting battery to grid down to "
                     f"{rec.get('sell_floor')}% (overnight buffer kept)."))
     _NOTIFY["last_selling"] = selling
-    stale = snap.get("telemetry_source") == "HA(stale)"
+    stale = "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or "")
     if nc.get("on_stale", True) and stale and not _NOTIFY["last_stale"]:
         out.append(("⚠️ foxctl telemetry stale",
                     "HA sensors frozen and FoxESS fallback failed — control on safety hold until data recovers."))
@@ -1000,6 +1002,69 @@ def run_band_actions(cfg: dict, snap: dict):
             log_event("action", f"band→{band}: FAILED {c}: {e}", {"band": band})
 
 
+# Telemetry sensors foxctl publishes to MQTT discovery (object_id, friendly, unit, device_class).
+MQTT_DISCOVERY = "homeassistant"
+_MQTT_SENSORS = [
+    ("foxctl_soc", "Battery SoC", "%", "battery"),
+    ("foxctl_pv_power", "Solar power", "kW", "power"),
+    ("foxctl_load_power", "House load", "kW", "power"),
+    ("foxctl_grid_power", "Grid import", "kW", "power"),
+    ("foxctl_feedin_power", "Grid export", "kW", "power"),
+    ("foxctl_battery_power", "Battery power", "kW", "power"),
+    ("foxctl_charge_start", "Charge-start price", "$/kWh", None),
+    ("foxctl_target_soc", "Target SoC", "%", None),
+]
+
+
+def mqtt_publish(cfg, snap):
+    """Publish FoxESS telemetry + foxctl status to MQTT discovery so HA gets sensor.foxctl_* — the
+    dashboards then read these instead of the flaky foxess-ha integration. Best-effort/non-fatal."""
+    mc = cfg.get("mqtt") or {}
+    if not mc.get("publish"):
+        return
+    try:
+        import paho.mqtt.client as mqtt
+    except Exception:
+        return
+    try:
+        cli = _MQTT["client"]
+        if cli is None:
+            try:
+                cli = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="foxctl")
+            except (AttributeError, TypeError):
+                cli = mqtt.Client(client_id="foxctl")
+            if mc.get("user"):
+                cli.username_pw_set(mc["user"], mc.get("pass", ""))
+            cli.will_set("foxctl/availability", "offline", qos=1, retain=True)
+            cli.connect(mc.get("host", "core-mosquitto"), int(mc.get("port", 1883)), 60)
+            cli.loop_start()
+            _MQTT["client"] = cli
+        if not _MQTT["disc"]:
+            dev = {"identifiers": ["foxctl_foxess"], "name": "FoxESS (foxctl)",
+                   "manufacturer": "FoxESS", "model": "foxctl single-poller"}
+            for oid, name, unit, dclass in _MQTT_SENSORS:
+                conf = {"name": name, "unique_id": oid, "object_id": oid,
+                        "state_topic": "foxctl/telemetry",
+                        "value_template": "{{ value_json.%s }}" % oid[len("foxctl_"):],
+                        "unit_of_measurement": unit, "availability_topic": "foxctl/availability",
+                        "device": dev}
+                if dclass:
+                    conf["device_class"] = dclass
+                    conf["state_class"] = "measurement"
+                cli.publish(f"{MQTT_DISCOVERY}/sensor/{oid}/config", json.dumps(conf), qos=1, retain=True)
+            cli.publish("foxctl/availability", "online", qos=1, retain=True)
+            _MQTT["disc"] = True
+            print(f"foxctl published MQTT discovery for {len(_MQTT_SENSORS)} sensors", file=sys.stderr)
+        dyn = snap.get("dynamic") or {}
+        tele = {"soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
+                "load_power": snap.get("load_kw"), "grid_power": snap.get("grid_power"),
+                "feedin_power": snap.get("feedin_power"), "battery_power": snap.get("battery_power"),
+                "charge_start": dyn.get("charge_start_price"), "target_soc": dyn.get("target_soc")}
+        cli.publish("foxctl/telemetry", json.dumps(tele), qos=0, retain=True)
+    except Exception as e:
+        print(f"mqtt publish failed: {e}", file=sys.stderr)
+
+
 def gather_and_decide(cfg: dict) -> dict:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
@@ -1008,27 +1073,28 @@ def gather_and_decide(cfg: dict) -> dict:
                   cfg["ha"].get("amber_feedin_entity"))
 
     prices = ha.snapshot()
-    # Telemetry from HA (foxess-ha integration) to avoid a 2nd FoxESS poller. Fall back to
-    # FoxESS only if HA values are unavailable (e.g. integration down).
-    soc, soc_ts = ha.get_value_age(cfg["ha"].get("soc_entity"))
-    pv = ha.get_num(cfg["ha"].get("pv_entity"))
-    load = ha.get_num(cfg["ha"].get("load_entity"))
-    # The foxess-ha integration can silently go stale (keeps old values). If the HA telemetry is
-    # missing OR older than telemetry_stale_s, pull authoritative values straight from FoxESS.
-    stale_s = cfg.get("telemetry_stale_s", 900)
-    ha_stale = (soc_ts is None) or ((time.time() - soc_ts) > stale_s)
-    real = {}; tsrc = "HA"
-    if soc is None or pv is None or ha_stale:
-        try:
-            real = fox.real(["SoC", "pvPower", "loadsPower"])
-            soc = real.get("SoC"); pv = real.get("pvPower"); load = real.get("loadsPower")
-            tsrc = "FoxESS"
-        except Exception as e:
-            print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
-            tsrc = "HA(stale)"
-    soc = float(soc or 0)
-    pv = float(pv or 0)
-    load = float(load or 0)
+    # foxctl is the SINGLE FoxESS poller: telemetry comes straight from the FoxESS API each cycle
+    # (one call), is published to MQTT for the dashboards, and on a fetch failure we reuse the last
+    # good values (cached) and flag stale so control holds. No dependency on the foxess-ha integration.
+    VARS = ["SoC", "pvPower", "loadsPower", "gridConsumptionPower", "feedinPower",
+            "batChargePower", "batDischargePower"]
+    real = {}; tsrc = "FoxESS"
+    try:
+        real = fox.real(VARS)
+        _TELE["last"] = real
+        _TELE["ts"] = time.time()
+        soc_ts = _TELE["ts"]
+    except Exception as e:
+        print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
+        real = _TELE.get("last") or {}
+        soc_ts = _TELE.get("ts")
+        tsrc = "FoxESS(stale)" if real else "FoxESS(down)"
+    soc = float(real.get("SoC") or 0)
+    pv = float(real.get("pvPower") or 0)
+    load = float(real.get("loadsPower") or 0)
+    grid_power = float(real.get("gridConsumptionPower") or 0)
+    feedin_power = float(real.get("feedinPower") or 0)
+    battery_power = round(float(real.get("batChargePower") or 0) - float(real.get("batDischargePower") or 0), 3)
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -1146,6 +1212,9 @@ def gather_and_decide(cfg: dict) -> dict:
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
         "feedin": prices.get("feedin"),
+        "grid_power": grid_power,
+        "feedin_power": feedin_power,
+        "battery_power": battery_power,
         "sched_active": sched_active,
         "note": note,
         "override": {"floor": _OV["floor"], "manual": _OV["manual"]},
@@ -1218,10 +1287,9 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     rec = snap["recommendation"]
     if not ctrl.get("allow_control"):
         return "control disabled (control.allow_control=false) — not applying"
-    # Safety: never act on stale telemetry. tsrc="HA(stale)" means HA was stale AND the
-    # FoxESS fallback fetch failed, so SoC/PV may be wrong — refuse to write to the inverter.
-    if snap.get("telemetry_source") == "HA(stale)":
-        return "telemetry STALE (HA frozen + FoxESS fetch failed) — not applying (safety hold)"
+    # Safety: never act on stale telemetry (FoxESS poll failed → using cached/old values).
+    if "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or ""):
+        return "telemetry STALE (FoxESS poll failed) — not applying (safety hold)"
     msgs = []
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     strat = cfg["strategy"]
@@ -1322,6 +1390,7 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
         snap["applied"] = mo_msg
     elif do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
+    mqtt_publish(cfg, snap)
     run_band_actions(cfg, snap)
     maybe_notify(cfg, snap)
     append_log(snap)
@@ -1589,10 +1658,10 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
- <div class=card style="{'background:#fff3e0;border-color:#e67e22' if snap.get('telemetry_source') != 'HA' else ''}"><small>Data age / source</small>
+ <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>
    <div class=big><span id=age>{snap.get('data_age_s') if snap.get('data_age_s') is not None else '–'}</span>s
    · <span id=countdown>–</span></div>
-   <small>{'⚠️ STALE — control on hold' if snap.get('telemetry_source')=='HA(stale)' else ('via FoxESS (HA stale)' if snap.get('telemetry_source')=='FoxESS' else 'via HA · foxess 5-min refresh')}</small></div>
+   <small>{'⚠️ STALE — control on hold' if ('stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '')) else 'FoxESS direct (sole poller)'}</small></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ''}">
    <small>Force-charge</small><div class=big>{('⚡ ON' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ('sched on' if (snap.get('scheduler') or {}).get('enabled') else 'OFF'))}</div>
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>

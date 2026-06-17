@@ -34,6 +34,11 @@
       "sensor.energy_production_tomorrow_4"
     ]
   },
+  "mqtt": {
+    "publish": true,
+    "host": "core-mosquitto",
+    "port": 1883
+  },
   "strategy": {
     "cheap_price": 0.1,
     "expensive_price": 0.35,

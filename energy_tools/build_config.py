@@ -18,6 +18,10 @@ fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 fc["state_dir"] = "/data/.config/foxctl"   # persistent across restarts/updates (rolling consumption)
 if opt.get("ev_power_entity"):
     fc["ha"]["ev_power_entity"] = opt["ev_power_entity"]
+# foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
+fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
+              "host": "core-mosquitto", "port": 1883,
+              "user": opt.get("mqtt_user", ""), "pass": opt.get("mqtt_pass", "")}
 
 S = fc["strategy"]
 for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",
