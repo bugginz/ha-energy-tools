@@ -61,6 +61,8 @@ N["on_llm_disagree"] = bool(opt.get("notify_on_llm_disagree", True))
 N["on_spike"] = bool(opt.get("notify_on_spike", True))
 N["on_ludicrous"] = bool(opt.get("notify_on_ludicrous", True))
 N["on_stale"] = bool(opt.get("notify_on_stale", True))
+N["on_llm_action"] = bool(opt.get("notify_on_llm_action", True))
+N["min_gap_min"] = int(opt.get("notify_min_gap_min", 180))
 
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
 

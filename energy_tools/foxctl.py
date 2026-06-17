@@ -643,11 +643,15 @@ def _llm_dynamic(api_key, model, ctx):
               "Default charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing. "
               "Reply with ONLY a JSON object: "
               '{"charge_start_price": <num>, "target_soc": <int>, '
-              '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences"}. '
-              "rating = how much your knobs differ from the current baseline (AGREE=same, REFINE=minor, "
-              "DISAGREE=material change worth a human glance).")
+              '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
+              '"operator_action": "<short suggestion that REQUIRES the human operator — e.g. change a '
+              'foundation setting they control (price_ceiling, charge_start_floor, max_soc, '
+              'battery_capacity_kwh) — or empty string if nothing needs them>"}. '
+              "Only fill operator_action when you genuinely want a human to change something you cannot; "
+              "leave it empty for normal auto-applied tuning. rating: AGREE=same as baseline, REFINE=minor "
+              "auto tweak, DISAGREE=you think the policy/state is wrong.")
     user = "Context (JSON):\n" + json.dumps(ctx)
-    body = json.dumps({"model": model, "max_tokens": 300, "system": system,
+    body = json.dumps({"model": model, "max_tokens": 320, "system": system,
                        "messages": [{"role": "user", "content": user}]}).encode()
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
@@ -662,8 +666,9 @@ def _llm_dynamic(api_key, model, ctx):
         params["charge_start_price"] = float(obj["charge_start_price"])
     if isinstance(obj.get("target_soc"), (int, float)):
         params["target_soc"] = int(obj["target_soc"])
+    action = str(obj.get("operator_action", "") or "").strip()
     return {"params": params, "rating": rating, "agree": rating == "AGREE",
-            "text": obj.get("reason", text)[:400],
+            "text": obj.get("reason", text)[:400], "operator_action": action[:300],
             "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
 
 
@@ -708,7 +713,8 @@ def maybe_llm_review(cfg, ctx, force=False):
     return v
 
 
-_NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False}
+_NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
+           "last_action": None, "last_action_ts": 0.0}
 
 
 def ha_notify(cfg, title, message):
@@ -742,6 +748,15 @@ def maybe_notify(cfg, snap):
     if nc.get("on_llm_disagree", True) and llm.get("rating") == "DISAGREE" and llm.get("ts") != _NOTIFY["last_llm_ts"]:
         _NOTIFY["last_llm_ts"] = llm.get("ts")
         out.append(("🤖 foxctl review", "Claude disagrees with the plan: " + llm.get("text", "")[:150]))
+    # "Something for YOU to do": the LLM raised an operator action (e.g. change a foundation setting).
+    # Notify when it's a NEW suggestion, rate-limited so the same one doesn't nag.
+    action = (llm.get("operator_action") or "").strip()
+    gap = nc.get("min_gap_min", 180) * 60
+    if (nc.get("on_llm_action", True) and action and action != _NOTIFY["last_action"]
+            and (time.time() - _NOTIFY["last_action_ts"]) >= gap):
+        _NOTIFY["last_action"] = action
+        _NOTIFY["last_action_ts"] = time.time()
+        out.append(("🤖 foxctl — review suggestion", action[:200]))
     stale = snap.get("telemetry_source") == "HA(stale)"
     if nc.get("on_stale", True) and stale and not _NOTIFY["last_stale"]:
         out.append(("⚠️ foxctl telemetry stale",
@@ -1107,7 +1122,10 @@ button:hover{background:#eee} .danger{border-color:#c0392b;color:#c0392b}
 table{border-collapse:collapse;margin-top:.5rem;font-size:.85rem;width:100%}
 td,th{border:1px solid #eee;padding:3px 7px;text-align:right} th{background:#fafafa}
 small{color:#666} #msg{margin:.5rem 0;color:#06c}
+.chartwrap{resize:both;overflow:auto;width:100%;height:360px;min-width:320px;min-height:180px;max-width:none;border:1px dashed #bbb;border-radius:8px}
+.chartwrap svg{width:100%;height:100%;display:block}
 @media (prefers-color-scheme: dark){
+ .chartwrap{border-color:#4a505a}
  body{background:#111418;color:#e3e3e3}
  .card{background:#1e2227;border-color:#3a3f46}
  .rec{background:#15263a;border-color:#3a567a}
@@ -1136,7 +1154,10 @@ async function tick(){const r=await fetch('/api/state');const d=await r.json();
    el.textContent='next in '+s+'s';}
  if(d.soc_updated_epoch){ae.textContent=Math.round(Date.now()/1000-d.soc_updated_epoch);}}
 setInterval(tick,1000);tick();
-refreshLog();refreshEvents();"""
+refreshLog();refreshEvents();
+(function(){const c=document.getElementById('chartwrap');if(!c)return;
+ try{const s=JSON.parse(localStorage.getItem('foxctl_chart')||'{}');if(s.w)c.style.width=s.w;if(s.h)c.style.height=s.h;}catch(e){}
+ c.addEventListener('mouseup',()=>{try{localStorage.setItem('foxctl_chart',JSON.stringify({w:c.style.width,h:c.style.height}));}catch(e){}});})();"""
 
 
 def render_forecast_svg(snap: dict) -> str:
@@ -1175,7 +1196,7 @@ def render_forecast_svg(snap: dict) -> str:
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
     SY = lambda kw: padT + ih * (1 - kw / skw)   # solar power → y (right axis)
-    out = [f'<svg viewBox="0 0 {W} {H}" width="100%" style="max-width:{W}px;font:12px system-ui">']
+    out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:14px system-ui">']
     # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis
     for b in bells:
         s, e = max(b["s"], xmin), min(b["e"], xmax)
@@ -1267,8 +1288,11 @@ def render(snap: dict, cfg: dict) -> str:
     if llm:
         verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",
                    "DISAGREE": "🔍 DISAGREE"}.get(llm.get("rating"), "⚠️ n/a")
+        act = (llm.get("operator_action") or "").strip()
+        act_html = (f'<div style="margin-top:.4rem;padding:.5rem .7rem;background:#fff3cd;color:#5c4600;'
+                    f'border-radius:8px"><b>📣 Needs you:</b> {act}</div>') if act else ""
         llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 DYNAMIC LLM ({llm.get("model","")} · {llm.get("ts","")})</small>'
-                    f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div></div>')
+                    f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div>{act_html}</div>')
     else:
         llm_html = '<div class="card"><small>🤖 Dynamic LLM</small><div>off (enable llm_review + set API key in add-on options)</div></div>'
     llm_html = dyn_html + llm_html
@@ -1300,8 +1324,8 @@ def render(snap: dict, cfg: dict) -> str:
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
 </div>
 {llm_html}
-<h3>Forecast horizon <small>(what the policy reasons over — 18h ahead)</small></h3>
-<div class=card>{render_forecast_svg(snap)}</div>
+<h3>Forecast horizon <small>(what the policy reasons over — 18h ahead · drag the corner ↘ to resize)</small></h3>
+<div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap)}</div></div>
 <h3>Make things happen</h3>
 <button onclick="post('/api/evaluate')">Evaluate now</button>
 <button onclick="post('/api/apply')">Apply recommendation</button>

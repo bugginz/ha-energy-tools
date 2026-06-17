@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.0
+- **"Needs you" notifications.** The dynamic LLM now emits an `operator_action` only when it genuinely wants you to change something it can't (a foundation setting like the ceiling/floor/capacity). foxctl pushes a notification when there's a *new* such suggestion (de-duped, rate-limited by `notify_min_gap_min`, default 180 min) — so you're pinged to review only when it matters, not on every auto-tweak. Shown as a "📣 Needs you" banner on the page too. Options: `notify_on_llm_action`, `notify_min_gap_min`.
+- **Resizable forecast chart.** Drag the bottom-right corner to resize; the size persists across the page's auto-refresh (localStorage). Bigger default size + larger fonts for readability.
+
 ## 1.9.2
 - Packaging fix: the version string had been stuck at 1.8.0, so the 1.8.1/1.9.0/1.9.1 changes (feed-in entity fix, rolling consumption, EV hook, solar today_total) never advanced in the add-on store. This bump ships them all.
 
