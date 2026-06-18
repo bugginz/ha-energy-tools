@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.1
+- **Fix "Apply recommendation" appearing to do nothing.** The `/api/apply` button ran the apply but never wrote the result back into the shared snapshot the dashboard renders, so the header kept showing `applied: None` after a successful apply (and "Evaluate now" reset it to None for up to a poll interval). The outcome is now persisted to the header (`apply_and_record`). Long-standing since v1.3.1, not a regression.
+- **Live control toggles.** The loop now reloads the `control` block (`allow_control`, `auto_apply`, `set_force_charge`, …) from the config each cycle (`refresh_control`), so toggling auto-apply takes effect on the next cycle instead of needing a process restart. In-memory tuned strategy params are untouched.
+- First unit tests (`tests/test_foxctl.py`, stdlib `unittest`): force-charge decision branch, foundation price-ceiling veto, apply-persists-to-header, and live control reload. Run with `python3 -m unittest discover -s tests`.
+
 ## 1.15.0
 - Full single-poller telemetry set: foxctl now also publishes per-string PV (pv1-6), battery charge/discharge power, and **cumulative kWh energy counters** (grid import/export, battery charge/discharge, solar) for the HA Energy dashboard. 21 sensors total. Prepares removal of foxess-ha.
 

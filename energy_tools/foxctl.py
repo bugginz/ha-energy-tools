@@ -1343,6 +1343,16 @@ def manual_tick(cfg, snap):
     return msg
 
 
+def apply_and_record(cfg: dict, snap: dict) -> str:
+    """Apply the recommendation and persist the outcome into the shared LAST snapshot so the dashboard
+    header reflects what just happened (instead of the stale value from the previous evaluate)."""
+    msg = apply_recommendation(cfg, snap)
+    with LAST_LOCK:
+        if LAST:
+            LAST["applied"] = msg
+    return msg
+
+
 def apply_recommendation(cfg: dict, snap: dict) -> str:
     ctrl = cfg["control"]
     rec = snap["recommendation"]
@@ -1805,7 +1815,7 @@ def make_handler(cfg):
                     snap = dict(LAST)
                 if not snap:
                     snap = run_once(cfg, do_apply=False)
-                msg = apply_recommendation(cfg, snap)
+                msg = apply_and_record(cfg, snap)    # persist so the dashboard header reflects the apply
                 self._send(200, json.dumps({"applied": msg}, default=str), "application/json")
             elif self.path.startswith("/api/force_charge_test"):
                 try:
@@ -1914,11 +1924,24 @@ def serve(cfg: dict):
     httpd.serve_forever()
 
 
+def refresh_control(cfg: dict) -> bool:
+    """Reload control flags from disk into cfg["control"] so toggling allow_control / auto_apply in the
+    config takes effect without restarting the process. Best-effort: keep current values if the file is
+    missing or mid-write. Only the control block is refreshed — in-memory tuned params (cfg["strategy"])
+    are left untouched. Returns the effective auto-apply flag (allow_control AND auto_apply)."""
+    try:
+        disk_ctrl = json.loads(CONFIG_PATH.read_text()).get("control", {})
+        cfg["control"].update({k: disk_ctrl[k] for k in cfg["control"] if k in disk_ctrl})
+    except Exception as e:
+        print(f"{datetime.now().isoformat(timespec='seconds')} control reload skipped: {e}", file=sys.stderr)
+    return bool(cfg["control"].get("allow_control") and cfg["control"].get("auto_apply"))
+
+
 def loop(cfg: dict):
-    auto = cfg["control"].get("allow_control") and cfg["control"].get("auto_apply")
     poll = cfg["poll_seconds"]
     lag = int(cfg.get("sync_lag_seconds", 20))  # read shortly AFTER foxess-ha refreshes
     while True:
+        auto = refresh_control(cfg)
         try:
             snap = run_once(cfg, do_apply=auto)
             r = snap["recommendation"]
