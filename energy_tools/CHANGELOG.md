@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.16.0
+- **ZeroHero mode** (GloBird) — set `tariff_mode: zerohero` to switch from Amber price-forecasting to a time-of-use schedule: grid-charge FREE 11:00–14:00 to max SoC; 18:00–21:00 cover all load from battery (zero grid import = $1/day credit) and export surplus at 9c down to a computed overnight survival floor; run off battery otherwise. No LLM/price logic in this mode. Defaults to `amber` (no change until you flip it).
+
 ## 1.15.1
 - **Fix "Apply recommendation" appearing to do nothing.** The `/api/apply` button ran the apply but never wrote the result back into the shared snapshot the dashboard renders, so the header kept showing `applied: None` after a successful apply (and "Evaluate now" reset it to None for up to a poll interval). The outcome is now persisted to the header (`apply_and_record`). Long-standing since v1.3.1, not a regression.
 - **Live control toggles.** The loop now reloads the `control` block (`allow_control`, `auto_apply`, `set_force_charge`, …) from the config each cycle (`refresh_control`), so toggling auto-apply takes effect on the next cycle instead of needing a process restart. In-memory tuned strategy params are untouched.

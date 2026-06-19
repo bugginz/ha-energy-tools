@@ -1114,6 +1114,50 @@ def mqtt_publish(cfg, snap):
         print(f"mqtt publish failed: {e}", file=sys.stderr)
 
 
+def decide_zerohero(soc, work_mode, strat, survival_soc):
+    """GloBird ZeroHero time-of-use strategy (no price forecasting):
+      • 11:00–14:00 free window  → grid-charge battery to full (FREE).
+      • 18:00–21:00 evening peak → cover all load from battery (zero grid import → $1/day credit)
+        and export surplus to grid (9c + Super Export) down to the overnight survival floor.
+      • all other times          → run off battery, avoid grid import.
+    Returns a rec dict in the same shape decide() produces."""
+    z = strat.get("zerohero", {})
+    fs, fe = z.get("free_start_h", 11), z.get("free_end_h", 14)
+    es, ee = z.get("evening_start_h", 18), z.get("evening_end_h", 21)
+    max_soc = strat.get("max_soc", 90)
+    reserve = strat.get("reserve_soc", 20)
+    nowl = datetime.now()
+    h = nowl.hour + nowl.minute / 60.0
+    in_free = fs <= h < fe
+    in_eve = es <= h < ee
+    action, target_mode, fc, fd = "SET_MODE", (work_mode or "SelfUse"), False, False
+    reasons = []
+    if in_free and soc < max_soc:
+        action, fc = "FORCE_CHARGE", True
+        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 → grid-charge to {max_soc}% (free).")
+    elif in_free:
+        reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {max_soc}%). SelfUse.")
+    elif in_eve and soc > survival_soc + 1:
+        action, fd = "SELL", True
+        reasons.append(f"ZeroHero peak {es:02d}:00–{ee:02d}:00 → cover load (zero import = $1/day) + export "
+                       f"surplus at 9c down to survival {survival_soc}%.")
+    elif in_eve:
+        reasons.append(f"ZeroHero peak {es:02d}:00–{ee:02d}:00 → hold; cover load from battery "
+                       f"(zero grid import = $1/day). SelfUse.")
+    elif soc <= reserve:
+        reasons.append(f"ZeroHero off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
+    else:
+        reasons.append("ZeroHero off-window → run off battery, avoid grid import until the free window. SelfUse.")
+    rec = {"action": action, "target_mode": target_mode, "force_charge": fc, "force_discharge": fd,
+           "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
+           "reason": " ".join(reasons)}
+    if fc:
+        rec["force_charge_plan"] = {"window": f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": max_soc,
+                                    "min_soc_on_grid": strat.get("min_soc_on_grid", 10),
+                                    "power_kw": strat.get("force_charge_power_kw", 10.5)}
+    return rec
+
+
 def gather_and_decide(cfg: dict) -> dict:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
@@ -1240,17 +1284,29 @@ def gather_and_decide(cfg: dict) -> dict:
         "baseline": {"charge_start_price": strat.get("charge_start_price"), "target_soc": strat.get("target_soc")},
     }
     _LLM["last_ctx"] = plan_ctx
-    plan = maybe_llm_review(cfg, plan_ctx)
+    zerohero = strat.get("tariff_mode") == "zerohero"
     working, dyn_src = dict(strat), "static"
-    if plan and plan.get("params") and strat.get("dynamic_policy", True):
-        working = apply_dynamic_params(strat, plan["params"], foundation)
-        dyn_src = "LLM"
-    # Inject auto-sell parameters (deterministic foundation behaviour) into the working strategy.
-    working["sell_price"] = sell_eff
-    working["sell_floor_soc"] = survival_soc
-    working["sell_enabled"] = bool(strat.get("sell_enabled", True))
-    rec = decide(prices, soc, pv, wm.get("value"), working,
-                 currently_charging=charging, load_kw=load, demand_window=demand_window)
+    if zerohero:
+        # GloBird ZeroHero: deterministic time-of-use schedule (no Amber price forecasting / LLM).
+        nowl = datetime.now(); hh = nowl.hour + nowl.minute / 60.0
+        free_start = strat.get("zerohero", {}).get("free_start_h", 11)
+        hrs_to_free = (free_start - hh) % 24 or 24.0          # hours until next free window
+        need_kwh = max(0.0, float(typical_load) * (hrs_to_free / 24.0) - (solar_remaining or 0.0))
+        survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
+        rec = decide_zerohero(soc, wm.get("value"), strat, survival_soc)
+        plan, dyn_src = None, "zerohero"
+        working["target_soc"] = strat.get("max_soc", 90)
+    else:
+        plan = maybe_llm_review(cfg, plan_ctx)
+        if plan and plan.get("params") and strat.get("dynamic_policy", True):
+            working = apply_dynamic_params(strat, plan["params"], foundation)
+            dyn_src = "LLM"
+        # Inject auto-sell parameters (deterministic foundation behaviour) into the working strategy.
+        working["sell_price"] = sell_eff
+        working["sell_floor_soc"] = survival_soc
+        working["sell_enabled"] = bool(strat.get("sell_enabled", True))
+        rec = decide(prices, soc, pv, wm.get("value"), working,
+                     currently_charging=charging, load_kw=load, demand_window=demand_window)
 
     now_epoch = time.time()
     return {
@@ -1260,12 +1316,13 @@ def gather_and_decide(cfg: dict) -> dict:
                            "tomorrow": solar_tomorrow},
         "solar_bells": solar_bells,
         "llm": plan,
-        "dynamic": {"source": dyn_src, "charge_start_price": working.get("charge_start_price"),
+        "dynamic": {"source": dyn_src, "mode": ("zerohero" if zerohero else "amber"),
+                    "charge_start_price": (None if zerohero else working.get("charge_start_price")),
                     "target_soc": working.get("target_soc"),
                     "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
-                    "charge_start_floor": foundation["charge_start_floor"],
-                    "sell_price": sell_eff, "survival_soc": survival_soc,
-                    "sell_enabled": bool(strat.get("sell_enabled", True))},
+                    "charge_start_floor": (None if zerohero else foundation["charge_start_floor"]),
+                    "sell_price": (None if zerohero else sell_eff), "survival_soc": survival_soc,
+                    "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
         "feedin": prices.get("feedin"),
@@ -1340,16 +1397,6 @@ def manual_tick(cfg, snap):
                                    mo["min_soc"], mo["power"])
     msg = f"MANUAL {mo['mode']} START until {hhmm} @ {mo['power']}kW"
     log_event("override", msg)
-    return msg
-
-
-def apply_and_record(cfg: dict, snap: dict) -> str:
-    """Apply the recommendation and persist the outcome into the shared LAST snapshot so the dashboard
-    header reflects what just happened (instead of the stale value from the previous evaluate)."""
-    msg = apply_recommendation(cfg, snap)
-    with LAST_LOCK:
-        if LAST:
-            LAST["applied"] = msg
     return msg
 
 
@@ -1697,12 +1744,18 @@ def render(snap: dict, cfg: dict) -> str:
                      f'<input id=bsell type=number step=0.01 value="{round(base_sell,3)}" style="width:6em"></label> '
                      f'<small>auto-sell when feed-in ≥ this</small><br>'
                      f'<button style="margin-top:.5rem" onclick="saveBaseline()">Set baseline</button></div>')
-    dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY</small>'
-                f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
-                f'<small>(set by {dyn.get("source","static")})</small></div>'
-                f'<small>floor ${dyn.get("charge_start_floor","?")} ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")} · '
-                f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '
-                f'feed-in ${snap.get("feedin","?")}</small></div>')
+    if dyn.get("mode") == "zerohero":
+        dyn_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ ZEROHERO MODE (GloBird)</small>'
+                    f'<div>free-charge 11:00–14:00 → {dyn.get("max_soc","?")}% · zero-import + export 18:00–21:00</div>'
+                    f'<small>keep ≥{dyn.get("survival_soc","?")}% overnight (survival to next free window) · '
+                    f'battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · feed-in ${snap.get("feedin","?")}</small></div>')
+    else:
+        dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY (Amber)</small>'
+                    f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
+                    f'<small>(set by {dyn.get("source","static")})</small></div>'
+                    f'<small>floor ${dyn.get("charge_start_floor","?")} ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")} · '
+                    f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '
+                    f'feed-in ${snap.get("feedin","?")}</small></div>')
     llm = snap.get("llm")
     if llm:
         verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",
@@ -1815,7 +1868,7 @@ def make_handler(cfg):
                     snap = dict(LAST)
                 if not snap:
                     snap = run_once(cfg, do_apply=False)
-                msg = apply_and_record(cfg, snap)    # persist so the dashboard header reflects the apply
+                msg = apply_recommendation(cfg, snap)
                 self._send(200, json.dumps({"applied": msg}, default=str), "application/json")
             elif self.path.startswith("/api/force_charge_test"):
                 try:
@@ -1924,24 +1977,11 @@ def serve(cfg: dict):
     httpd.serve_forever()
 
 
-def refresh_control(cfg: dict) -> bool:
-    """Reload control flags from disk into cfg["control"] so toggling allow_control / auto_apply in the
-    config takes effect without restarting the process. Best-effort: keep current values if the file is
-    missing or mid-write. Only the control block is refreshed — in-memory tuned params (cfg["strategy"])
-    are left untouched. Returns the effective auto-apply flag (allow_control AND auto_apply)."""
-    try:
-        disk_ctrl = json.loads(CONFIG_PATH.read_text()).get("control", {})
-        cfg["control"].update({k: disk_ctrl[k] for k in cfg["control"] if k in disk_ctrl})
-    except Exception as e:
-        print(f"{datetime.now().isoformat(timespec='seconds')} control reload skipped: {e}", file=sys.stderr)
-    return bool(cfg["control"].get("allow_control") and cfg["control"].get("auto_apply"))
-
-
 def loop(cfg: dict):
+    auto = cfg["control"].get("allow_control") and cfg["control"].get("auto_apply")
     poll = cfg["poll_seconds"]
     lag = int(cfg.get("sync_lag_seconds", 20))  # read shortly AFTER foxess-ha refreshes
     while True:
-        auto = refresh_control(cfg)
         try:
             snap = run_once(cfg, do_apply=auto)
             r = snap["recommendation"]

@@ -93,6 +93,13 @@
     "charge_start_floor": 0.15,
     "sell_price": 0.50,
     "sell_enabled": true,
+    "tariff_mode": "amber",
+    "zerohero": {
+      "free_start_h": 11,
+      "free_end_h": 14,
+      "evening_start_h": 18,
+      "evening_end_h": 21
+    },
     "max_soc": 90,
     "battery_capacity_kwh": 30,
     "typical_daily_load_kwh": 30,
