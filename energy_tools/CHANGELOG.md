@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.16.1
+- Solar-defer is now energy-balance aware: foxctl no longer skips a cheap grid-charge on a momentary PV surplus when the day projects a shortfall (usable battery + remaining solar < remaining load). Fixes it sitting idle at the day's cheapest price while heading for an evening shortfall.
+
 ## 1.16.0
 - **ZeroHero mode** (GloBird) — set `tariff_mode: zerohero` to switch from Amber price-forecasting to a time-of-use schedule: grid-charge FREE 11:00–14:00 to max SoC; 18:00–21:00 cover all load from battery (zero grid import = $1/day credit) and export surplus at 9c down to a computed overnight survival floor; run off battery otherwise. No LLM/price logic in this mode. Defaults to `amber` (no change until you flip it).
 

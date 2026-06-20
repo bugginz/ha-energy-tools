@@ -409,7 +409,12 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     # curtail the panels). Ludicrous (negative) prices are handled before this and still charge.
     solar_surplus = round(pv_kw - load_kw, 2)
     solar_defer = strat.get("solar_defer_kw", 0.5)
-    solar_covering = solar_surplus >= solar_defer
+    # ...BUT only defer to solar if the day's energy balance actually covers the rest of the day.
+    # If we project a shortfall (usable battery + remaining solar < remaining load), don't skip a
+    # cheap grid-charge just because there's a momentary PV surplus.
+    shortfall = strat.get("energy_shortfall_kwh", 0.0)
+    short_margin = strat.get("solar_defer_shortfall_margin", 1.5)
+    solar_covering = (solar_surplus >= solar_defer) and (shortfall <= short_margin)
 
     # Horizon view: cheapest / most-expensive price across the forward forecast window.
     horizon_h = strat.get("horizon_hours", 18)
@@ -1305,6 +1310,10 @@ def gather_and_decide(cfg: dict) -> dict:
         working["sell_price"] = sell_eff
         working["sell_floor_soc"] = survival_soc
         working["sell_enabled"] = bool(strat.get("sell_enabled", True))
+        # Day energy balance: usable battery (above reserve) + remaining solar vs remaining load.
+        remaining_load = max(0.0, float(typical_load) - float(consumption.get("today_so_far_kwh") or 0))
+        usable_now = max(0.0, stored_kwh - cap_kwh * reserve / 100.0)
+        working["energy_shortfall_kwh"] = round(remaining_load - (usable_now + (solar_remaining or 0.0)), 1)
         rec = decide(prices, soc, pv, wm.get("value"), working,
                      currently_charging=charging, load_kw=load, demand_window=demand_window)
 
