@@ -659,13 +659,17 @@ def update_consumption(cfg, load_kw, ev_kw=None):
     now = time.time()
     last = _CONS["last_ts"]
     dt_h = (now - last) / 3600.0 if last else 0.0
+    base_kw = max(0.0, load_kw - (ev_kw or 0.0))   # base load = house minus the EV charger
     if 0 < dt_h <= 1.0:   # skip the first sample and any long gap (restart/downtime) to avoid spikes
         day = datetime.now().strftime("%Y-%m-%d")
-        rec = _CONS["days"].setdefault(day, {"load": 0.0, "ev": 0.0})
+        rec = _CONS["days"].setdefault(day, {"load": 0.0, "ev": 0.0, "hours": {}})
+        rec.setdefault("hours", {})
         rec["load"] += max(0.0, load_kw) * dt_h
         rec["ev"] += max(0.0, ev_kw or 0.0) * dt_h
+        hk = str(datetime.now().hour)
+        rec["hours"][hk] = round(rec["hours"].get(hk, 0.0) + base_kw * dt_h, 4)   # base load by hour-of-day
     _CONS["last_ts"] = now
-    for k in sorted(_CONS["days"])[:-9]:   # keep last ~9 days
+    for k in sorted(_CONS["days"])[:-15]:   # keep last ~15 days (for a fuller hourly profile)
         _CONS["days"].pop(k, None)
     try:
         _CONS["path"].parent.mkdir(parents=True, exist_ok=True)
@@ -678,9 +682,34 @@ def update_consumption(cfg, load_kw, ev_kw=None):
     avg_total = round(sum(p["load"] for p in past) / n, 1) if n else None
     avg_ev = round(sum(p["ev"] for p in past) / n, 1) if n else None
     avg_base = round(avg_total - avg_ev, 1) if avg_total is not None else None
+    # Hour-of-day base-load profile: avg kWh per hour across complete past days.
+    hour_profile, hp_days = {}, [p for p in past if p.get("hours")]
+    if hp_days:
+        for h in range(24):
+            vals = [p["hours"].get(str(h), 0.0) for p in hp_days]
+            hour_profile[h] = round(sum(vals) / len(vals), 3)
     tk = _CONS["days"].get(today, {})
     return {"days_sampled": n, "avg_daily_total_kwh": avg_total, "avg_daily_ev_kwh": avg_ev,
-            "avg_daily_base_kwh": avg_base, "today_so_far_kwh": round(tk.get("load", 0.0), 1)}
+            "avg_daily_base_kwh": avg_base, "today_so_far_kwh": round(tk.get("load", 0.0), 1),
+            "hour_profile": hour_profile, "profile_days": len(hp_days)}
+
+
+def predict_base_load(hour_profile, hours_ahead):
+    """Sum the hour-of-day base-load profile over the next `hours_ahead` hours (prorated for the
+    partial current hour). Falls back to None if there's no profile yet."""
+    if not hour_profile:
+        return None
+    now = datetime.now()
+    total = 0.0
+    remaining = float(hours_ahead)
+    frac = 1.0 - now.minute / 60.0          # remaining fraction of the current hour
+    h = now.hour
+    while remaining > 0:
+        take = min(frac, remaining)
+        total += hour_profile.get(h % 24, hour_profile.get(str(h % 24), 0.0)) * take
+        remaining -= take
+        h += 1; frac = 1.0
+    return round(total, 1)
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -1296,7 +1325,8 @@ def gather_and_decide(cfg: dict) -> dict:
         nowl = datetime.now(); hh = nowl.hour + nowl.minute / 60.0
         free_start = strat.get("zerohero", {}).get("free_start_h", 11)
         hrs_to_free = (free_start - hh) % 24 or 24.0          # hours until next free window
-        need_kwh = max(0.0, float(typical_load) * (hrs_to_free / 24.0) - (solar_remaining or 0.0))
+        pred = predict_base_load(consumption.get("hour_profile"), hrs_to_free) if consumption.get("profile_days", 0) >= 2 else None
+        need_kwh = max(0.0, (pred if pred is not None else float(typical_load) * (hrs_to_free / 24.0)) - (solar_remaining or 0.0))
         survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
         rec = decide_zerohero(soc, wm.get("value"), strat, survival_soc)
         plan, dyn_src = None, "zerohero"
@@ -1311,7 +1341,10 @@ def gather_and_decide(cfg: dict) -> dict:
         working["sell_floor_soc"] = survival_soc
         working["sell_enabled"] = bool(strat.get("sell_enabled", True))
         # Day energy balance: usable battery (above reserve) + remaining solar vs remaining load.
-        remaining_load = max(0.0, float(typical_load) - float(consumption.get("today_so_far_kwh") or 0))
+        # Prefer the learned hour-of-day profile to predict the rest of today; else flat fallback.
+        hrs_to_midnight = 24 - (datetime.now().hour + datetime.now().minute / 60.0)
+        pred = predict_base_load(consumption.get("hour_profile"), hrs_to_midnight) if consumption.get("profile_days", 0) >= 2 else None
+        remaining_load = pred if pred is not None else max(0.0, float(typical_load) - float(consumption.get("today_so_far_kwh") or 0))
         usable_now = max(0.0, stored_kwh - cap_kwh * reserve / 100.0)
         working["energy_shortfall_kwh"] = round(remaining_load - (usable_now + (solar_remaining or 0.0)), 1)
         rec = decide(prices, soc, pv, wm.get("value"), working,
@@ -1334,6 +1367,7 @@ def gather_and_decide(cfg: dict) -> dict:
                     "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
+        "energy_shortfall_kwh": working.get("energy_shortfall_kwh"),
         "feedin": prices.get("feedin"),
         "grid_power": grid_power,
         "feedin_power": feedin_power,

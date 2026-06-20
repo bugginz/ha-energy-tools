@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.17.0
+- **Hour-of-day usage profile.** foxctl now records base-load (EV excluded) by hour-of-day across recent days and uses it to predict the remaining-today / overnight load — replacing the flat `daily/24` assumption in the shortfall and ZeroHero-survival calcs. Needs ~2 weeks to be solid; improves daily. EV charging (sensor.6294ha_series_2_power) is tracked separately so it doesn't distort the base profile.
+
 ## 1.16.1
 - Solar-defer is now energy-balance aware: foxctl no longer skips a cheap grid-charge on a momentary PV surplus when the day projects a shortfall (usable battery + remaining solar < remaining load). Fixes it sitting idle at the day's cheapest price while heading for an evening shortfall.
 
