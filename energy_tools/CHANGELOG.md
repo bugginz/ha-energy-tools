@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.5
+- **Fix averages polluted by no-data days.** The 21-day backfill window includes days before the system/panels existed, which come back as all-zeros. Those were being averaged in, dragging the load and (especially) solar means toward zero. `forecast_profiles` now excludes no-data days **per metric** (a day with ~0 total load = no telemetry; ~0 total solar = pre-panels), so the load average uses real load days and the solar average uses only generating days. The calibration also ignores zero-actual days. Usage card shows the valid-day counts (load / solar).
+
 ## 1.22.4
 - Usage card's daily **avg/min/max now come from the FoxESS history store** (sum of each stored day's hourly `loads`), matching the chart's source, once ≥3 days are backfilled. `today` stays from live integration (the store only holds completed days); EV is unchanged. Falls back to self-integration until the backfill matures.
 

@@ -810,23 +810,30 @@ def fetch_forecast_day(fox, day):
 
 
 def forecast_profiles():
-    """Hour-of-day average load + solar (kWh) across the stored days, with the load min/max range."""
-    days = _FCAST["days"]
+    """Hour-of-day average load + solar (kWh) across the stored days, with the load min/max range.
+    Excludes no-data days PER METRIC: a day whose total for that metric is ~0 is treated as missing
+    (pre-install / no telemetry) and left out of the average — otherwise the backfill window's empty
+    early days drag the means down."""
+    days = list(_FCAST["days"].values())
+    def valid_for(key):
+        return [d for d in days if isinstance(d.get(key), list) and len(d[key]) == 24
+                and sum(x for x in d[key] if isinstance(x, (int, float))) > 0.05]
     def stats(key):
+        vd = valid_for(key)
         avg, lo, hi = {}, {}, {}
         for h in range(24):
-            vals = [d[key][h] for d in days.values()
-                    if isinstance(d.get(key), list) and len(d[key]) == 24 and isinstance(d[key][h], (int, float))]
+            vals = [d[key][h] for d in vd if isinstance(d[key][h], (int, float))]
             if vals:
                 avg[h] = round(sum(vals) / len(vals), 3)
                 lo[h], hi[h] = round(min(vals), 3), round(max(vals), 3)
         return avg, lo, hi
     load_avg, load_min, load_max = stats("load")
     solar_avg, _, _ = stats("solar")
-    totals = [round(sum(x for x in d["load"] if isinstance(x, (int, float))), 1)
-              for d in days.values() if isinstance(d.get("load"), list)]
+    lvalid = valid_for("load")
+    totals = [round(sum(x for x in d["load"] if isinstance(x, (int, float))), 1) for d in lvalid]
     daily = {"avg": round(sum(totals) / len(totals), 1), "min": min(totals), "max": max(totals)} if totals else {}
-    return {"days": len(days), "load_profile": load_avg, "load_min": load_min, "load_max": load_max,
+    return {"days": len(lvalid), "days_solar": len(valid_for("solar")),
+            "load_profile": load_avg, "load_min": load_min, "load_max": load_max,
             "solar_profile": solar_avg, "daily_total": daily}
 
 
@@ -904,6 +911,8 @@ def update_solar_cal(cfg, today_forecast_total):
         day = _FCAST["days"].get(d)
         if day and isinstance(day.get("solar"), list):
             act = round(sum(x for x in day["solar"] if isinstance(x, (int, float))), 2)
+            if act <= 0.05:        # no-data / pre-panel day → not a valid forecast-vs-actual sample
+                continue
             _SOLAR_CAL["samples"].append({"d": d, "fc": fc, "act": act})
             have.add(d)
             changed = True
@@ -2226,7 +2235,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{5}d learning)"}</small></div>
- <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)}/{21}d backfilled)</small></div>
+ <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)} load / {(snap.get('forecast_profiles') or {}).get('days_solar',0)} solar valid days)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>

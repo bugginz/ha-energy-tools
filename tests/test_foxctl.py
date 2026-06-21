@@ -218,9 +218,27 @@ class ForecastStoreTest(unittest.TestCase):
             fp = foxctl.forecast_profiles()
             self.assertEqual(fp["days"], 2)
             self.assertEqual(fp["load_profile"][0], 3.0)    # mean(2,4)
-            self.assertEqual(fp["solar_profile"][12], 0.5)  # mean(0,1)
+            self.assertEqual(fp["solar_profile"][12], 1.0)  # the zero-solar day is excluded → mean(1)
             # daily totals: day sums are 48 and 96 → avg 72, min 48, max 96
             self.assertEqual(fp["daily_total"], {"avg": 72.0, "min": 48.0, "max": 96.0})
+        finally:
+            foxctl._FCAST["days"] = orig
+
+    def test_zero_data_days_excluded_from_averages(self):
+        orig = foxctl._FCAST["days"]
+        try:
+            foxctl._FCAST["days"] = {
+                "2026-06-01": {"load": [0.0] * 24, "solar": [0.0] * 24},   # pre-install: must be ignored
+                "2026-06-02": {"load": [0.0] * 24, "solar": [0.0] * 24},   # pre-install: must be ignored
+                "2026-06-18": {"load": [2.0] * 24, "solar": [0.0] * 24},   # real load, but still no panels
+                "2026-06-19": {"load": [2.0] * 24, "solar": [1.0] * 24},   # real load + real solar
+            }
+            fp = foxctl.forecast_profiles()
+            self.assertEqual(fp["days"], 2)         # 2 valid LOAD days (zero-load days dropped)
+            self.assertEqual(fp["days_solar"], 1)   # only 1 valid SOLAR day
+            self.assertEqual(fp["load_profile"][0], 2.0)          # not dragged toward 0 by empty days
+            self.assertEqual(fp["solar_profile"][12], 1.0)        # avg over the single generating day
+            self.assertEqual(fp["daily_total"], {"avg": 48.0, "min": 48.0, "max": 48.0})
         finally:
             foxctl._FCAST["days"] = orig
 
