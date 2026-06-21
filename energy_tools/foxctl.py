@@ -696,7 +696,10 @@ def update_consumption(cfg, load_kw, ev_kw=None):
     today = datetime.now().strftime("%Y-%m-%d")
     past = [v for k, v in _CONS["days"].items() if k != today]
     n = len(past)
-    avg_total = round(sum(p["load"] for p in past) / n, 1) if n else None
+    totals = [p["load"] for p in past]
+    avg_total = round(sum(totals) / n, 1) if n else None
+    min_total = round(min(totals), 1) if totals else None
+    max_total = round(max(totals), 1) if totals else None
     avg_ev = round(sum(p["ev"] for p in past) / n, 1) if n else None
     avg_base = round(avg_total - avg_ev, 1) if avg_total is not None else None
     # Hour-of-day base-load profile: avg kWh per hour across complete past days.
@@ -707,6 +710,7 @@ def update_consumption(cfg, load_kw, ev_kw=None):
             hour_profile[h] = round(sum(vals) / len(vals), 3)
     tk = _CONS["days"].get(today, {})
     return {"days_sampled": n, "avg_daily_total_kwh": avg_total, "avg_daily_ev_kwh": avg_ev,
+            "min_daily_total_kwh": min_total, "max_daily_total_kwh": max_total,
             "avg_daily_base_kwh": avg_base, "today_so_far_kwh": round(tk.get("load", 0.0), 1),
             "hour_profile": hour_profile, "profile_days": len(hp_days)}
 
@@ -2168,7 +2172,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{5}d learning)"}</small></div>
- <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}<br>profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)}/{21}d backfilled)</small></div>
+ <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)}/{21}d backfilled)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>

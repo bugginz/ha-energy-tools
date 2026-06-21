@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.1
+- Usage card now shows the daily **range (min–max) and average** kWh/day over the sampled days, not just the average.
+
 ## 1.22.0
 - **Forecasting Phase 3: solar forecast calibration.** foxctl now records the external (Forecast.Solar) full-day forecast each day and pairs it with the actual generation from the forecast store (integrated `pvPower`) to learn a per-site bias = mean(actual)/mean(forecast). Once ≥5 completed days are sampled, the clamped bias (±, range 0.5–1.6) is applied to the forward solar (remaining-today + tomorrow) that feeds the survival/shortfall calc, the solar bells, and the SoC projection — correcting this site's systematic forecast optimism/pessimism. No-op (bias 1.0) until it has learned, so behaviour is unchanged for the first ~5 days. The Solar forecast card shows the bias and learning progress; raw forecast values are retained for display. Persisted to `/data`. 3 new tests (21 total).
 
