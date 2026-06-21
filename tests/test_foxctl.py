@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "energy_tools"))
@@ -147,6 +148,38 @@ class DecideTest(unittest.TestCase):
         rec = foxctl.decide(self._prices(0.30), soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
         self.assertFalse(rec["force_charge"])
         self.assertIn("FOUNDATION", rec["reason"])
+
+
+class FoxESSReadEndpointsTest(unittest.TestCase):
+    """report()/history() must hit the right paths with the right body and parse 'result' — no network."""
+
+    def setUp(self):
+        self.fox = foxctl.FoxESS("tok", "SN123")
+        self.calls = []
+        self.fox.call = lambda path, body=None: (self.calls.append((path, body)) or self._resp)
+
+    def test_report_request_shape_and_parse(self):
+        self._resp = {"errno": 0, "result": [{"variable": "loads", "unit": "kWh", "values": list(range(24))}]}
+        when = datetime(2026, 6, 19, 13, 0)
+        res = self.fox.report(["loads", "generation"], "day", when)
+        path, body = self.calls[0]
+        self.assertEqual(path, "/op/v0/device/report/query")
+        self.assertEqual(body, {"sn": "SN123", "dimension": "day",
+                                "variables": ["loads", "generation"],
+                                "year": 2026, "month": 6, "day": 19})
+        self.assertEqual(len(res[0]["values"]), 24)   # hourly array
+
+    def test_history_request_shape(self):
+        self._resp = {"errno": 0, "result": [{"datas": []}]}
+        self.fox.history(["loadsPower"], 1000.7, 2000.9)
+        path, body = self.calls[0]
+        self.assertEqual(path, "/op/v0/device/history/query")
+        self.assertEqual(body, {"sn": "SN123", "variables": ["loadsPower"], "begin": 1000, "end": 2000})
+
+    def test_empty_result_is_safe(self):
+        self._resp = {"errno": 0}   # no "result" key
+        self.assertEqual(self.fox.report(["loads"]), [])
+        self.assertEqual(self.fox.history(["loadsPower"], 0, 1), [])
 
 
 if __name__ == "__main__":

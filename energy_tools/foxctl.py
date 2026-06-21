@@ -179,6 +179,23 @@ class FoxESS:
             out[item["variable"]] = item.get("value")
         return out
 
+    def report(self, variables: list[str], dimension: str = "day", when: datetime | None = None) -> list:
+        """Energy report (kWh), read-only. dimension="day" → each variable's "values" is a 24-element
+        HOURLY array for `when`'s date; "month" → per-day; "year" → per-month. Variables are energy
+        stat names: loads, generation, feedin, gridConsumption, chargeEnergyToTal, dischargeEnergyToTal.
+        Returns the raw result list: [{"variable","unit","values":[...]}]."""
+        when = when or datetime.now()
+        body = {"sn": self.sn, "dimension": dimension, "variables": list(variables),
+                "year": when.year, "month": when.month, "day": when.day}
+        return self.call("/op/v0/device/report/query", body).get("result") or []
+
+    def history(self, variables: list[str], begin_ms: int, end_ms: int) -> list:
+        """Raw telemetry time-series between begin/end (epoch ms), read-only. Sub-hourly granularity.
+        Variables are power/SoC names: loadsPower, pvPower, gridConsumptionPower, feedinPower, SoC, …
+        Returns the raw result list: [{"datas":[{"variable","unit","data":[{"time","value"},…]}]}]."""
+        body = {"sn": self.sn, "variables": list(variables), "begin": int(begin_ms), "end": int(end_ms)}
+        return self.call("/op/v0/device/history/query", body).get("result") or []
+
     def work_mode(self) -> dict:
         d = self.call("/op/v0/device/setting/get", {"sn": self.sn, "key": "WorkMode"})
         return d["result"]  # {value, enumList, ...}

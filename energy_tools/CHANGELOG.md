@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.20.0
+- **Forecasting Phase 1: FoxESS history client + read-only spike.** New `FoxESS.report()` (hourly kWh per variable for a day — `loads`, `generation`, `feedin`, `gridConsumption`, charge/discharge) and `FoxESS.history()` (raw sub-hourly telemetry). Both read-only. New `foxess_probe.py` (shipped in the image) confirms the data shape/granularity against the real inverter before we build the forecast store — run `FOXCTL_CONFIG=/data/.config/foxctl/config.json python3 /foxess_probe.py --days 3`. Request-shape unit tests added (15 tests total). No behaviour change yet; this is the data-acquisition foundation for the load/solar forecasts.
+
 ## 1.19.0
 - **Chart: projected SoC + "would sell" windows.** A forward projection rolls the current SoC through the forecast (grid-charge while buy ≤ charge-start, export while price ≥ sell threshold and SoC is above the survival floor, else solar−load) and draws it as a teal % curve with the survival-floor line. Slots where it would sell are shaded pink, and hover now shows the projected SoC and a SELL tag at that time. Estimate only (uses the buy-price forecast as an export proxy until a per-slot feed-in forecast exists) — labelled as such in the legend. First concrete piece of the forecasting plan.
 
