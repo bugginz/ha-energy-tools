@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.0
+- **Forecasting Phase 3: solar forecast calibration.** foxctl now records the external (Forecast.Solar) full-day forecast each day and pairs it with the actual generation from the forecast store (integrated `pvPower`) to learn a per-site bias = mean(actual)/mean(forecast). Once ≥5 completed days are sampled, the clamped bias (±, range 0.5–1.6) is applied to the forward solar (remaining-today + tomorrow) that feeds the survival/shortfall calc, the solar bells, and the SoC projection — correcting this site's systematic forecast optimism/pessimism. No-op (bias 1.0) until it has learned, so behaviour is unchanged for the first ~5 days. The Solar forecast card shows the bias and learning progress; raw forecast values are retained for display. Persisted to `/data`. 3 new tests (21 total).
+
 ## 1.21.0
 - **Forecasting Phase 2: real hour-of-day profiles from FoxESS history.** A persistent forecast store (`/data`) backfills the last 21 days of per-hour **load** (`report` `loads`) and **solar** (`history` `pvPower`, integrated trapezoidally — `generation` is inverter throughput incl. battery, not PV, so it's deliberately not used). Fetches at most one day per cycle and one per 2 min, so a full backfill spreads gently over ~an hour and stays well inside the FoxESS API quota; then one incremental day daily. Once ≥3 days are stored, the load profile that drives the shortfall/survival calcs and the chart usage overlay switches from the slow self-integrated estimate (needs ~2 weeks) to the FoxESS history (accurate in days). The Usage card shows the profile source + backfill progress. Validated end-to-end against the live inverter. Solar profile is stored for Phase 3 (forecast calibration).
 

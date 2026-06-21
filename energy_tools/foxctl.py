@@ -840,6 +840,78 @@ def update_forecast_store(cfg, fox):
     return forecast_profiles()
 
 
+# ---- SOLAR FORECAST CALIBRATION (Phase 3): learn external-forecast-vs-actual bias per site ---------
+# The external (Forecast.Solar/Solcast) entities give a forward daily total; the forecast store gives
+# the ACTUAL generation (integrated pvPower) once a day completes. Pairing them over time yields a
+# bias = mean(actual)/mean(forecast) that corrects this site's systematic optimism/pessimism. Applied
+# (clamped, and only after enough samples) to the forward solar feeding survival/shortfall + projection.
+_SOLAR_CAL = {"path": None, "fc": {}, "samples": [], "loaded": False}
+SOLAR_CAL_MIN = 5               # need this many completed forecast-vs-actual days before applying
+SOLAR_CAL_CLAMP = (0.5, 1.6)    # never trust the correction beyond ±this
+
+
+def _scal_path(cfg):
+    return _state_dir(cfg) / "solar_cal.json"
+
+
+def load_scal(cfg):
+    if _SOLAR_CAL["loaded"]:
+        return
+    _SOLAR_CAL["path"] = _scal_path(cfg)
+    try:
+        d = json.loads(_SOLAR_CAL["path"].read_text())
+        _SOLAR_CAL["fc"], _SOLAR_CAL["samples"] = d.get("fc", {}), d.get("samples", [])
+    except Exception:
+        pass
+    _SOLAR_CAL["loaded"] = True
+
+
+def save_scal(cfg):
+    try:
+        _SOLAR_CAL["path"].parent.mkdir(parents=True, exist_ok=True)
+        _SOLAR_CAL["path"].write_text(json.dumps({"fc": _SOLAR_CAL["fc"], "samples": _SOLAR_CAL["samples"][-60:]}))
+    except Exception as e:
+        print(f"solar cal persist failed: {e}", file=sys.stderr)
+
+
+def update_solar_cal(cfg, today_forecast_total):
+    """Record today's external full-day solar forecast, then pair any completed day's forecast with its
+    actual generation (from the forecast store) into a calibration sample. Returns
+    {bias, samples, mae_kwh, applied} — bias is 1.0 (no-op) until SOLAR_CAL_MIN samples exist."""
+    load_scal(cfg)
+    load_fcast(cfg)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if isinstance(today_forecast_total, (int, float)) and today_forecast_total >= 0:
+        _SOLAR_CAL["fc"][today] = round(float(today_forecast_total), 2)
+    have = {s["d"] for s in _SOLAR_CAL["samples"]}
+    changed = False
+    for d, fc in list(_SOLAR_CAL["fc"].items()):
+        if d == today or d in have or not fc or fc <= 0:
+            continue
+        day = _FCAST["days"].get(d)
+        if day and isinstance(day.get("solar"), list):
+            act = round(sum(x for x in day["solar"] if isinstance(x, (int, float))), 2)
+            _SOLAR_CAL["samples"].append({"d": d, "fc": fc, "act": act})
+            have.add(d)
+            changed = True
+    keep = {(datetime.now() - timedelta(days=k)).strftime("%Y-%m-%d") for k in range(0, 35)}
+    for k in [k for k in _SOLAR_CAL["fc"] if k not in keep]:
+        _SOLAR_CAL["fc"].pop(k, None)
+        changed = True
+    _SOLAR_CAL["samples"] = _SOLAR_CAL["samples"][-60:]
+    if changed:
+        save_scal(cfg)
+    s = _SOLAR_CAL["samples"]
+    n = len(s)
+    bias = 1.0
+    if n >= SOLAR_CAL_MIN:
+        den = sum(x["fc"] for x in s)
+        if den > 0:
+            bias = max(SOLAR_CAL_CLAMP[0], min(SOLAR_CAL_CLAMP[1], sum(x["act"] for x in s) / den))
+    mae = round(sum(abs(x["act"] - x["fc"]) for x in s) / n, 1) if n else None
+    return {"bias": round(bias, 3), "samples": n, "mae_kwh": mae, "applied": n >= SOLAR_CAL_MIN}
+
+
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -1386,6 +1458,16 @@ def gather_and_decide(cfg: dict) -> dict:
     solar_remaining = _sum_ents(cfg["ha"].get("solar_fc_remaining_entities"))
     solar_tomorrow = _sum_ents(cfg["ha"].get("solar_fc_tomorrow_entities"))
     solar_today_total = _sum_ents(cfg["ha"].get("solar_fc_today_entities"))   # full-day forecast (not leftover)
+    # Phase 3: calibrate the forward solar by this site's learned forecast-vs-actual bias (clamped,
+    # and only once enough days are sampled). Raw values are kept for display; the calibrated ones
+    # feed the survival/shortfall calc, the bells, and the SoC projection.
+    solar_cal = update_solar_cal(cfg, solar_today_total)
+    solar_remaining_raw, solar_tomorrow_raw = solar_remaining, solar_tomorrow
+    if solar_cal["applied"]:
+        if isinstance(solar_remaining, (int, float)):
+            solar_remaining = round(solar_remaining * solar_cal["bias"], 2)
+        if isinstance(solar_tomorrow, (int, float)):
+            solar_tomorrow = round(solar_tomorrow * solar_cal["bias"], 2)
     try:
         sa = ha._state("sun.sun")["attributes"]
         sun_rise, sun_set = sa.get("next_rising"), sa.get("next_setting")
@@ -1498,7 +1580,9 @@ def gather_and_decide(cfg: dict) -> dict:
         "demand_window": demand_window,
         "weather": weather,
         "solar_forecast": {"today_total": solar_today_total, "remaining_today": solar_remaining,
-                           "tomorrow": solar_tomorrow},
+                           "tomorrow": solar_tomorrow,
+                           "remaining_today_raw": solar_remaining_raw, "tomorrow_raw": solar_tomorrow_raw},
+        "solar_cal": solar_cal,
         "solar_bells": solar_bells,
         "llm": plan,
         "dynamic": {"source": dyn_src, "mode": ("zerohero" if zerohero else "amber"),
@@ -2083,7 +2167,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
- <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}</small></div>
+ <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{5}d learning)"}</small></div>
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}<br>profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)}/{21}d backfilled)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>

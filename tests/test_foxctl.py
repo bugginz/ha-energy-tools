@@ -223,5 +223,56 @@ class ForecastStoreTest(unittest.TestCase):
             foxctl._FCAST["days"] = orig
 
 
+class SolarCalibrationTest(unittest.TestCase):
+    """Phase 3: forecast-vs-actual solar bias — no-op until enough samples, then clamped."""
+
+    def setUp(self):
+        self._orig_cal = dict(foxctl._SOLAR_CAL)
+        self._orig_days = foxctl._FCAST["days"]
+        self._orig_loaded = foxctl._FCAST["loaded"]
+        fd, path = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        self.path = Path(path)
+        self.cfg = {"state_dir": str(self.path.parent)}
+        foxctl._SOLAR_CAL.update({"path": None, "fc": {}, "samples": [], "loaded": True})
+        self._orig_save = foxctl.save_scal
+        foxctl.save_scal = lambda cfg: None   # don't touch disk
+        foxctl._FCAST["loaded"] = True
+
+    def tearDown(self):
+        foxctl.save_scal = self._orig_save
+        foxctl._SOLAR_CAL.clear(); foxctl._SOLAR_CAL.update(self._orig_cal)
+        foxctl._FCAST["days"] = self._orig_days
+        foxctl._FCAST["loaded"] = self._orig_loaded
+        self.path.unlink(missing_ok=True)
+
+    def _seed_pairs(self, fc, act, n):
+        # n completed days, each with forecast `fc` and actual `act`
+        foxctl._SOLAR_CAL["samples"] = [{"d": f"2026-05-{i+1:02d}", "fc": fc, "act": act} for i in range(n)]
+
+    def test_no_op_until_min_samples(self):
+        self._seed_pairs(10.0, 5.0, foxctl.SOLAR_CAL_MIN - 1)   # forecast 2x too high, but too few days
+        res = foxctl.update_solar_cal(self.cfg, 8.0)
+        self.assertFalse(res["applied"])
+        self.assertEqual(res["bias"], 1.0)
+
+    def test_bias_learned_and_clamped(self):
+        self._seed_pairs(10.0, 5.0, foxctl.SOLAR_CAL_MIN)       # actual is half the forecast → bias 0.5
+        res = foxctl.update_solar_cal(self.cfg, 8.0)
+        self.assertTrue(res["applied"])
+        self.assertEqual(res["bias"], 0.5)                      # at the clamp floor
+        # an extreme over-forecast cannot push bias below the clamp
+        self._seed_pairs(10.0, 1.0, foxctl.SOLAR_CAL_MIN)
+        self.assertEqual(foxctl.update_solar_cal(self.cfg, 8.0)["bias"], foxctl.SOLAR_CAL_CLAMP[0])
+
+    def test_pairs_forecast_with_actual_from_store(self):
+        foxctl._SOLAR_CAL["fc"] = {"2026-06-10": 12.0}
+        foxctl._FCAST["days"] = {"2026-06-10": {"load": [0.0] * 24, "solar": [0.5] * 24}}  # actual 12.0
+        foxctl.update_solar_cal(self.cfg, 9.0)
+        sample = [s for s in foxctl._SOLAR_CAL["samples"] if s["d"] == "2026-06-10"]
+        self.assertEqual(len(sample), 1)
+        self.assertEqual(sample[0]["act"], 12.0)
+
+
 if __name__ == "__main__":
     unittest.main()
