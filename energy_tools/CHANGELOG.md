@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.23.0
+- **Forecasting Phase 4: shadow-mode planner (receding-horizon "ideal SoC line").** A new `plan_soc_trajectory` computes a requirement-aware SoC plan over the forecast horizon: a backward pass builds a minimum-SoC **envelope** (every expensive future slot's net-load must already be stored entering it; cheap slots relax the requirement), and a forward pass simulates the cost-minimising dispatch that follows it (solar first, grid-charge only in cheap slots up to the envelope, sell above the threshold while above survival). It runs every cycle in **SHADOW MODE — it does NOT drive control**: the ideal SoC line + min-SoC floor envelope are drawn on the chart (orange dashed) next to the heuristic projection, the recommendation card shows the plan's action vs the heuristic, and divergences are logged. This is the MPC reference trajectory to validate before it's ever allowed to act. 5 new tests (27 total).
+
 ## 1.22.5
 - **Fix averages polluted by no-data days.** The 21-day backfill window includes days before the system/panels existed, which come back as all-zeros. Those were being averaged in, dragging the load and (especially) solar means toward zero. `forecast_profiles` now excludes no-data days **per metric** (a day with ~0 total load = no telemetry; ~0 total solar = pre-panels), so the load average uses real load days and the solar average uses only generating days. The calibration also ignores zero-actual days. Usage card shows the valid-day counts (load / solar).
 

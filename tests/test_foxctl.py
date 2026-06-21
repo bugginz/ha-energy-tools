@@ -294,5 +294,52 @@ class SolarCalibrationTest(unittest.TestCase):
         self.assertEqual(sample[0]["act"], 12.0)
 
 
+class PlannerTest(unittest.TestCase):
+    """Phase 4 shadow planner: requirement-aware ideal SoC trajectory (no control side-effects)."""
+
+    def _params(self, **kw):
+        p = {"reserve": 20, "max_soc": 90, "survival": 30, "charge_start": 0.12,
+             "sell_thr": 0.50, "sell_on": True, "charge_kw": 10.0, "eff": 1.0}
+        p.update(kw)
+        return p
+
+    def test_charges_in_cheap_slot_when_below_requirement(self):
+        # SoC (30%≈9kWh) is below what the coming expensive 5kWh deficit needs → charge in the cheap slot
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 1.0, "solar": 0.0},
+                 {"h": 1.0, "price": 0.40, "dt": 1.0, "load": 5.0, "solar": 0.0}]
+        plan = foxctl.plan_soc_trajectory(slots, 30.0, 30.0, self._params())
+        self.assertEqual(plan["action_now"], "charge")
+        self.assertGreater(plan["target_now"], 30.0)                  # SoC rose in the cheap slot
+        self.assertEqual(len(plan["soc_line"]), 2)
+
+    def test_no_charge_when_already_above_requirement(self):
+        # plenty of SoC for the coming demand → the planner should NOT buy energy it doesn't need
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 1.0, "solar": 0.0},
+                 {"h": 1.0, "price": 0.40, "dt": 1.0, "load": 5.0, "solar": 0.0}]
+        plan = foxctl.plan_soc_trajectory(slots, 80.0, 30.0, self._params())
+        self.assertNotEqual(plan["action_now"], "charge")
+
+    def test_floor_envelope_rises_before_expensive_demand(self):
+        # the min-SoC envelope ENTERING the dear slot must reflect its net-load (above bare reserve)
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0},
+                 {"h": 1.0, "price": 0.40, "dt": 1.0, "load": 6.0, "solar": 0.0}]
+        plan = foxctl.plan_soc_trajectory(slots, 60.0, 30.0, self._params())
+        self.assertEqual(plan["floor_line"][1][1], 40.0)   # reserve 20% + 6kWh/30kWh = 40% entering dear slot
+        self.assertGreaterEqual(plan["floor_line"][0][1], 20.0)
+
+    def test_never_below_reserve_or_above_max(self):
+        slots = [{"h": i * 0.5, "price": 0.45, "dt": 0.5, "load": 4.0, "solar": 0.0} for i in range(12)]
+        plan = foxctl.plan_soc_trajectory(slots, 35.0, 10.0, self._params())
+        socs = [s for _, s in plan["soc_line"]]
+        self.assertGreaterEqual(min(socs), 20.0 - 1e-6)   # reserve
+        self.assertLessEqual(max(socs), 90.0 + 1e-6)      # max_soc
+
+    def test_empty_horizon_safe(self):
+        plan = foxctl.plan_soc_trajectory([], 55.0, 30.0, self._params())
+        self.assertEqual(plan["soc_line"], [])
+        self.assertEqual(plan["action_now"], "hold")
+        self.assertEqual(plan["target_now"], 55.0)
+
+
 if __name__ == "__main__":
     unittest.main()

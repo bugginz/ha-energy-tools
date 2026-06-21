@@ -1421,6 +1421,76 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
     return rec
 
 
+def _solar_kw_at(bells, h):
+    """Sample the half-sine solar bells (forecast kW) at `h` hours-from-now."""
+    tot = 0.0
+    for b in bells:
+        if b["s"] <= h <= b["e"] and b["pmax"] > 0:
+            frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
+            tot += b["pmax"] * math.sin(math.pi * min(max(frac, 0), 1))
+    return tot
+
+
+_PLAN = {"last_class": None}
+
+
+def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
+    """Requirement-aware 'ideal SoC line' over the forecast horizon. SHADOW ONLY — never drives control.
+
+    Backward pass builds a minimum-SoC *envelope*: walking from the horizon end, every expensive slot's
+    net-load (load − solar) is something we'd rather cover from the battery than import dear, so it must
+    already be stored entering that slot; cheap slots relax the requirement (we can refill there). The
+    forward pass then simulates the cost-minimising dispatch that respects the envelope: solar serves
+    load first, grid-charge happens only in cheap slots (up to what the envelope ahead needs), and we
+    sell when the price clears the threshold while staying above survival.
+
+    slots: [{h, price, load, solar, dt}] in time order. Returns the SoC line + floor envelope (both as
+    [(h, pct)]) and the recommended action/target for the *current* slot."""
+    n = len(slots)
+    if n == 0:
+        return {"soc_line": [], "floor_line": [], "action_now": "hold", "target_now": round(soc0_pct, 1)}
+    reserve = cap_kwh * p["reserve"] / 100.0
+    mx = cap_kwh * p["max_soc"] / 100.0
+    surv = cap_kwh * max(p["reserve"], p.get("survival", p["reserve"])) / 100.0
+    cstart, sell_thr = p["charge_start"], p.get("sell_thr")
+    sell_on, eff, cpwr = bool(p.get("sell_on")), p.get("eff", 0.92), p.get("charge_kw", 10.5)
+    # backward pass: minimum SoC (kWh) entering each slot to cover future expensive net-load from battery
+    req = [reserve] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        net = max(0.0, slots[i]["load"] - slots[i]["solar"])
+        step = cpwr * slots[i]["dt"]
+        req[i] = (req[i + 1] + net) if slots[i]["price"] > cstart else (req[i + 1] - step)
+        req[i] = max(reserve, min(mx, req[i]))
+    # forward pass: simulate the ideal dispatch following the envelope
+    soc, line, floor, act0, tgt0 = cap_kwh * soc0_pct / 100.0, [], [], "hold", None
+    for i, s in enumerate(slots):
+        net, price, step = s["load"] - s["solar"], s["price"], cpwr * s["dt"]
+        action = "hold"
+        if net < 0:                                       # solar surplus charges the battery
+            soc = min(mx, soc + (-net) * eff)
+        elif price > cstart:                              # dear: serve the deficit from the battery
+            soc -= net
+            if net > 0.01:
+                action = "discharge"
+        # cheap slots: deficit is imported cheaply (battery untouched), and we top up toward the envelope
+        if price <= cstart and soc < req[i + 1] and soc < mx:
+            add = min(step, mx - soc, req[i + 1] - soc)
+            if add > 0.01:
+                soc += add * eff
+                action = "charge"
+        if sell_on and sell_thr is not None and price >= sell_thr and soc > surv:
+            sell = min(step, soc - surv)
+            if sell > 0.01:
+                soc -= sell
+                action = "sell"
+        soc = max(reserve, min(mx, soc))
+        if i == 0:
+            act0, tgt0 = action, round(soc / cap_kwh * 100.0, 1)
+        line.append((round(s["h"], 3), round(soc / cap_kwh * 100.0, 1)))
+        floor.append((round(s["h"], 3), round(req[i] / cap_kwh * 100.0, 1)))
+    return {"soc_line": line, "floor_line": floor, "action_now": act0, "target_now": tgt0}
+
+
 def gather_and_decide(cfg: dict) -> dict:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
@@ -1615,6 +1685,46 @@ def gather_and_decide(cfg: dict) -> dict:
         rec = decide(prices, soc, pv, wm.get("value"), working,
                      currently_charging=charging, load_kw=load, demand_window=demand_window)
 
+    # ---- SHADOW PLANNER (Phase 4): requirement-aware ideal SoC line over the forecast. Does NOT drive
+    # control — it's drawn on the chart next to the heuristic projection and logged when they diverge,
+    # so the receding-horizon plan can be validated before it's ever allowed to act. ----
+    plan = None
+    try:
+        now_utc = datetime.now(timezone.utc)
+        parsed = []
+        for pp in (prices.get("forecast") or []):
+            t = _parse_t(pp.get("t") or "")
+            if t and pp.get("price") is not None:
+                hh = (t - now_utc).total_seconds() / 3600.0
+                if -0.2 <= hh <= 24:
+                    parsed.append((hh, float(pp["price"]), t))
+        parsed.sort()
+        hp = consumption.get("hour_profile") or {}
+        slots = []
+        for i, (hh, price, t) in enumerate(parsed):
+            nh = parsed[i + 1][0] if i + 1 < len(parsed) else hh + 0.5
+            dt = min(1.5, max(0.05, nh - hh))
+            lh = t.astimezone().hour
+            load_kwh = (hp.get(lh, hp.get(str(lh))) or 0.0) * dt
+            slots.append({"h": hh, "price": price, "dt": dt,
+                          "load": load_kwh, "solar": _solar_kw_at(solar_bells, (hh + nh) / 2.0) * dt})
+        if slots and not zerohero:
+            pp = {"reserve": reserve, "max_soc": foundation["max_soc"], "survival": survival_soc,
+                  "charge_start": working.get("charge_start_price", strat.get("charge_start_price", 0.1)),
+                  "sell_thr": sell_eff, "sell_on": bool(strat.get("sell_enabled", True)),
+                  "charge_kw": strat.get("force_charge_power_kw", 10.5), "eff": 0.92}
+            plan = plan_soc_trajectory(slots, soc, cap_kwh, pp)
+            heur = "charge" if rec.get("force_charge") else ("sell" if rec.get("force_discharge") else "hold")
+            pc = plan["action_now"] if plan["action_now"] in ("charge", "sell") else "hold"
+            plan["heuristic"] = heur
+            plan["diverges"] = pc != heur
+            if plan["diverges"] and _PLAN["last_class"] != (pc, heur):
+                log_event("planner", f"shadow plan wants {plan['action_now']} → {plan['target_now']}%, "
+                                     f"heuristic says {heur} (rec {rec.get('action')})")
+            _PLAN["last_class"] = (pc, heur)
+    except Exception as e:
+        print(f"shadow planner failed: {e}", file=sys.stderr)
+
     now_epoch = time.time()
     return {
         "demand_window": demand_window,
@@ -1668,6 +1778,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "work_mode": wm.get("value"),
         "work_mode_options": wm.get("enumList"),
         "recommendation": rec,
+        "plan": plan,
         "applied": None,
     }
 
@@ -2098,6 +2209,17 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
                    f'survival {int(survival)}%</text>')
         out.append(f'<text x="{X(proj[0]["h"])+3:.1f}" y="{PY(proj[0]["soc"])-5:.1f}" '
                    f'fill="#16a085">SoC {proj[0]["soc"]:.0f}%</text>')
+    # SHADOW PLANNER: ideal SoC line + min-SoC requirement envelope (does not drive control)
+    plan = snap.get("plan") or {}
+    pline = [(h, s) for h, s in (plan.get("soc_line") or []) if xmin <= h <= xmax]
+    if pline:
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{PY(s):.1f}" for h, s in pline) +
+                   '" fill="none" stroke="#d35400" stroke-width="1.6" stroke-dasharray="7 3" opacity="0.85"/>')
+        fl = [(h, s) for h, s in (plan.get("floor_line") or []) if xmin <= h <= xmax]
+        if fl:
+            out.append('<polyline points="' + " ".join(f"{X(h):.1f},{PY(s):.1f}" for h, s in fl) +
+                       '" fill="none" stroke="#d35400" stroke-width="0.8" stroke-dasharray="1 4" opacity="0.5"/>')
+        out.append(f'<text x="{X(pline[0][0])+3:.1f}" y="{PY(pline[0][1])+13:.1f}" fill="#d35400">plan</text>')
     cheapest = min(amber, key=lambda x: x[1]); peak = max(amber, key=lambda x: x[1])
     for (h, pr, _), col, txt in ((cheapest, "#1a9e4b", f"min ${cheapest[1]:.2f}"),
                                  (peak, "#c0392b", f"peak ${peak[1]:.2f}")):
@@ -2138,6 +2260,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
               '<span style="color:#b8860b">▮ est. solar + error band (right kW axis)</span> · '
               '<span style="color:#8e44ad">- - your usage avg + range band (right kW axis)</span> · '
               '<span style="color:#16a085">— projected SoC %</span> · '
+              '<span style="color:#d35400">- - shadow plan (ideal SoC + floor)</span> · '
               '<span style="color:#2ecc71">▮ would grid-charge</span> · '
               '<span style="color:#e84393">▮ would sell</span> · hover for time<br>'
               '<i>SoC projection &amp; sell windows are estimates (buy-price proxy for export, '
@@ -2250,6 +2373,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}</div>
  <div>{rec.get('reason','')}</div>
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
+ <div><small>🔭 shadow plan (not driving): {(snap.get('plan') or {}).get('action_now','–')} → {(snap.get('plan') or {}).get('target_now','–')}%{' · ⚠️ differs from heuristic' if (snap.get('plan') or {}).get('diverges') else ' · agrees with heuristic' if snap.get('plan') else ''}</small></div>
 </div>
 {llm_html}
 {note_html}
