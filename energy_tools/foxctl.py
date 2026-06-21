@@ -913,13 +913,18 @@ def update_solar_cal(cfg, today_forecast_total):
         save_scal(cfg)
     s = _SOLAR_CAL["samples"]
     n = len(s)
-    bias = 1.0
+    bias, lo, hi = 1.0, 1.0, 1.0
     if n >= SOLAR_CAL_MIN:
         den = sum(x["fc"] for x in s)
         if den > 0:
             bias = max(SOLAR_CAL_CLAMP[0], min(SOLAR_CAL_CLAMP[1], sum(x["act"] for x in s) / den))
+        ratios = [x["act"] / x["fc"] for x in s if x["fc"] > 0]
+        if ratios:                       # forecast error margin = spread of actual/forecast (clamped)
+            lo = round(max(0.2, min(ratios)), 3)
+            hi = round(min(2.0, max(ratios)), 3)
     mae = round(sum(abs(x["act"] - x["fc"]) for x in s) / n, 1) if n else None
-    return {"bias": round(bias, 3), "samples": n, "mae_kwh": mae, "applied": n >= SOLAR_CAL_MIN}
+    return {"bias": round(bias, 3), "lo": lo, "hi": hi, "samples": n, "mae_kwh": mae,
+            "applied": n >= SOLAR_CAL_MIN}
 
 
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
@@ -1908,6 +1913,12 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     xmin = min(h for h, _, _ in amber)
     xmax = max(h for h, _, _ in amber) or 1
     bells = snap.get("solar_bells") or []
+    # Solar forecast-error band factors (calibration actual/forecast spread, relative to the bias).
+    scal = snap.get("solar_cal") or {}
+    _cb = scal.get("bias") or 1.0
+    cal_applied = bool(scal.get("applied")) and _cb > 0
+    fhi = (scal.get("hi") or 1.0) / _cb if cal_applied else 1.0
+    flo = (scal.get("lo") or 1.0) / _cb if cal_applied else 1.0
     # Rolling hour-of-day usage profile (avg kWh in each wall-clock hour ≈ avg kW) + min/max range band.
     _cons = snap.get("consumption") or {}
     hour_profile = _cons.get("hour_profile") or {}
@@ -1922,7 +1933,8 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     usage_band = [(h, _prof_at(hmin, t), _prof_at(hmax, t)) for h, _, t in amber]
     usage_band = [(h, lo, hi) for h, lo, hi in usage_band if lo is not None and hi is not None]
     peak_usage = max([v for _, v in usage] + [hi for _, _, hi in usage_band] + [0.0])
-    skw = max([b["pmax"] for b in bells] + [peak_usage, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
+    peak_solar = max([b["pmax"] for b in bells] + [0.0]) * max(1.0, fhi)   # include the error band's top
+    skw = max([peak_solar, peak_usage, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
     SY = lambda kw: padT + ih * (1 - kw / skw)   # power (kW) → y (right axis)
@@ -1968,18 +1980,29 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
             soc_kwh = max(floor_kwh, min(max_kwh, soc_kwh))
             proj.append({"h": h, "soc": round(soc_kwh / cap * 100.0, 1), "sell": sell})
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:14px system-ui">']
-    # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis
+    # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis.
+    # Error margin (fhi/flo computed above): the calibration's actual/forecast spread drawn as a lighter
+    # band above/below the central bell — i.e. how far past days landed from the forecast.
     for b in bells:
         s, e = max(b["s"], xmin), min(b["e"], xmax)
         if e <= s or b["pmax"] <= 0:
             continue
         steps = 40
+        def _curve(pm):   # half-sine bell at peak `pm` over [s,e], as (x,y) points
+            out2 = []
+            for k in range(steps + 1):
+                h = s + (e - s) * k / steps
+                frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
+                out2.append((X(h), SY(pm * math.sin(math.pi * min(max(frac, 0), 1)))))
+            return out2
+        if cal_applied and fhi > flo + 0.01:   # shaded forecast-error band between low/high outcomes
+            hp, lp = _curve(b["pmax"] * fhi), _curve(b["pmax"] * flo)
+            band = " ".join(f"{x:.1f},{y:.1f}" for x, y in hp) + " " + \
+                   " ".join(f"{x:.1f},{y:.1f}" for x, y in reversed(lp))
+            out.append(f'<polygon points="{band}" fill="#f5c518" opacity="0.15"/>')
         pts = [f"{X(s):.1f},{SY(0):.1f}"]
-        for k in range(steps + 1):
-            h = s + (e - s) * k / steps
-            frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
-            kw = b["pmax"] * math.sin(math.pi * min(max(frac, 0), 1))
-            pts.append(f"{X(h):.1f},{SY(kw):.1f}")
+        for x, y in _curve(b["pmax"]):
+            pts.append(f"{x:.1f},{y:.1f}")
         pts.append(f"{X(e):.1f},{SY(0):.1f}")
         out.append(f'<polygon points="{" ".join(pts)}" fill="#f5c518" opacity="0.22"/>')
         hpk = b["s"] + (b["e"] - b["s"]) / 2
@@ -2089,7 +2112,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
               "s.addEventListener('mouseleave',hide);})();</script>")
     legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
-              '<span style="color:#b8860b">▮ est. solar (right kW axis)</span> · '
+              '<span style="color:#b8860b">▮ est. solar + error band (right kW axis)</span> · '
               '<span style="color:#8e44ad">- - your usage avg + range band (right kW axis)</span> · '
               '<span style="color:#16a085">— projected SoC %</span> · '
               '<span style="color:#2ecc71">▮ would grid-charge</span> · '

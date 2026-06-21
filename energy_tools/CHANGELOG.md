@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.3
+- Chart now shows a **solar forecast error band** around the solar bells, derived from the Phase-3 calibration's actual-vs-forecast spread (drawn only once the calibration has enough samples). Right-axis scale widened so the band's top doesn't clip.
+
 ## 1.22.2
 - Chart usage overlay now shows the hour-of-day **min–max range as a shaded band** around the average line (same source as the line — FoxESS history or self-integrated). Hover shows the avg plus the (min–max) range at that time.
 
