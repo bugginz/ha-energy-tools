@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.4
+- Usage card's daily **avg/min/max now come from the FoxESS history store** (sum of each stored day's hourly `loads`), matching the chart's source, once ≥3 days are backfilled. `today` stays from live integration (the store only holds completed days); EV is unchanged. Falls back to self-integration until the backfill matures.
+
 ## 1.22.3
 - Chart now shows a **solar forecast error band** around the solar bells, derived from the Phase-3 calibration's actual-vs-forecast spread (drawn only once the calibration has enough samples). Right-axis scale widened so the band's top doesn't clip.
 

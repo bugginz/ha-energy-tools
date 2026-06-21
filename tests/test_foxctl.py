@@ -219,6 +219,8 @@ class ForecastStoreTest(unittest.TestCase):
             self.assertEqual(fp["days"], 2)
             self.assertEqual(fp["load_profile"][0], 3.0)    # mean(2,4)
             self.assertEqual(fp["solar_profile"][12], 0.5)  # mean(0,1)
+            # daily totals: day sums are 48 and 96 → avg 72, min 48, max 96
+            self.assertEqual(fp["daily_total"], {"avg": 72.0, "min": 48.0, "max": 96.0})
         finally:
             foxctl._FCAST["days"] = orig
 

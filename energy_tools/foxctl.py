@@ -823,8 +823,11 @@ def forecast_profiles():
         return avg, lo, hi
     load_avg, load_min, load_max = stats("load")
     solar_avg, _, _ = stats("solar")
+    totals = [round(sum(x for x in d["load"] if isinstance(x, (int, float))), 1)
+              for d in days.values() if isinstance(d.get("load"), list)]
+    daily = {"avg": round(sum(totals) / len(totals), 1), "min": min(totals), "max": max(totals)} if totals else {}
     return {"days": len(days), "load_profile": load_avg, "load_min": load_min, "load_max": load_max,
-            "solar_profile": solar_avg}
+            "solar_profile": solar_avg, "daily_total": daily}
 
 
 def update_forecast_store(cfg, fox):
@@ -1508,6 +1511,17 @@ def gather_and_decide(cfg: dict) -> dict:
         consumption["hour_max"] = fcast.get("load_max", {})
         consumption["profile_days"] = fcast["days"]
         consumption["profile_source"] = "foxess"
+        # Daily avg/min/max also come from FoxESS history (sum of each stored day's hourly `loads`),
+        # so the card matches the chart's source. `today` stays from live integration (the store only
+        # holds completed days); EV is unchanged (no FoxESS EV channel).
+        dt = fcast.get("daily_total") or {}
+        if dt:
+            consumption["avg_daily_total_kwh"] = dt.get("avg")
+            consumption["min_daily_total_kwh"] = dt.get("min")
+            consumption["max_daily_total_kwh"] = dt.get("max")
+            consumption["days_sampled"] = fcast["days"]
+            if isinstance(consumption.get("avg_daily_ev_kwh"), (int, float)):
+                consumption["avg_daily_base_kwh"] = round(dt["avg"] - consumption["avg_daily_ev_kwh"], 1)
     else:
         consumption.setdefault("profile_source", "self")
 
