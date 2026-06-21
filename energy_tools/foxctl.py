@@ -702,17 +702,19 @@ def update_consumption(cfg, load_kw, ev_kw=None):
     max_total = round(max(totals), 1) if totals else None
     avg_ev = round(sum(p["ev"] for p in past) / n, 1) if n else None
     avg_base = round(avg_total - avg_ev, 1) if avg_total is not None else None
-    # Hour-of-day base-load profile: avg kWh per hour across complete past days.
-    hour_profile, hp_days = {}, [p for p in past if p.get("hours")]
+    # Hour-of-day base-load profile: avg (+ min/max range) kWh per hour across complete past days.
+    hour_profile, hour_min, hour_max, hp_days = {}, {}, {}, [p for p in past if p.get("hours")]
     if hp_days:
         for h in range(24):
             vals = [p["hours"].get(str(h), 0.0) for p in hp_days]
             hour_profile[h] = round(sum(vals) / len(vals), 3)
+            hour_min[h], hour_max[h] = round(min(vals), 3), round(max(vals), 3)
     tk = _CONS["days"].get(today, {})
     return {"days_sampled": n, "avg_daily_total_kwh": avg_total, "avg_daily_ev_kwh": avg_ev,
             "min_daily_total_kwh": min_total, "max_daily_total_kwh": max_total,
             "avg_daily_base_kwh": avg_base, "today_so_far_kwh": round(tk.get("load", 0.0), 1),
-            "hour_profile": hour_profile, "profile_days": len(hp_days)}
+            "hour_profile": hour_profile, "hour_min": hour_min, "hour_max": hour_max,
+            "profile_days": len(hp_days)}
 
 
 def predict_base_load(hour_profile, hours_ahead):
@@ -808,17 +810,21 @@ def fetch_forecast_day(fox, day):
 
 
 def forecast_profiles():
-    """Hour-of-day average load + solar (kWh) across the stored days."""
+    """Hour-of-day average load + solar (kWh) across the stored days, with the load min/max range."""
     days = _FCAST["days"]
-    def avg(key):
-        prof = {}
+    def stats(key):
+        avg, lo, hi = {}, {}, {}
         for h in range(24):
             vals = [d[key][h] for d in days.values()
                     if isinstance(d.get(key), list) and len(d[key]) == 24 and isinstance(d[key][h], (int, float))]
             if vals:
-                prof[h] = round(sum(vals) / len(vals), 3)
-        return prof
-    return {"days": len(days), "load_profile": avg("load"), "solar_profile": avg("solar")}
+                avg[h] = round(sum(vals) / len(vals), 3)
+                lo[h], hi[h] = round(min(vals), 3), round(max(vals), 3)
+        return avg, lo, hi
+    load_avg, load_min, load_max = stats("load")
+    solar_avg, _, _ = stats("solar")
+    return {"days": len(days), "load_profile": load_avg, "load_min": load_min, "load_max": load_max,
+            "solar_profile": solar_avg}
 
 
 def update_forecast_store(cfg, fox):
@@ -1493,6 +1499,8 @@ def gather_and_decide(cfg: dict) -> dict:
         print(f"forecast store update failed: {e}", file=sys.stderr)
     if fcast["days"] >= FCAST_MIN_DAYS and fcast["load_profile"]:
         consumption["hour_profile"] = fcast["load_profile"]
+        consumption["hour_min"] = fcast.get("load_min", {})
+        consumption["hour_max"] = fcast.get("load_max", {})
         consumption["profile_days"] = fcast["days"]
         consumption["profile_source"] = "foxess"
     else:
@@ -1900,16 +1908,21 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     xmin = min(h for h, _, _ in amber)
     xmax = max(h for h, _, _ in amber) or 1
     bells = snap.get("solar_bells") or []
-    # Rolling hour-of-day usage profile (avg kWh in each wall-clock hour ≈ avg kW) overlaid on the kW axis.
-    hour_profile = (snap.get("consumption") or {}).get("hour_profile") or {}
-    def _usage_at(t):
+    # Rolling hour-of-day usage profile (avg kWh in each wall-clock hour ≈ avg kW) + min/max range band.
+    _cons = snap.get("consumption") or {}
+    hour_profile = _cons.get("hour_profile") or {}
+    def _prof_at(prof, t):
         lh = t.astimezone(tz).hour
-        v = hour_profile.get(lh, hour_profile.get(str(lh)))
+        v = prof.get(lh, prof.get(str(lh)))
         return float(v) if isinstance(v, (int, float)) else None
-    usage = [(h, _usage_at(t)) for h, _, t in amber]
-    usage = [(h, v) for h, v in usage if v is not None]
-    usage_max = max([v for _, v in usage] + [0.0])
-    skw = max([b["pmax"] for b in bells] + [usage_max, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
+    def _usage_at(t):
+        return _prof_at(hour_profile, t)
+    usage = [(h, _usage_at(t)) for h, _, t in amber if _usage_at(t) is not None]
+    hmin, hmax = _cons.get("hour_min") or {}, _cons.get("hour_max") or {}
+    usage_band = [(h, _prof_at(hmin, t), _prof_at(hmax, t)) for h, _, t in amber]
+    usage_band = [(h, lo, hi) for h, lo, hi in usage_band if lo is not None and hi is not None]
+    peak_usage = max([v for _, v in usage] + [hi for _, _, hi in usage_band] + [0.0])
+    skw = max([b["pmax"] for b in bells] + [peak_usage, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
     SY = lambda kw: padT + ih * (1 - kw / skw)   # power (kW) → y (right axis)
@@ -2020,7 +2033,11 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
         out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>')
     pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr, _ in amber)
     out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2.2"/>')
-    # rolling avg usage overlay (right kW axis)
+    # rolling usage min–max range (shaded band) + avg overlay (right kW axis)
+    if usage_band:
+        top = " ".join(f"{X(h):.1f},{SY(hi):.1f}" for h, lo, hi in usage_band)
+        bot = " ".join(f"{X(h):.1f},{SY(lo):.1f}" for h, lo, hi in reversed(usage_band))
+        out.append(f'<polygon points="{top} {bot}" fill="#8e44ad" opacity="0.12"/>')
     if usage:
         upl = " ".join(f"{X(h):.1f},{SY(v):.1f}" for h, v in usage)
         out.append(f'<polyline points="{upl}" fill="none" stroke="#8e44ad" stroke-width="1.6" '
@@ -2051,8 +2068,8 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     for h, pr, t in amber:
         d = socmap.get(round(h, 3))
         pts.append({"x": round(X(h), 1), "t": t.astimezone(tz).strftime("%H:%M"), "price": round(pr, 3),
-                    "use": _usage_at(t), "soc": (d["soc"] if d else None),
-                    "sell": (bool(d["sell"]) if d else False)})
+                    "use": _usage_at(t), "umin": _prof_at(hmin, t), "umax": _prof_at(hmax, t),
+                    "soc": (d["soc"] if d else None), "sell": (bool(d["sell"]) if d else False)})
     hover = {"pts": pts, "W": W, "padR": padR}
     script = ("<script>(function(){var w=document.getElementById('chartwrap');if(!w)return;"
               "var s=w.querySelector('svg');if(!s)return;var D=" + json.dumps(hover) + ";"
@@ -2063,7 +2080,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
               "var best=null,bd=1e9;for(var i=0;i<D.pts.length;i++){var d=Math.abs(D.pts[i].x-l.x);"
               "if(d<bd){bd=d;best=D.pts[i];}}if(!best){hide();return;}"
               "ln.setAttribute('x1',best.x);ln.setAttribute('x2',best.x);ln.style.display='';"
-              "tp.textContent=best.t+'   $'+best.price.toFixed(2)+(best.use!=null?'   ~'+best.use.toFixed(1)+'kW use':'')"
+              "tp.textContent=best.t+'   $'+best.price.toFixed(2)+(best.use!=null?'   ~'+best.use.toFixed(1)+'kW use'+(best.umin!=null&&best.umax!=null?' ('+best.umin.toFixed(1)+'-'+best.umax.toFixed(1)+')':''):'')"
               "+(best.soc!=null?'   SoC '+Math.round(best.soc)+'%':'')+(best.sell?'   ⟶ SELL':'');"
               "tp.style.display='';var tx=best.x+9;tp.setAttribute('y',18);tp.setAttribute('x',tx);"
               "var b=tp.getBBox();if(b.x+b.width>D.W-D.padR){tx=best.x-9-b.width;tp.setAttribute('x',tx);b=tp.getBBox();}"
@@ -2073,7 +2090,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
               '<span style="color:#b8860b">▮ est. solar (right kW axis)</span> · '
-              '<span style="color:#8e44ad">- - your avg usage (right kW axis)</span> · '
+              '<span style="color:#8e44ad">- - your usage avg + range band (right kW axis)</span> · '
               '<span style="color:#16a085">— projected SoC %</span> · '
               '<span style="color:#2ecc71">▮ would grid-charge</span> · '
               '<span style="color:#e84393">▮ would sell</span> · hover for time<br>'

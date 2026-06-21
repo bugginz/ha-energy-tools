@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.22.2
+- Chart usage overlay now shows the hour-of-day **min–max range as a shaded band** around the average line (same source as the line — FoxESS history or self-integrated). Hover shows the avg plus the (min–max) range at that time.
+
 ## 1.22.1
 - Usage card now shows the daily **range (min–max) and average** kWh/day over the sampled days, not just the average.
 
