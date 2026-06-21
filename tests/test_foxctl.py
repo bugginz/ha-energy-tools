@@ -182,5 +182,46 @@ class FoxESSReadEndpointsTest(unittest.TestCase):
         self.assertEqual(self.fox.history(["loadsPower"], 0, 1), [])
 
 
+class ForecastStoreTest(unittest.TestCase):
+    """Phase 2: hourly integration + profile averaging from FoxESS history (no network)."""
+
+    def test_integrate_hourly_trapezoidal(self):
+        # 2 kW held across 12:00→12:30 → (2+2)/2 * 0.5h = 1.0 kWh in hour 12; gaps >0.5h skipped
+        pts = [{"time": "2026-06-20 12:00:00 AEST+1000", "value": 2.0},
+               {"time": "2026-06-20 12:30:00 AEST+1000", "value": 2.0},
+               {"time": "2026-06-20 18:00:00 AEST+1000", "value": 9.0}]  # 5.5h gap → not counted
+        hourly = foxctl._integrate_hourly(pts)
+        self.assertEqual(len(hourly), 24)
+        self.assertAlmostEqual(hourly[12], 1.0, places=3)
+        self.assertEqual(sum(hourly), 1.0)   # the lone post-gap sample contributes nothing
+
+    def test_fetch_forecast_day_shapes(self):
+        class FakeFox:
+            def report(self, vars, dim, when):
+                return [{"variable": "loads", "unit": "kWh", "values": [1.0] * 24}]
+            def history(self, vars, b, e):
+                return [{"datas": [{"variable": "pvPower", "data": [
+                    {"time": "2026-06-20 11:00:00 AEST+1000", "value": 3.0},
+                    {"time": "2026-06-20 11:30:00 AEST+1000", "value": 3.0}]}]}]
+        load, solar = foxctl.fetch_forecast_day(FakeFox(), datetime(2026, 6, 20))
+        self.assertEqual(load, [1.0] * 24)
+        self.assertAlmostEqual(solar[11], 1.5, places=3)   # (3+3)/2*0.5
+        self.assertEqual(len(solar), 24)
+
+    def test_forecast_profiles_averages_days(self):
+        orig = foxctl._FCAST["days"]
+        try:
+            foxctl._FCAST["days"] = {
+                "2026-06-19": {"load": [2.0] * 24, "solar": [0.0] * 24},
+                "2026-06-20": {"load": [4.0] * 24, "solar": [1.0] * 24},
+            }
+            fp = foxctl.forecast_profiles()
+            self.assertEqual(fp["days"], 2)
+            self.assertEqual(fp["load_profile"][0], 3.0)    # mean(2,4)
+            self.assertEqual(fp["solar_profile"][12], 0.5)  # mean(0,1)
+        finally:
+            foxctl._FCAST["days"] = orig
+
+
 if __name__ == "__main__":
     unittest.main()

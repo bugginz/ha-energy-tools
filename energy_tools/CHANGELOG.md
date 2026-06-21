@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.21.0
+- **Forecasting Phase 2: real hour-of-day profiles from FoxESS history.** A persistent forecast store (`/data`) backfills the last 21 days of per-hour **load** (`report` `loads`) and **solar** (`history` `pvPower`, integrated trapezoidally — `generation` is inverter throughput incl. battery, not PV, so it's deliberately not used). Fetches at most one day per cycle and one per 2 min, so a full backfill spreads gently over ~an hour and stays well inside the FoxESS API quota; then one incremental day daily. Once ≥3 days are stored, the load profile that drives the shortfall/survival calcs and the chart usage overlay switches from the slow self-integrated estimate (needs ~2 weeks) to the FoxESS history (accurate in days). The Usage card shows the profile source + backfill progress. Validated end-to-end against the live inverter. Solar profile is stored for Phase 3 (forecast calibration).
+
 ## 1.20.0
 - **Forecasting Phase 1: FoxESS history client + read-only spike.** New `FoxESS.report()` (hourly kWh per variable for a day — `loads`, `generation`, `feedin`, `gridConsumption`, charge/discharge) and `FoxESS.history()` (raw sub-hourly telemetry). Both read-only. New `foxess_probe.py` (shipped in the image) confirms the data shape/granularity against the real inverter before we build the forecast store — run `FOXCTL_CONFIG=/data/.config/foxctl/config.json python3 /foxess_probe.py --days 3`. Request-shape unit tests added (15 tests total). No behaviour change yet; this is the data-acquisition foundation for the load/solar forecasts.
 

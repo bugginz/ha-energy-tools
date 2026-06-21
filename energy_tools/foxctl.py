@@ -727,6 +727,119 @@ def predict_base_load(hour_profile, hours_ahead):
         remaining -= take
         h += 1; frac = 1.0
     return round(total, 1)
+
+
+# ---- FORECAST STORE: hour-of-day load (report `loads`) + solar (history `pvPower`) from FoxESS -----
+# Phase 2: backfill real per-hour history so the load/solar profiles are accurate in days, not the
+# ~2 weeks the self-integrated profile needs. Read-only API. `generation` in the report is inverter
+# throughput (incl. battery), NOT PV — so solar comes from integrating pvPower, verified by the probe.
+_FCAST = {"path": None, "days": {}, "loaded": False, "last_fill_ts": 0.0}
+FCAST_BACKFILL_DAYS = 21      # how many past days to keep / backfill
+FCAST_MIN_DAYS = 3            # prefer the FoxESS profile over self-integration once we have this many
+FCAST_FILL_GAP_S = 120        # fetch at most one backfill day per this interval (quota-friendly)
+
+
+def _fcast_path(cfg):
+    return _state_dir(cfg) / "forecast_store.json"
+
+
+def load_fcast(cfg):
+    if _FCAST["loaded"]:
+        return
+    _FCAST["path"] = _fcast_path(cfg)
+    try:
+        _FCAST["days"] = json.loads(_FCAST["path"].read_text()).get("days", {})
+    except Exception:
+        pass
+    _FCAST["loaded"] = True
+
+
+def save_fcast(cfg):
+    try:
+        _FCAST["path"].parent.mkdir(parents=True, exist_ok=True)
+        _FCAST["path"].write_text(json.dumps({"days": _FCAST["days"]}))
+    except Exception as e:
+        print(f"forecast store persist failed: {e}", file=sys.stderr)
+
+
+def _hist_time(ts):
+    """Parse a FoxESS history timestamp ('2026-06-20 13:05:00 AEST+1000') → naive local datetime."""
+    try:
+        return datetime.strptime(ts[:19], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _integrate_hourly(points):
+    """Power samples (kW) → 24-element hourly kWh, trapezoidal over the real sample gaps."""
+    hourly = [0.0] * 24
+    pt = pv = None
+    for p in points:
+        t = _hist_time(p.get("time") or "")
+        v = p.get("value")
+        if t is None or not isinstance(v, (int, float)):
+            continue
+        if pt is not None:
+            dt_h = (t - pt).total_seconds() / 3600.0
+            if 0 < dt_h <= 0.5:                 # skip big gaps (restart/downtime)
+                hourly[pt.hour] += (pv + v) / 2.0 * dt_h
+        pt, pv = t, v
+    return [round(x, 3) for x in hourly]
+
+
+def fetch_forecast_day(fox, day):
+    """One past day → (load_hours[24] from report `loads`, solar_hours[24] from pvPower history)."""
+    load_hours = [0.0] * 24
+    for it in fox.report(["loads"], "day", day):
+        if it.get("variable") == "loads":
+            vals = (list(it.get("values") or []) + [0.0] * 24)[:24]
+            load_hours = [round(float(v), 3) if isinstance(v, (int, float)) else 0.0 for v in vals]
+    begin = int(datetime(day.year, day.month, day.day).timestamp() * 1000)
+    solar_hours = [0.0] * 24
+    res = fox.history(["pvPower"], begin, begin + 24 * 3600 * 1000)
+    for ds in ((res[0].get("datas") if res else None) or []):
+        if ds.get("variable") == "pvPower":
+            solar_hours = _integrate_hourly(ds.get("data") or [])
+    return load_hours, solar_hours
+
+
+def forecast_profiles():
+    """Hour-of-day average load + solar (kWh) across the stored days."""
+    days = _FCAST["days"]
+    def avg(key):
+        prof = {}
+        for h in range(24):
+            vals = [d[key][h] for d in days.values()
+                    if isinstance(d.get(key), list) and len(d[key]) == 24 and isinstance(d[key][h], (int, float))]
+            if vals:
+                prof[h] = round(sum(vals) / len(vals), 3)
+        return prof
+    return {"days": len(days), "load_profile": avg("load"), "solar_profile": avg("solar")}
+
+
+def update_forecast_store(cfg, fox):
+    """Ensure the last FCAST_BACKFILL_DAYS complete days are stored. Fetches at most ONE missing day
+    per call AND no more than one per FCAST_FILL_GAP_S — so a backfill spreads over many cycles and
+    stays well inside the FoxESS daily API quota. Read-only. Returns the current profiles."""
+    load_fcast(cfg)
+    want = [(datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d") for d in range(1, FCAST_BACKFILL_DAYS + 1)]
+    for k in [k for k in _FCAST["days"] if k not in want]:   # prune anything older than the window
+        _FCAST["days"].pop(k, None)
+    missing = [d for d in want if d not in _FCAST["days"]]
+    if missing and (time.time() - _FCAST["last_fill_ts"]) >= FCAST_FILL_GAP_S:
+        _FCAST["last_fill_ts"] = time.time()
+        d = missing[0]
+        try:
+            lh, sh = fetch_forecast_day(fox, datetime.strptime(d, "%Y-%m-%d"))
+            _FCAST["days"][d] = {"load": lh, "solar": sh}
+            save_fcast(cfg)
+            log_event("forecast", f"backfilled {d}: load={round(sum(lh),1)}kWh solar={round(sum(sh),1)}kWh "
+                                  f"({len(_FCAST['days'])}/{FCAST_BACKFILL_DAYS} days)")
+        except Exception as e:
+            print(f"forecast backfill {d} failed: {e}", file=sys.stderr)
+    return forecast_profiles()
+
+
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -1285,6 +1398,19 @@ def gather_and_decide(cfg: dict) -> dict:
     if ev_kw is not None and ev_kw > 100:   # entity is in W (Tuya plugs report watts) → kW
         ev_kw = ev_kw / 1000.0
     consumption = update_consumption(cfg, load, ev_kw)
+    # Prefer the FoxESS-history hour-of-day profile (accurate in days, not weeks) once it has matured;
+    # falls back to the self-integrated profile until the backfill reaches FCAST_MIN_DAYS. Read-only.
+    try:
+        fcast = update_forecast_store(cfg, fox)
+    except Exception as e:
+        fcast = {"days": 0, "load_profile": {}, "solar_profile": {}}
+        print(f"forecast store update failed: {e}", file=sys.stderr)
+    if fcast["days"] >= FCAST_MIN_DAYS and fcast["load_profile"]:
+        consumption["hour_profile"] = fcast["load_profile"]
+        consumption["profile_days"] = fcast["days"]
+        consumption["profile_source"] = "foxess"
+    else:
+        consumption.setdefault("profile_source", "self")
 
     note = get_note(cfg)
     load_ov(cfg)
@@ -1384,6 +1510,7 @@ def gather_and_decide(cfg: dict) -> dict:
                     "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
+        "forecast_profiles": fcast,   # FoxESS-history hour-of-day load + solar (Phase 2)
         "energy_shortfall_kwh": working.get("energy_shortfall_kwh"),
         "feedin": prices.get("feedin"),
         "grid_power": grid_power,
@@ -1957,7 +2084,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}</small></div>
- <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}</small></div>
+ <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>{(snap.get('consumption') or {}).get('days_sampled',0)}d · EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')}<br>profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)}/{21}d backfilled)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>
