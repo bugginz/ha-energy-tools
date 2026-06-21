@@ -334,6 +334,25 @@ class PlannerTest(unittest.TestCase):
         self.assertGreaterEqual(min(socs), 20.0 - 1e-6)   # reserve
         self.assertLessEqual(max(socs), 90.0 + 1e-6)      # max_soc
 
+    def test_arbitrage_fills_for_future_sell(self):
+        # cheap now (0.10), a sell-window later (0.60 ≥ sell_thr 0.50); SoC already covers all *load*
+        # requirements → requirement-only would hold, but arbitrage should charge to sell into the spike.
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0},
+                 {"h": 1.0, "price": 0.60, "dt": 1.0, "load": 0.0, "solar": 0.0}]
+        no_arb = foxctl.plan_soc_trajectory(slots, 50.0, 30.0, self._params(arbitrage=False))
+        self.assertEqual(no_arb["action_now"], "hold")            # no load requirement → no charge
+        arb = foxctl.plan_soc_trajectory(slots, 50.0, 30.0, self._params(arbitrage=True))
+        self.assertEqual(arb["action_now"], "charge")            # buys cheap to sell into the spike
+        self.assertGreater(arb["target_now"], 50.0)
+
+    def test_no_arbitrage_when_spread_unprofitable(self):
+        # future "sell" price below buy-after-efficiency → not worth pre-buying
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0},
+                 {"h": 1.0, "price": 0.60, "dt": 1.0, "load": 0.0, "solar": 0.0}]
+        # sell threshold above the spike price → no sellable window ahead → no arb fill
+        plan = foxctl.plan_soc_trajectory(slots, 50.0, 30.0, self._params(sell_thr=0.80))
+        self.assertEqual(plan["action_now"], "hold")
+
     def test_empty_horizon_safe(self):
         plan = foxctl.plan_soc_trajectory([], 55.0, 30.0, self._params())
         self.assertEqual(plan["soc_line"], [])

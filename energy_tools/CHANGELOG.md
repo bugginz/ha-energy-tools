@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.24.0
+- **Shadow planner: arbitrage fill.** The planner now goes beyond covering load requirements — in a cheap slot it fills toward `max_soc` to capture a profitable spread when a future sell-window exists (buy-cheap, sell-into-the-spike), gated on `sell_thr × efficiency > buy price` and bounded by the actual export capacity of those future windows. Still SHADOW (does not drive control); the orange ideal-SoC line will now rise toward full before a forecast price spike. Degrades to requirement-only when there's no profitable spread. 2 new tests (29 total).
+
 ## 1.23.0
 - **Forecasting Phase 4: shadow-mode planner (receding-horizon "ideal SoC line").** A new `plan_soc_trajectory` computes a requirement-aware SoC plan over the forecast horizon: a backward pass builds a minimum-SoC **envelope** (every expensive future slot's net-load must already be stored entering it; cheap slots relax the requirement), and a forward pass simulates the cost-minimising dispatch that follows it (solar first, grid-charge only in cheap slots up to the envelope, sell above the threshold while above survival). It runs every cycle in **SHADOW MODE — it does NOT drive control**: the ideal SoC line + min-SoC floor envelope are drawn on the chart (orange dashed) next to the heuristic projection, the recommendation card shows the plan's action vs the heuristic, and divergences are logged. This is the MPC reference trajectory to validate before it's ever allowed to act. 5 new tests (27 total).
 

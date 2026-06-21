@@ -1461,6 +1461,16 @@ def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
         step = cpwr * slots[i]["dt"]
         req[i] = (req[i + 1] + net) if slots[i]["price"] > cstart else (req[i + 1] - step)
         req[i] = max(reserve, min(mx, req[i]))
+    # ARBITRAGE target: floor + the export capacity of future sell-windows, so a cheap slot fills toward
+    # max_soc to capture a profitable spread (buy now, sell into the spike later) — not just to cover load.
+    want = list(req)
+    arb_on = bool(p.get("arbitrage", True)) and sell_on and sell_thr is not None
+    if arb_on:
+        sell_ahead = 0.0
+        for i in range(n - 1, -1, -1):
+            if slots[i]["price"] >= sell_thr:
+                sell_ahead += cpwr * slots[i]["dt"]      # this slot can export this much later
+            want[i] = min(mx, req[i] + sell_ahead)
     # forward pass: simulate the ideal dispatch following the envelope
     soc, line, floor, act0, tgt0 = cap_kwh * soc0_pct / 100.0, [], [], "hold", None
     for i, s in enumerate(slots):
@@ -1472,9 +1482,12 @@ def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
             soc -= net
             if net > 0.01:
                 action = "discharge"
-        # cheap slots: deficit is imported cheaply (battery untouched), and we top up toward the envelope
-        if price <= cstart and soc < req[i + 1] and soc < mx:
-            add = min(step, mx - soc, req[i + 1] - soc)
+        # cheap slots: deficit is imported cheaply (battery untouched), and we top up toward the target —
+        # the requirement floor, OR (when a future sell beats buying now after efficiency) the arb target.
+        profitable = arb_on and sell_thr * eff > price
+        target = want[i + 1] if profitable else req[i + 1]
+        if price <= cstart and soc < target and soc < mx:
+            add = min(step, mx - soc, target - soc)
             if add > 0.01:
                 soc += add * eff
                 action = "charge"
