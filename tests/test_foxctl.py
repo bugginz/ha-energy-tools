@@ -294,6 +294,30 @@ class SolarCalibrationTest(unittest.TestCase):
         self.assertEqual(sample[0]["act"], 12.0)
 
 
+class StatBackfillTest(unittest.TestCase):
+    """HA statistics backfill: hourly cumulative-sum series from the forecast store (no network)."""
+
+    def setUp(self):
+        self._orig = foxctl._FCAST["days"]
+
+    def tearDown(self):
+        foxctl._FCAST["days"] = self._orig
+
+    def test_cumulative_series_and_zero_day_skipped(self):
+        foxctl._FCAST["days"] = {
+            "2026-06-19": {"load": [1.0] * 24, "solar": [0.0] * 24},   # solar zero → no solar points
+            "2026-06-20": {"load": [2.0] * 24, "solar": [0.5] * 24},
+        }
+        series = foxctl.build_stat_series(7)
+        _, _, load_pts = series["foxctl:load_energy"]
+        self.assertEqual(len(load_pts), 48)            # 2 days × 24h
+        self.assertEqual(load_pts[-1][1], 72.0)        # cumulative: 24*1 + 24*2
+        _, _, solar_pts = series["foxctl:solar_energy"]
+        self.assertEqual(len(solar_pts), 24)           # only the generating day
+        self.assertEqual(solar_pts[-1][1], 12.0)       # 24 * 0.5
+        self.assertTrue(load_pts[0][0].isoformat())    # start is a tz-aware datetime
+
+
 class PlannerTest(unittest.TestCase):
     """Phase 4 shadow planner: requirement-aware ideal SoC trajectory (no control side-effects)."""
 

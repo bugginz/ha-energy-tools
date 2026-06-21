@@ -939,6 +939,89 @@ def update_solar_cal(cfg, today_forecast_total):
             "applied": n >= SOLAR_CAL_MIN}
 
 
+# ---- HA LONG-TERM STATISTICS BACKFILL ------------------------------------------------------------
+# HA can only ingest HISTORICAL data via the WebSocket recorder/import_statistics API, at HOURLY
+# resolution into long-term statistics (5-min raw state history can't be backfilled via any public
+# API). We feed the forecast store's hourly load + solar as external statistics foxctl:* so the past
+# shows up in HA's statistics/Energy graphs; live 5-min sensors cover "now" going forward.
+_STAT_DEFS = {"load": ("foxctl:load_energy", "kWh", "House load energy"),
+              "solar": ("foxctl:solar_energy", "kWh", "Solar energy")}
+
+
+def build_stat_series(days=7):
+    """From the forecast store, build hourly cumulative-sum series per metric for HA import_statistics.
+    Skips no-data days (per metric). Returns {statistic_id: (unit, name, [(start_local_dt, cum_kwh)])}."""
+    keys = sorted(_FCAST["days"].keys())[-days:]
+    out = {}
+    for metric, (sid, unit, name) in _STAT_DEFS.items():
+        series, csum = [], 0.0
+        for dk in keys:
+            arr = (_FCAST["days"].get(dk) or {}).get(metric)
+            if not (isinstance(arr, list) and len(arr) == 24):
+                continue
+            if sum(x for x in arr if isinstance(x, (int, float))) <= 0.05:
+                continue   # no telemetry / pre-install day for this metric → leave a gap
+            y, m, d = (int(x) for x in dk.split("-"))
+            for h in range(24):
+                v = arr[h] if isinstance(arr[h], (int, float)) else 0.0
+                csum += max(0.0, v)
+                series.append((datetime(y, m, d, h).astimezone(), round(csum, 3)))
+        if series:
+            out[sid] = (unit, name, series)
+    return out
+
+
+def ha_import_statistics(cfg, series):
+    """Push hourly external statistics to HA via the WebSocket recorder/import_statistics API."""
+    import websocket  # websocket-client (added to the image)
+    base = cfg["ha"]["url"].rstrip("/")
+    ws_url = base.replace("https://", "wss://").replace("http://", "ws://") + "/api/websocket"
+    token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+    ws = websocket.create_connection(ws_url, timeout=25)
+    try:
+        json.loads(ws.recv())                                    # auth_required
+        ws.send(json.dumps({"type": "auth", "access_token": token}))
+        auth = json.loads(ws.recv())
+        if auth.get("type") != "auth_ok":
+            raise RuntimeError(f"HA WebSocket auth failed: {auth}")
+        mid, done = 0, {}
+        for sid, (unit, name, pts) in series.items():
+            mid += 1
+            stats = [{"start": s.isoformat(), "sum": c} for s, c in pts]
+            ws.send(json.dumps({"id": mid, "type": "recorder/import_statistics",
+                                "metadata": {"has_mean": False, "has_sum": True, "name": name,
+                                             "source": sid.split(":")[0], "statistic_id": sid,
+                                             "unit_of_measurement": unit},
+                                "stats": stats}))
+            resp = json.loads(ws.recv())
+            if not resp.get("success"):
+                raise RuntimeError(f"import {sid} failed: {resp}")
+            done[sid] = len(stats)
+        return done
+    finally:
+        ws.close()
+
+
+def backfill_ha_statistics(cfg, days=7):
+    """One-shot: ensure the last `days` are in the forecast store (fetch any missing), then import them
+    into HA as hourly long-term statistics. Returns a per-statistic count of imported points."""
+    fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
+    load_fcast(cfg)
+    for d in range(1, days + 1):
+        day = datetime.now() - timedelta(days=d)
+        dk = day.strftime("%Y-%m-%d")
+        if dk not in _FCAST["days"]:
+            lh, sh = fetch_forecast_day(fox, day)
+            _FCAST["days"][dk] = {"load": lh, "solar": sh}
+    save_fcast(cfg)
+    series = build_stat_series(days)
+    if not series:
+        return {}
+    done = ha_import_statistics(cfg, series)
+    log_event("backfill", f"HA statistics backfill: {done}")
+    return done
+
+
 LOG_PATH = Path(os.environ.get("FOXCTL_LOG", Path.home() / "foxctl/decisions.jsonl"))
 
 
@@ -1314,8 +1397,17 @@ _MQTT_SENSORS = [
     ("foxctl_battery_charge_energy", "Battery charge energy", "kWh", "energy", "total_increasing"),
     ("foxctl_battery_discharge_energy", "Battery discharge energy", "kWh", "energy", "total_increasing"),
     ("foxctl_solar_energy", "Solar energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_load_energy", "House load energy", "kWh", "energy", "total_increasing"),
     ("foxctl_charge_start", "Charge-start price", "$/kWh", None, None),
     ("foxctl_target_soc", "Target SoC", "%", None, None),
+    # Forecast + shadow-planner metrics (Phase 2-4) so they're graphable/automatable in HA.
+    ("foxctl_plan_target_soc", "Plan target SoC", "%", "battery", "measurement"),
+    ("foxctl_plan_action", "Plan action", None, None, None),
+    ("foxctl_energy_shortfall", "Energy shortfall", "kWh", "energy", "measurement"),
+    ("foxctl_solar_remaining", "Solar remaining today (cal)", "kWh", "energy", "measurement"),
+    ("foxctl_solar_tomorrow", "Solar tomorrow (cal)", "kWh", "energy", "measurement"),
+    ("foxctl_solar_cal_bias", "Solar forecast bias", None, None, "measurement"),
+    ("foxctl_avg_daily_load", "Avg daily load", "kWh", "energy", "measurement"),
 ]
 
 
@@ -1370,7 +1462,16 @@ def mqtt_publish(cfg, snap):
                 "grid_import_energy": et.get("grid_import"), "grid_export_energy": et.get("grid_export"),
                 "battery_charge_energy": et.get("battery_charge"),
                 "battery_discharge_energy": et.get("battery_discharge"), "solar_energy": et.get("solar"),
+                "load_energy": et.get("load"),
                 "charge_start": dyn.get("charge_start_price"), "target_soc": dyn.get("target_soc")}
+        plan = snap.get("plan") or {}
+        sf = snap.get("solar_forecast") or {}
+        sc = snap.get("solar_cal") or {}
+        cons = snap.get("consumption") or {}
+        tele.update({"plan_target_soc": plan.get("target_now"), "plan_action": plan.get("action_now"),
+                     "energy_shortfall": snap.get("energy_shortfall_kwh"),
+                     "solar_remaining": sf.get("remaining_today"), "solar_tomorrow": sf.get("tomorrow"),
+                     "solar_cal_bias": sc.get("bias"), "avg_daily_load": cons.get("avg_daily_total_kwh")})
         tele.update({k: round(v, 3) for k, v in ps.items()})
         cli.publish("foxctl/telemetry", json.dumps(tele), qos=0, retain=True)
     except Exception as e:
@@ -1541,7 +1642,7 @@ def gather_and_decide(cfg: dict) -> dict:
     # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
-                                 "solar": pv}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
+                                 "solar": pv, "load": load}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -2399,6 +2500,7 @@ def render(snap: dict, cfg: dict) -> str:
 <button onclick="post('/api/review')">🤖 LLM review now</button>
 <button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
 <button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
+<button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
 <div id=msg></div>
 <h3>Actions taken <small>(real changes: applies, force-charge, disables, band actions)</small></h3>
 <table id=events></table>
@@ -2477,6 +2579,17 @@ def make_handler(cfg):
                     msg = f"ERROR: {e}"
                 log_action(f"scheduler_off -> {msg}")
                 self._send(200, json.dumps({"scheduler_off": msg}, default=str), "application/json")
+            elif self.path.startswith("/api/backfill_ha"):
+                try:
+                    days = 7
+                    if "days=" in self.path:
+                        days = max(1, min(60, int(self.path.split("days=")[1].split("&")[0])))
+                    done = backfill_ha_statistics(cfg, days)
+                    msg = f"imported {done}" if done else "no stored days to import yet"
+                except Exception as e:
+                    msg = f"ERROR: {e}"
+                log_action(f"backfill_ha -> {msg}")
+                self._send(200, json.dumps({"backfill_ha": msg}, default=str), "application/json")
             elif self.path.startswith("/api/review"):
                 ctx = _LLM.get("last_ctx")
                 if not ctx:
@@ -2624,9 +2737,10 @@ def loop(cfg: dict):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="price-aware FoxESS work-mode controller")
     ap.add_argument("cmd", nargs="?", default="status",
-                    choices=["status", "recommend", "apply", "loop", "serve"])
+                    choices=["status", "recommend", "apply", "loop", "serve", "backfill-ha"])
     ap.add_argument("--init", action="store_true", help="write a starter config and exit")
     ap.add_argument("--json", action="store_true", help="JSON output for status/recommend")
+    ap.add_argument("--days", type=int, default=7, help="days to backfill for backfill-ha")
     args = ap.parse_args(argv)
 
     if args.init:
@@ -2668,6 +2782,10 @@ def main(argv=None):
         loop(cfg); return 0
     if args.cmd == "serve":
         serve(cfg); return 0
+    if args.cmd == "backfill-ha":
+        done = backfill_ha_statistics(cfg, max(1, args.days))
+        print("HA statistics backfill imported (hourly points):", done or "nothing (no stored days yet)")
+        return 0
 
 
 if __name__ == "__main__":

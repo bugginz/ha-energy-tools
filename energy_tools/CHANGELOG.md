@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.25.0
+- **More HA sensors (live).** foxctl now also publishes a cumulative **House load energy** counter (for the Energy dashboard) plus the forecast/planner metrics: plan target SoC + action, energy shortfall, calibrated solar remaining/tomorrow, solar forecast bias, and avg daily load — all updating every cycle (~5 min) as `sensor.foxctl_*`.
+- **HA history backfill.** New `backfill-ha` CLI + a "⤓ Backfill 7d → HA stats" button + `/api/backfill_ha` endpoint that import the last N days of hourly load + solar into HA long-term statistics via the WebSocket `recorder/import_statistics` API (external stats `foxctl:load_energy` / `foxctl:solar_energy`). Hourly is HA's import resolution — 5-min raw history can't be backfilled via any public API; the live 5-min sensors cover "now" going forward. No-data days are skipped per metric. Adds the `websocket-client` dep.
+
 ## 1.24.0
 - **Shadow planner: arbitrage fill.** The planner now goes beyond covering load requirements — in a cheap slot it fills toward `max_soc` to capture a profitable spread when a future sell-window exists (buy-cheap, sell-into-the-spike), gated on `sell_thr × efficiency > buy price` and bounded by the actual export capacity of those future windows. Still SHADOW (does not drive control); the orange ideal-SoC line will now rise toward full before a forecast price spike. Degrades to requirement-only when there's no profitable spread. 2 new tests (29 total).
 
