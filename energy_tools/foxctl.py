@@ -1443,6 +1443,16 @@ def manual_tick(cfg, snap):
     return msg
 
 
+def apply_and_record(cfg: dict, snap: dict) -> str:
+    """Apply the recommendation and persist the outcome into the shared LAST snapshot so the dashboard
+    header reflects what just happened (instead of the stale value from the previous evaluate)."""
+    msg = apply_recommendation(cfg, snap)
+    with LAST_LOCK:
+        if LAST:
+            LAST["applied"] = msg
+    return msg
+
+
 def apply_recommendation(cfg: dict, snap: dict) -> str:
     ctrl = cfg["control"]
     rec = snap["recommendation"]
@@ -1658,10 +1668,19 @@ def render_forecast_svg(snap: dict) -> str:
     xmin = min(h for h, _, _ in amber)
     xmax = max(h for h, _, _ in amber) or 1
     bells = snap.get("solar_bells") or []
-    skw = max([b["pmax"] for b in bells] + [1.0]) * 1.15   # right-axis solar scale (kW)
+    # Rolling hour-of-day usage profile (avg kWh in each wall-clock hour ≈ avg kW) overlaid on the kW axis.
+    hour_profile = (snap.get("consumption") or {}).get("hour_profile") or {}
+    def _usage_at(t):
+        lh = t.astimezone(tz).hour
+        v = hour_profile.get(lh, hour_profile.get(str(lh)))
+        return float(v) if isinstance(v, (int, float)) else None
+    usage = [(h, _usage_at(t)) for h, _, t in amber]
+    usage = [(h, v) for h, v in usage if v is not None]
+    usage_max = max([v for _, v in usage] + [0.0])
+    skw = max([b["pmax"] for b in bells] + [usage_max, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
-    SY = lambda kw: padT + ih * (1 - kw / skw)   # solar power → y (right axis)
+    SY = lambda kw: padT + ih * (1 - kw / skw)   # power (kW) → y (right axis)
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:14px system-ui">']
     # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis
     for b in bells:
@@ -1719,17 +1738,46 @@ def render_forecast_svg(snap: dict) -> str:
         out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>')
     pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr, _ in amber)
     out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2.2"/>')
+    # rolling avg usage overlay (right kW axis)
+    if usage:
+        upl = " ".join(f"{X(h):.1f},{SY(v):.1f}" for h, v in usage)
+        out.append(f'<polyline points="{upl}" fill="none" stroke="#8e44ad" stroke-width="1.6" '
+                   f'stroke-dasharray="6 3" opacity="0.85"/>')
     cheapest = min(amber, key=lambda x: x[1]); peak = max(amber, key=lambda x: x[1])
     for (h, pr, _), col, txt in ((cheapest, "#1a9e4b", f"min ${cheapest[1]:.2f}"),
                                  (peak, "#c0392b", f"peak ${peak[1]:.2f}")):
         out.append(f'<circle cx="{X(h):.1f}" cy="{Y(pr):.1f}" r="3.5" fill="{col}"/>'
                    f'<text x="{X(h):.1f}" y="{Y(pr)-6:.1f}" text-anchor="middle" fill="{col}">{txt}</text>')
+    # hover cursor + tooltip (positioned client-side from the embedded sample points)
+    out.append(f'<line id="hovline" x1="0" y1="{padT}" x2="0" y2="{H-padB}" stroke="#555" '
+               f'stroke-width="1" stroke-dasharray="2 2" style="display:none"/>')
+    out.append('<rect id="hovtipbg" x="0" y="0" rx="3" fill="#000" opacity="0.78" style="display:none"/>')
+    out.append('<text id="hovtip" x="0" y="0" fill="#fff" font-size="13" style="display:none"></text>')
     out.append("</svg>")
+    pts = [{"x": round(X(h), 1), "t": t.astimezone(tz).strftime("%H:%M"), "price": round(pr, 3),
+            "use": _usage_at(t)} for h, pr, t in amber]
+    hover = {"pts": pts, "W": W, "padR": padR}
+    script = ("<script>(function(){var w=document.getElementById('chartwrap');if(!w)return;"
+              "var s=w.querySelector('svg');if(!s)return;var D=" + json.dumps(hover) + ";"
+              "var ln=s.getElementById('hovline'),tp=s.getElementById('hovtip'),bg=s.getElementById('hovtipbg');"
+              "function hide(){ln.style.display='none';tp.style.display='none';bg.style.display='none';}"
+              "s.addEventListener('mousemove',function(e){var m=s.getScreenCTM();if(!m)return;"
+              "var p=s.createSVGPoint();p.x=e.clientX;p.y=e.clientY;var l=p.matrixTransform(m.inverse());"
+              "var best=null,bd=1e9;for(var i=0;i<D.pts.length;i++){var d=Math.abs(D.pts[i].x-l.x);"
+              "if(d<bd){bd=d;best=D.pts[i];}}if(!best){hide();return;}"
+              "ln.setAttribute('x1',best.x);ln.setAttribute('x2',best.x);ln.style.display='';"
+              "tp.textContent=best.t+'   $'+best.price.toFixed(2)+(best.use!=null?'   ~'+best.use.toFixed(1)+'kW use':'');"
+              "tp.style.display='';var tx=best.x+9;tp.setAttribute('y',18);tp.setAttribute('x',tx);"
+              "var b=tp.getBBox();if(b.x+b.width>D.W-D.padR){tx=best.x-9-b.width;tp.setAttribute('x',tx);b=tp.getBBox();}"
+              "bg.setAttribute('x',b.x-5);bg.setAttribute('y',b.y-3);bg.setAttribute('width',b.width+10);"
+              "bg.setAttribute('height',b.height+6);bg.style.display='';});"
+              "s.addEventListener('mouseleave',hide);})();</script>")
     legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
               '<span style="color:#b8860b">▮ est. solar (right kW axis)</span> · '
-              '<span style="color:#2ecc71">▮ would grid-charge</span></small>')
-    return "".join(out) + legend
+              '<span style="color:#8e44ad">- - your avg usage (right kW axis)</span> · '
+              '<span style="color:#2ecc71">▮ would grid-charge</span> · hover for time</small>')
+    return "".join(out) + script + legend
 
 
 def render(snap: dict, cfg: dict) -> str:
@@ -1911,7 +1959,7 @@ def make_handler(cfg):
                     snap = dict(LAST)
                 if not snap:
                     snap = run_once(cfg, do_apply=False)
-                msg = apply_recommendation(cfg, snap)
+                msg = apply_and_record(cfg, snap)    # persist so the dashboard header reflects the apply
                 self._send(200, json.dumps({"applied": msg}, default=str), "application/json")
             elif self.path.startswith("/api/force_charge_test"):
                 try:
@@ -2020,11 +2068,24 @@ def serve(cfg: dict):
     httpd.serve_forever()
 
 
+def refresh_control(cfg: dict) -> bool:
+    """Reload control flags from disk into cfg["control"] so toggling allow_control / auto_apply in the
+    config takes effect without restarting the process. Best-effort: keep current values if the file is
+    missing or mid-write. Only the control block is refreshed — in-memory tuned params (cfg["strategy"])
+    are left untouched. Returns the effective auto-apply flag (allow_control AND auto_apply)."""
+    try:
+        disk_ctrl = json.loads(CONFIG_PATH.read_text()).get("control", {})
+        cfg["control"].update({k: disk_ctrl[k] for k in cfg["control"] if k in disk_ctrl})
+    except Exception as e:
+        print(f"{datetime.now().isoformat(timespec='seconds')} control reload skipped: {e}", file=sys.stderr)
+    return bool(cfg["control"].get("allow_control") and cfg["control"].get("auto_apply"))
+
+
 def loop(cfg: dict):
-    auto = cfg["control"].get("allow_control") and cfg["control"].get("auto_apply")
     poll = cfg["poll_seconds"]
     lag = int(cfg.get("sync_lag_seconds", 20))  # read shortly AFTER foxess-ha refreshes
     while True:
+        auto = refresh_control(cfg)
         try:
             snap = run_once(cfg, do_apply=auto)
             r = snap["recommendation"]

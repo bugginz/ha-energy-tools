@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.0
+- **Restore the v1.15.1 fixes that v1.16.0 silently reverted.** v1.16.0 was committed on a pre-1.15.1 copy of `foxctl.py`, dropping `apply_and_record` (so `/api/apply` again left the dashboard header showing a stale `applied`) and `refresh_control` (so the loop went back to capturing the auto-apply flag once at startup, needing a restart to pick up `allow_control`/`auto_apply` changes). Both are back.
+- **Chart: hover-for-time + usage overlay.** Mousing over the forecast chart now shows a cursor line + tooltip with the clock time, Amber price, and expected usage at that point. The rolling hour-of-day usage profile is overlaid as a dashed purple curve on the right (kW) axis, alongside the solar estimate.
+
 ## 1.17.0
 - **Hour-of-day usage profile.** foxctl now records base-load (EV excluded) by hour-of-day across recent days and uses it to predict the remaining-today / overnight load — replacing the flat `daily/24` assumption in the shortfall and ZeroHero-survival calcs. Needs ~2 weeks to be solid; improves daily. EV charging (sensor.6294ha_series_2_power) is tracked separately so it doesn't distort the base profile.
 
