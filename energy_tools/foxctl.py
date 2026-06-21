@@ -1636,7 +1636,7 @@ refreshLog();refreshEvents();
  c.addEventListener('mouseup',()=>{try{localStorage.setItem('foxctl_chart',JSON.stringify({w:c.style.width,h:c.style.height}));}catch(e){}});})();"""
 
 
-def render_forecast_svg(snap: dict) -> str:
+def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
     """SVG of the 18h price horizon the controller reasons over: Amber + AEMO curves, the
     LLM-set charge-start price, the foundation ceiling, shaded 'would-charge' windows, and the
     cheapest/peak markers. Makes it visible whether the future schedule is actually considered."""
@@ -1681,6 +1681,47 @@ def render_forecast_svg(snap: dict) -> str:
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
     SY = lambda kw: padT + ih * (1 - kw / skw)   # power (kW) → y (right axis)
+    PY = lambda pct: padT + ih * (1 - max(0.0, min(100.0, pct)) / 100.0)   # SoC % → y (full height)
+    # --- forward SoC projection (ESTIMATE) + "would sell" windows ---------------------------------
+    # Roll current SoC through the forecast: grid force-charge while buy ≤ charge-start, export while
+    # the price is silly-high (≥ sell threshold) and SoC is above the survival floor, else solar−load.
+    # Sell uses the buy-price forecast as a proxy (no per-slot feed-in forecast yet) — see chart legend.
+    soc0 = snap.get("soc")
+    cap = float((snap.get("battery") or {}).get("capacity_kwh") or 30) or 30.0
+    target_pct = dyn.get("target_soc") or 90
+    max_pct = dyn.get("max_soc") or 90
+    survival = dyn.get("survival_soc") or 20
+    sell_thr = dyn.get("sell_price")
+    sell_on = bool(dyn.get("sell_enabled")) and isinstance(sell_thr, (int, float))
+    charge_kw = float(((cfg or {}).get("strategy") or {}).get("force_charge_power_kw", 10.5))
+    def _bell_kw(hh):
+        tot = 0.0
+        for b in bells:
+            if b["s"] <= hh <= b["e"] and b["pmax"] > 0:
+                frac = (hh - b["s"]) / ((b["e"] - b["s"]) or 1)
+                tot += b["pmax"] * math.sin(math.pi * min(max(frac, 0), 1))
+        return tot
+    proj = []
+    if isinstance(soc0, (int, float)):
+        fut = [(h, pr, t) for h, pr, t in amber if h >= -0.05]
+        soc_kwh = cap * float(soc0) / 100.0
+        floor_kwh, max_kwh, tgt_kwh = cap * 0.10, cap * max_pct / 100.0, cap * target_pct / 100.0
+        for i, (h, buy, t) in enumerate(fut):
+            nh = fut[i + 1][0] if i + 1 < len(fut) else h + 0.5
+            dt = min(1.5, max(0.05, nh - h))
+            solar_kwh = _bell_kw((h + nh) / 2.0) * dt
+            lu = _usage_at(t)
+            load_kwh = (lu or 0.0) * dt
+            soc_pct = soc_kwh / cap * 100.0
+            sell = sell_on and buy >= sell_thr and soc_pct > survival
+            if buy <= csp and soc_kwh < tgt_kwh:                       # grid force-charge window
+                soc_kwh = min(tgt_kwh, soc_kwh + charge_kw * dt) + max(0.0, solar_kwh - load_kwh)
+            elif sell:                                                  # export to grid down to floor
+                soc_kwh -= min(charge_kw * dt, soc_kwh - cap * survival / 100.0)
+            else:
+                soc_kwh += solar_kwh - load_kwh
+            soc_kwh = max(floor_kwh, min(max_kwh, soc_kwh))
+            proj.append({"h": h, "soc": round(soc_kwh / cap * 100.0, 1), "sell": sell})
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:14px system-ui">']
     # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis
     for b in bells:
@@ -1710,6 +1751,15 @@ def render_forecast_svg(snap: dict) -> str:
             out.append(f'<rect x="{X(seg_start):.1f}" y="{padT}" width="{max(1,X(h)-X(seg_start)):.1f}" '
                        f'height="{ih}" fill="#2ecc71" opacity="0.16"/>')
             seg_start = None
+    # shaded "would sell" windows (price ≥ sell threshold AND projected SoC above the survival floor)
+    sseg = None
+    for d in proj + [{"h": proj[-1]["h"] if proj else 0, "sell": False}]:
+        if d["sell"] and sseg is None:
+            sseg = d["h"]
+        elif not d["sell"] and sseg is not None:
+            out.append(f'<rect x="{X(sseg):.1f}" y="{padT}" width="{max(1,X(d["h"])-X(sseg)):.1f}" '
+                       f'height="{ih}" fill="#e84393" opacity="0.16"/>')
+            sseg = None
     # threshold lines
     out.append(f'<line x1="{padL}" y1="{Y(ceil):.1f}" x2="{W-padR}" y2="{Y(ceil):.1f}" stroke="#c0392b" '
                f'stroke-dasharray="5 4" stroke-width="1"/><text x="{padL+3}" y="{Y(ceil)-3:.1f}" '
@@ -1743,6 +1793,16 @@ def render_forecast_svg(snap: dict) -> str:
         upl = " ".join(f"{X(h):.1f},{SY(v):.1f}" for h, v in usage)
         out.append(f'<polyline points="{upl}" fill="none" stroke="#8e44ad" stroke-width="1.6" '
                    f'stroke-dasharray="6 3" opacity="0.85"/>')
+    # projected SoC curve (% on full height) + survival-floor line
+    if proj:
+        spl = " ".join(f"{X(d['h']):.1f},{PY(d['soc']):.1f}" for d in proj)
+        out.append(f'<polyline points="{spl}" fill="none" stroke="#16a085" stroke-width="1.8" opacity="0.9"/>')
+        out.append(f'<line x1="{padL}" y1="{PY(survival):.1f}" x2="{W-padR}" y2="{PY(survival):.1f}" '
+                   f'stroke="#16a085" stroke-dasharray="2 4" stroke-width="0.8" opacity="0.6"/>')
+        out.append(f'<text x="{W-padR-2}" y="{PY(survival)-3:.1f}" text-anchor="end" fill="#16a085">'
+                   f'survival {int(survival)}%</text>')
+        out.append(f'<text x="{X(proj[0]["h"])+3:.1f}" y="{PY(proj[0]["soc"])-5:.1f}" '
+                   f'fill="#16a085">SoC {proj[0]["soc"]:.0f}%</text>')
     cheapest = min(amber, key=lambda x: x[1]); peak = max(amber, key=lambda x: x[1])
     for (h, pr, _), col, txt in ((cheapest, "#1a9e4b", f"min ${cheapest[1]:.2f}"),
                                  (peak, "#c0392b", f"peak ${peak[1]:.2f}")):
@@ -1754,8 +1814,13 @@ def render_forecast_svg(snap: dict) -> str:
     out.append('<rect id="hovtipbg" x="0" y="0" rx="3" fill="#000" opacity="0.78" style="display:none"/>')
     out.append('<text id="hovtip" x="0" y="0" fill="#fff" font-size="13" style="display:none"></text>')
     out.append("</svg>")
-    pts = [{"x": round(X(h), 1), "t": t.astimezone(tz).strftime("%H:%M"), "price": round(pr, 3),
-            "use": _usage_at(t)} for h, pr, t in amber]
+    socmap = {round(d["h"], 3): d for d in proj}
+    pts = []
+    for h, pr, t in amber:
+        d = socmap.get(round(h, 3))
+        pts.append({"x": round(X(h), 1), "t": t.astimezone(tz).strftime("%H:%M"), "price": round(pr, 3),
+                    "use": _usage_at(t), "soc": (d["soc"] if d else None),
+                    "sell": (bool(d["sell"]) if d else False)})
     hover = {"pts": pts, "W": W, "padR": padR}
     script = ("<script>(function(){var w=document.getElementById('chartwrap');if(!w)return;"
               "var s=w.querySelector('svg');if(!s)return;var D=" + json.dumps(hover) + ";"
@@ -1766,7 +1831,8 @@ def render_forecast_svg(snap: dict) -> str:
               "var best=null,bd=1e9;for(var i=0;i<D.pts.length;i++){var d=Math.abs(D.pts[i].x-l.x);"
               "if(d<bd){bd=d;best=D.pts[i];}}if(!best){hide();return;}"
               "ln.setAttribute('x1',best.x);ln.setAttribute('x2',best.x);ln.style.display='';"
-              "tp.textContent=best.t+'   $'+best.price.toFixed(2)+(best.use!=null?'   ~'+best.use.toFixed(1)+'kW use':'');"
+              "tp.textContent=best.t+'   $'+best.price.toFixed(2)+(best.use!=null?'   ~'+best.use.toFixed(1)+'kW use':'')"
+              "+(best.soc!=null?'   SoC '+Math.round(best.soc)+'%':'')+(best.sell?'   ⟶ SELL':'');"
               "tp.style.display='';var tx=best.x+9;tp.setAttribute('y',18);tp.setAttribute('x',tx);"
               "var b=tp.getBBox();if(b.x+b.width>D.W-D.padR){tx=best.x-9-b.width;tp.setAttribute('x',tx);b=tp.getBBox();}"
               "bg.setAttribute('x',b.x-5);bg.setAttribute('y',b.y-3);bg.setAttribute('width',b.width+10);"
@@ -1776,7 +1842,11 @@ def render_forecast_svg(snap: dict) -> str:
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
               '<span style="color:#b8860b">▮ est. solar (right kW axis)</span> · '
               '<span style="color:#8e44ad">- - your avg usage (right kW axis)</span> · '
-              '<span style="color:#2ecc71">▮ would grid-charge</span> · hover for time</small>')
+              '<span style="color:#16a085">— projected SoC %</span> · '
+              '<span style="color:#2ecc71">▮ would grid-charge</span> · '
+              '<span style="color:#e84393">▮ would sell</span> · hover for time<br>'
+              '<i>SoC projection &amp; sell windows are estimates (buy-price proxy for export, '
+              'forecast solar/load) — directional, not exact.</i></small>')
     return "".join(out) + script + legend
 
 
@@ -1890,7 +1960,7 @@ def render(snap: dict, cfg: dict) -> str:
 {note_html}
 {controls_html}
 <h3>Forecast horizon <small>(what the policy reasons over — 18h ahead · drag the corner ↘ to resize)</small></h3>
-<div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap)}</div></div>
+<div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap, cfg)}</div></div>
 <h3>Make things happen</h3>
 <button onclick="post('/api/evaluate')">Evaluate now</button>
 <button onclick="post('/api/apply')">Apply recommendation</button>

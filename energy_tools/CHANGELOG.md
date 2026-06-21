@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.19.0
+- **Chart: projected SoC + "would sell" windows.** A forward projection rolls the current SoC through the forecast (grid-charge while buy ≤ charge-start, export while price ≥ sell threshold and SoC is above the survival floor, else solar−load) and draws it as a teal % curve with the survival-floor line. Slots where it would sell are shaded pink, and hover now shows the projected SoC and a SELL tag at that time. Estimate only (uses the buy-price forecast as an export proxy until a per-slot feed-in forecast exists) — labelled as such in the legend. First concrete piece of the forecasting plan.
+
 ## 1.18.0
 - **Restore the v1.15.1 fixes that v1.16.0 silently reverted.** v1.16.0 was committed on a pre-1.15.1 copy of `foxctl.py`, dropping `apply_and_record` (so `/api/apply` again left the dashboard header showing a stale `applied`) and `refresh_control` (so the loop went back to capturing the auto-apply flag once at startup, needing a restart to pick up `allow_control`/`auto_apply` changes). Both are back.
 - **Chart: hover-for-time + usage overlay.** Mousing over the forecast chart now shows a cursor line + tooltip with the clock time, Amber price, and expected usage at that point. The rolling hour-of-day usage profile is overlaid as a dashed purple curve on the right (kW) axis, alongside the solar estimate.
