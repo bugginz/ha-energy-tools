@@ -318,6 +318,39 @@ class StatBackfillTest(unittest.TestCase):
         self.assertTrue(load_pts[0][0].isoformat())    # start is a tz-aware datetime
 
 
+class RenderSmokeTest(unittest.TestCase):
+    """render() the full dashboard with a realistic snapshot so a page-crashing bug can't ship."""
+
+    def test_page_renders_with_numeric_ev_power(self):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fc = [{"t": (now + timedelta(hours=i * 0.5)).isoformat(), "price": 0.15, "descriptor": "x"}
+              for i in range(12)]
+        snap = {"ts": "2026-06-22T11:00", "price": 0.2, "aemo_price": 0.07, "feedin": 0.06, "soc": 91.0,
+                "pv_kw": 0.0, "ev_kw": 2.53, "load_kw": 3.1, "grid_power": 1.0, "feedin_power": 0.0,
+                "battery_power": -1.0, "ev_divert": "car charger ON (export …)", "work_mode": "SelfUse",
+                "telemetry_source": "FoxESS", "data_age_s": 30, "forecast_next": fc, "forecast_h": fc,
+                "aemo_forecast_h": [], "recommendation": {"action": "SET_MODE", "target_mode": "SelfUse",
+                "reason": "full", "band": "normal", "force_charge": False},
+                "dynamic": {"charge_start_price": 0.12, "price_ceiling": 0.2, "target_soc": 90,
+                "max_soc": 90, "survival_soc": 30, "sell_price": 0.5, "sell_enabled": True,
+                "source": "LLM", "mode": "amber"}, "battery": {"capacity_kwh": 30.0, "stored_kwh": 27.3},
+                "consumption": {"avg_daily_total_kwh": 33.0, "days_sampled": 5,
+                "hour_profile": {h: 1.0 for h in range(24)}}, "forecast_profiles": {"days": 5, "days_solar": 5},
+                "solar_forecast": {"today_total": 7, "remaining_today": 1, "tomorrow": 15},
+                "solar_cal": {"bias": 1.0, "applied": False, "samples": 2}, "solar_bells": [],
+                "plan": {"action_now": "hold", "target_now": 91.0, "soc_line": [], "floor_line": []},
+                "scheduler": {"enabled": False, "active": None}, "applied": "work mode already SelfUse",
+                "llm": None}
+        cfg = {"control": {"allow_control": True, "auto_apply": True, "set_force_charge": True},
+               "strategy": {"force_charge_power_kw": 10.5, "target_soc": 90},
+               "ev_divert": {"switch": "switch.x"}}
+        html = foxctl.render(snap, cfg)
+        self.assertIn("EV charger", html)
+        self.assertIn("🔌 2.53", html)        # numeric ev_kw must format, not raise
+        self.assertGreater(len(html), 5000)
+
+
 class EvDivertTest(unittest.TestCase):
     """Solar-diversion policy: divert to the car when export is cheap/grid is cheap, but yield to the
     house battery while it's charging toward the planner target before a sell."""

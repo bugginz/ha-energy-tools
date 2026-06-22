@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.26.2
+- **Fix dashboard crash** introduced in 1.26.0: the EV card concatenated the emoji with the numeric `ev_kw` (`str + float`), 500-ing the page once the charger reported power. Now formats safely. Added a full `render()` smoke test so a page-crashing template bug can't ship again.
+
 ## 1.26.1
 - Default `ev_charger_switch` to `switch.6294ha_series_2_socket_2` (the Tuya socket feeding the car charger) so EV solar-diversion activates on update. Power/energy tracking uses `sensor.6294ha_series_2_power` (the existing `ev_power_entity`).
 
