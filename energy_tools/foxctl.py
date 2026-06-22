@@ -150,6 +150,22 @@ def load_config() -> dict:
 
 # --------------------------------------------------------------- clients -----
 
+# Last FoxESS API error (for the dashboard rate-limit banner). ok_ts beats ts → recovered.
+_FOX_STATUS = {"err": None, "ts": 0.0, "rate_limited": False, "ok_ts": 0.0}
+
+
+def _note_fox_status(msg, rate_limited=False):
+    _FOX_STATUS.update(err=msg, ts=time.time(), rate_limited=rate_limited)
+
+
+def fox_error_status():
+    """Return the current FoxESS error state if calls are presently failing (else None)."""
+    if _FOX_STATUS["ts"] and _FOX_STATUS["ts"] > _FOX_STATUS["ok_ts"] and (time.time() - _FOX_STATUS["ts"]) < 900:
+        return {"msg": _FOX_STATUS["err"], "rate_limited": _FOX_STATUS["rate_limited"],
+                "age": int(time.time() - _FOX_STATUS["ts"])}
+    return None
+
+
 class FoxESS:
     """Minimal FoxESS OpenAPI client. Signature uses LITERAL \\r\\n (not CRLF)."""
 
@@ -172,13 +188,26 @@ class FoxESS:
             data=(json.dumps(body).encode() if body is not None else None),
             headers=self._sign(path),
         )
-        with urllib.request.urlopen(req, timeout=25) as r:
-            raw = r.read().decode().strip()
+        try:
+            with urllib.request.urlopen(req, timeout=25) as r:
+                raw = r.read().decode().strip()
+        except urllib.error.HTTPError as e:
+            _note_fox_status(f"HTTP {e.code}", rate_limited=(e.code == 429))
+            raise
+        except Exception as e:
+            _note_fox_status(str(e)[:100])
+            raise
         if not raw:
+            _FOX_STATUS["ok_ts"] = time.time()
             return {"errno": 0, "msg": "empty"}   # some setters return 200 + no body on success
         d = json.loads(raw)
         if d.get("errno") not in (0, None):
-            raise RuntimeError(f"FoxESS {path} errno={d.get('errno')}: {d.get('msg')}")
+            errno, msg = d.get("errno"), str(d.get("msg") or "")
+            rl = errno in (40256, 40400, 41807) or any(k in msg.lower()
+                 for k in ("frequ", "limit", "frequency", "too many", "exceed"))
+            _note_fox_status(f"errno {errno}: {msg}"[:100], rate_limited=rl)
+            raise RuntimeError(f"FoxESS {path} errno={errno}: {msg}")
+        _FOX_STATUS["ok_ts"] = time.time()
         return d
 
     def real(self, variables: list[str]) -> dict:
@@ -2017,6 +2046,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "ev_kw": ev_kw,
         "solar_surplus_kw": round(pv - load, 2),
         "telemetry_source": tsrc,
+        "fox_error": fox_error_status(),
         "price": prices.get("price"),
         "descriptor": prices.get("descriptor"),
         "aemo_price": prices.get("aemo_price"),
@@ -2582,6 +2612,19 @@ def render(snap: dict, cfg: dict) -> str:
                      f'<small>importing @ ${snap.get("price")}/kWh{_age_txt}</small></div>')
     else:
         grid_html = f'<div class=card><small>Grid flow</small><div class=big>– <small>kW</small></div><small>no grid flow{_age_txt}</small></div>'
+    # Top-of-page FoxESS API banner (rate-limited / errors → telemetry & control reads failing).
+    _fe = snap.get("fox_error")
+    if _fe and _fe.get("rate_limited"):
+        fox_banner = (f'<div style="background:#c0392b;color:#fff;padding:.6rem 1rem;border-radius:8px;'
+                      f'margin:.6rem 0;font-weight:600">⛔ FoxESS API RATE-LIMITED — reads are being rejected '
+                      f'(last error {_fe["age"]}s ago: {_fe["msg"]}). Telemetry/control may be stale; ease off '
+                      f'Backfill &amp; rapid actions until it clears.</div>')
+    elif _fe:
+        fox_banner = (f'<div style="background:#e67e22;color:#fff;padding:.6rem 1rem;border-radius:8px;'
+                      f'margin:.6rem 0;font-weight:600">⚠️ FoxESS API errors — telemetry may be stale '
+                      f'(last error {_fe["age"]}s ago: {_fe["msg"]}).</div>')
+    else:
+        fox_banner = ''
     note_esc = (get_note(cfg) or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     note_html = (f'<h3>Steering note <small>(free text — the LLM reads this as a priority instruction; '
                  f'a note relaxes the charge floor)</small></h3>'
@@ -2659,6 +2702,7 @@ def render(snap: dict, cfg: dict) -> str:
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta http-equiv=refresh content=60><title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl — {snap.get('ts','-')}</h1>
+{fox_banner}
 <div class="card rec"><small>RECOMMENDATION</small>
  <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}</div>
  <div>{rec.get('reason','')}</div>

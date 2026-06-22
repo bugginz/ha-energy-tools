@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.34.0
+- **FoxESS API rate-limit / error banner.** The client now records FoxESS API failures (HTTP 429, or errno/message indicating frequency/limit) and clears on the next success. When reads are currently failing, a prominent banner appears at the top of the page — red ⛔ "FoxESS API RATE-LIMITED — reads are being rejected … ease off Backfill & rapid actions" or orange ⚠️ for other API errors — with the last error and how long ago. So a stale dashboard now says *why*, instead of silently showing old data.
+
 ## 1.33.0
 - **Dashboard responsiveness after actions.** Control actions (stop/sell/force-charge/scheduler-off/ev/apply) now schedule two follow-up snapshot refreshes (~40s and ~110s later) so the page reflects the change as the inverter + FoxESS telemetry catch up — instead of showing the pre-action state until the next 5-min poll. The Grid-flow card now stamps the reading age (`… · Ns ago`) so a laggy "EXPORTING" is honestly shown as stale, not live.
 
