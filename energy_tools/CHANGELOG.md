@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.33.0
+- **Dashboard responsiveness after actions.** Control actions (stop/sell/force-charge/scheduler-off/ev/apply) now schedule two follow-up snapshot refreshes (~40s and ~110s later) so the page reflects the change as the inverter + FoxESS telemetry catch up — instead of showing the pre-action state until the next 5-min poll. The Grid-flow card now stamps the reading age (`… · Ns ago`) so a laggy "EXPORTING" is honestly shown as stale, not live.
+
 ## 1.32.2
 - Feed-in forecast: align the sign to the live feed-in reading (Amber sometimes reports the forecast with the opposite/raw sign), so exporting earnings stay positive and the sell logic/chart read correctly. (Confirmed entity: `sensor.amber_feed_in_forecast`.)
 

@@ -2206,6 +2206,22 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
     return snap
 
 
+def schedule_repoll(cfg, delays=(40, 110)):
+    """After a control action, refresh the snapshot a couple of times as the inverter + FoxESS telemetry
+    catch up (FoxESS telemetry lags ~1-2 min). Otherwise the dashboard keeps showing the pre-action
+    snapshot until the next 5-min poll, which looks like the action didn't take."""
+    def _repoll():
+        try:
+            run_once(cfg, do_apply=False)
+        except Exception as e:
+            print(f"repoll failed: {e}", file=sys.stderr)
+    import threading
+    for d in delays:
+        t = threading.Timer(d, _repoll)
+        t.daemon = True
+        t.start()
+
+
 # ------------------------------------------------------------------- web -----
 
 BAND_COLOR = {"ludicrous": "#7b2ff7", "extremely_low": "#0a8f3c", "low": "#3c9", "normal": "#888",
@@ -2555,15 +2571,17 @@ def render(snap: dict, cfg: dict) -> str:
     # Grid flow card: are we importing or exporting right now, how much, at what price.
     _exp = float(snap.get("feedin_power") or 0.0)
     _imp = float(snap.get("grid_power") or 0.0)
+    _age = snap.get("data_age_s")
+    _age_txt = f' · {_age}s ago' if isinstance(_age, (int, float)) else ''
     if _exp > 0.1:
         grid_html = (f'<div class=card style="background:#e8f5e9;border-color:#2ecc71"><small>Grid flow</small>'
                      f'<div class=big>⬆ {_exp:.2f} <small>kW</small></div>'
-                     f'<small>EXPORTING @ ${snap.get("feedin")}/kWh</small></div>')
+                     f'<small>EXPORTING @ ${snap.get("feedin")}/kWh{_age_txt}</small></div>')
     elif _imp > 0.1:
         grid_html = (f'<div class=card><small>Grid flow</small><div class=big>⬇ {_imp:.2f} <small>kW</small></div>'
-                     f'<small>importing @ ${snap.get("price")}/kWh</small></div>')
+                     f'<small>importing @ ${snap.get("price")}/kWh{_age_txt}</small></div>')
     else:
-        grid_html = '<div class=card><small>Grid flow</small><div class=big>– <small>kW</small></div><small>no grid flow</small></div>'
+        grid_html = f'<div class=card><small>Grid flow</small><div class=big>– <small>kW</small></div><small>no grid flow{_age_txt}</small></div>'
     note_esc = (get_note(cfg) or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     note_html = (f'<h3>Steering note <small>(free text — the LLM reads this as a priority instruction; '
                  f'a note relaxes the charge floor)</small></h3>'
@@ -2736,6 +2754,11 @@ def make_handler(cfg):
 
         def do_POST(self):
             log_action(f"POST {self.path} from {self.client_address[0]}")
+            # State-changing actions: refresh the snapshot 40s/110s later so the dashboard reflects the
+            # change as the inverter + FoxESS telemetry catch up, instead of at the next 5-min poll.
+            if any(self.path.startswith(p) for p in ("/api/cancel_override", "/api/force_charge",
+                    "/api/sell", "/api/scheduler_off", "/api/ev_charge", "/api/ev_off", "/api/apply")):
+                schedule_repoll(cfg)
             if self.path.startswith("/api/evaluate"):
                 snap = run_once(cfg, do_apply=False)
                 self._send(200, json.dumps(snap, default=str), "application/json")
