@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.35.0
+- **Dedicated SoC % chart** (its own single axis, below the price charts) comparing the **rules-model projection** (teal) against the **shadow plan + floor envelope** (orange) with the survival line and current SoC — so you can see why the plan runs leaner without fighting the crowded 3-axis price chart. Backed by a new shared `project_soc_path` (the rules-model forward sim) so both the price chart and this one use the same numbers.
+- **CSV export** (`/api/export.csv`, linked under the SoC chart): yesterday + today **5-minute actuals** (SoC, PV, load, grid import/export, from FoxESS history in ≤24h windows) **plus** the forward per-slot **forecast/plan** (buy + feed-in price, expected load/solar, rules-model SoC, shadow-plan SoC, plan floor) — one spreadsheet to see what actually happened vs what's planned.
+
 ## 1.34.0
 - **FoxESS API rate-limit / error banner.** The client now records FoxESS API failures (HTTP 429, or errno/message indicating frequency/limit) and clears on the next success. When reads are currently failing, a prominent banner appears at the top of the page — red ⛔ "FoxESS API RATE-LIMITED — reads are being rejected … ease off Backfill & rapid actions" or orange ⚠️ for other API errors — with the last error and how long ago. So a stale dashboard now says *why*, instead of silently showing old data.
 

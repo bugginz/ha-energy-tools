@@ -1761,6 +1761,35 @@ def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
     return {"soc_line": line, "floor_line": floor, "action_now": act0, "target_now": tgt0}
 
 
+def project_soc_path(slots, soc0_pct, cap_kwh, p):
+    """Forward-simulate the rules-based (heuristic) policy's SoC over the horizon: charge toward target
+    while buy ≤ charge-start, sell while the feed-in forecast ≥ the threshold and above survival, else
+    run on solar−load. Returns [{h, soc, sell}] — the conservative counterpart to plan_soc_trajectory,
+    so the two can be compared on the SoC chart."""
+    reserve = cap_kwh * 0.10
+    mx = cap_kwh * p.get("max_soc", 90) / 100.0
+    tgt = cap_kwh * p.get("target_soc", 90) / 100.0
+    surv_pct = p.get("survival", 20)
+    surv = cap_kwh * surv_pct / 100.0
+    cstart, sell_thr = p.get("charge_start", 0.1), p.get("sell_thr")
+    sell_on, eff, cpwr = bool(p.get("sell_on")), p.get("eff", 0.92), p.get("charge_kw", 10.5)
+    soc, out = cap_kwh * soc0_pct / 100.0, []
+    for s in slots:
+        price, step = s["price"], cpwr * s["dt"]
+        ep = s.get("sell_price", price)
+        soc_pct = soc / cap_kwh * 100.0
+        sell = sell_on and sell_thr is not None and ep >= sell_thr and soc_pct > surv_pct
+        if price <= cstart and soc < tgt:                 # cheap → charge toward target (+ solar surplus)
+            soc = min(tgt, soc + step) + max(0.0, s["solar"] - s["load"])
+        elif sell:                                         # export to grid down to survival
+            soc -= min(step, soc - surv)
+        else:
+            soc += s["solar"] - s["load"]
+        soc = max(reserve, min(mx, soc))
+        out.append({"h": round(s["h"], 3), "soc": round(soc / cap_kwh * 100.0, 1), "sell": sell})
+    return out
+
+
 def gather_and_decide(cfg: dict) -> dict:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
@@ -1962,7 +1991,7 @@ def gather_and_decide(cfg: dict) -> dict:
     # ---- SHADOW PLANNER (Phase 4): requirement-aware ideal SoC line over the forecast. Does NOT drive
     # control — it's drawn on the chart next to the heuristic projection and logged when they diverge,
     # so the receding-horizon plan can be validated before it's ever allowed to act. ----
-    plan = None
+    plan, projection, plan_slots = None, None, None
     try:
         now_utc = datetime.now(timezone.utc)
         parsed = []
@@ -1995,6 +2024,9 @@ def gather_and_decide(cfg: dict) -> dict:
                   "sell_thr": sell_eff, "sell_on": bool(strat.get("sell_enabled", True)),
                   "charge_kw": strat.get("force_charge_power_kw", 10.5), "eff": 0.92}
             plan = plan_soc_trajectory(slots, soc, cap_kwh, pp)
+            proj_pp = dict(pp, target_soc=working.get("target_soc", strat.get("target_soc", 90)))
+            projection = project_soc_path(slots, soc, cap_kwh, proj_pp)
+            plan_slots = slots
             heur = "charge" if rec.get("force_charge") else ("sell" if rec.get("force_discharge") else "hold")
             pc = plan["action_now"] if plan["action_now"] in ("charge", "sell") else "hold"
             plan["heuristic"] = heur
@@ -2064,6 +2096,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "work_mode_options": wm.get("enumList"),
         "recommendation": rec,
         "plan": plan,
+        "projection": projection,
+        "plan_slots": plan_slots,
         "applied": None,
     }
 
@@ -2586,6 +2620,62 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
     return "".join(out) + script + legend
 
 
+def render_soc_svg(snap: dict, hours: float = 24) -> str:
+    """Dedicated single-axis (%) SoC chart: the rules-model projection vs the shadow plan + its floor
+    envelope, with the survival line and the current SoC. Keeps SoC off the crowded price chart."""
+    proj = snap.get("projection") or []
+    plan = snap.get("plan") or {}
+    pl, fl = plan.get("soc_line") or [], plan.get("floor_line") or []
+    hs = [d["h"] for d in proj] + [h for h, _ in pl]
+    if not hs:
+        return "<small>no SoC projection yet</small>"
+    now = datetime.now(timezone.utc)
+    tz = datetime.now().astimezone().tzinfo
+    xmin, xmax = min(0.0, min(hs)), (min(hours, max(hs)) or 1)
+    W, H, padL, padR, padT, padB = 1180, 230, 42, 60, 14, 28
+    iw, ih = W - padL - padR, H - padT - padB
+    X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
+    Y = lambda pct: padT + ih * (1 - max(0.0, min(100.0, pct)) / 100.0)
+    out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:13px system-ui">']
+    for pct in (0, 20, 40, 60, 80, 100):
+        out.append(f'<line x1="{padL}" y1="{Y(pct):.1f}" x2="{W-padR}" y2="{Y(pct):.1f}" stroke="#8884" '
+                   f'stroke-width="0.5"/><text x="{padL-4}" y="{Y(pct)+4:.1f}" text-anchor="end" fill="#999">{pct}%</text>')
+    tick = max(1, round((xmax - xmin) / 6))
+    for hh in range(0, int(xmax) + 1, tick):
+        if xmin <= hh <= xmax:
+            lab = (now + timedelta(hours=hh)).astimezone(tz).strftime("%H:%M")
+            out.append(f'<line x1="{X(hh):.1f}" y1="{padT}" x2="{X(hh):.1f}" y2="{H-padB}" stroke="#8883" '
+                       f'stroke-width="0.5"/><text x="{X(hh):.1f}" y="{H-padB+14}" text-anchor="middle" fill="#999">{lab}</text>')
+    out.append(f'<line x1="{X(0):.1f}" y1="{padT}" x2="{X(0):.1f}" y2="{H-padB}" stroke="#3498db" stroke-width="1"/>')
+    surv = (snap.get("dynamic") or {}).get("survival_soc")
+    if isinstance(surv, (int, float)):
+        out.append(f'<line x1="{padL}" y1="{Y(surv):.1f}" x2="{W-padR}" y2="{Y(surv):.1f}" stroke="#c0392b" '
+                   f'stroke-dasharray="4 4" stroke-width="0.8" opacity="0.6"/>'
+                   f'<text x="{W-padR+3}" y="{Y(surv)+4:.1f}" fill="#c0392b">surv {int(surv)}%</text>')
+    fl2 = [(h, s) for h, s in fl if xmin <= h <= xmax]
+    if fl2:
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{Y(s):.1f}" for h, s in fl2) +
+                   '" fill="none" stroke="#d35400" stroke-width="0.8" stroke-dasharray="1 4" opacity="0.6"/>')
+    pj = [(d["h"], d["soc"]) for d in proj if xmin <= d["h"] <= xmax]
+    if pj:
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{Y(s):.1f}" for h, s in pj) +
+                   '" fill="none" stroke="#16a085" stroke-width="2" opacity="0.9"/>')
+    pl2 = [(h, s) for h, s in pl if xmin <= h <= xmax]
+    if pl2:
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{Y(s):.1f}" for h, s in pl2) +
+                   '" fill="none" stroke="#d35400" stroke-width="2" stroke-dasharray="7 3" opacity="0.9"/>')
+    cs = snap.get("soc")
+    if isinstance(cs, (int, float)):
+        out.append(f'<circle cx="{X(0):.1f}" cy="{Y(cs):.1f}" r="3.5" fill="#3498db"/>'
+                   f'<text x="{X(0)+5:.1f}" y="{Y(cs)-5:.1f}" fill="#3498db">now {cs:.0f}%</text>')
+    out.append("</svg>")
+    legend = ('<small><span style="color:#16a085">— rules-model SoC</span> · '
+              '<span style="color:#d35400">- - shadow plan + floor</span> · '
+              '<span style="color:#c0392b">- - survival</span> · '
+              '<a href="/api/export.csv">⤓ export CSV (actuals + forecast/plan)</a></small>')
+    return "".join(out) + legend
+
+
 def render(snap: dict, cfg: dict) -> str:
     rec = snap.get("recommendation", {})
     band = rec.get("band", "unknown")
@@ -2722,6 +2812,7 @@ def render(snap: dict, cfg: dict) -> str:
 <h4 style="margin:.3rem 0">Next 6 hours</h4><div class=card style="padding:.5rem"><div id=cw6 class=chartwrap style="height:300px">{render_forecast_svg(snap, cfg, 6, "cw6")}</div></div>
 <h4 style="margin:.3rem 0">Next 18 hours</h4><div class=card style="padding:.5rem"><div id=cw18 class=chartwrap style="height:440px">{render_forecast_svg(snap, cfg, 18, "cw18")}</div></div>
 <h4 style="margin:.3rem 0">Full forecast (all available)</h4><div class=card style="padding:.5rem"><div id=cwmax class=chartwrap style="height:320px">{render_forecast_svg(snap, cfg, 72, "cwmax")}</div></div>
+<h4 style="margin:.3rem 0">Battery SoC % — rules model vs shadow plan</h4><div class=card style="padding:.5rem"><div id=socwrap class=chartwrap style="height:240px">{render_soc_svg(snap)}</div></div>
 <div class=row>
  <div class=card><small>Amber price</small><div class=big>${snap.get('price')}</div>
    <span class=pill style="background:{color}">{band}</span></div>
@@ -2756,6 +2847,57 @@ def render(snap: dict, cfg: dict) -> str:
 </body></html>"""
 
 
+def build_export_csv(cfg, snap):
+    """CSV for a spreadsheet: yesterday→now 5-min ACTUALS (from FoxESS history) + the forward
+    forecast/plan per slot (buy/feed-in price, expected load/solar, rules-model + shadow-plan SoC)."""
+    import csv as _csv
+    import io as _io
+    header = ["time", "kind", "soc_pct", "pv_kw", "load_kw", "grid_import_kw", "grid_export_kw",
+              "buy_price", "feedin_price", "exp_load_kwh", "exp_solar_kwh",
+              "rules_soc_pct", "plan_soc_pct", "plan_floor_pct"]
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(header)
+    # --- actuals: yesterday + today, in ≤24h windows (FoxESS history caps each call at one day) ---
+    try:
+        fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
+        keymap = {"pvPower": "pv_kw", "loadsPower": "load_kw", "SoC": "soc_pct",
+                  "gridConsumptionPower": "grid_import_kw", "feedinPower": "grid_export_kw"}
+        by_time = {}
+        t0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        windows = [(t0 - timedelta(days=1), t0 - timedelta(seconds=1)), (t0, datetime.now())]
+        for w0, w1 in windows:
+            res = fox.history(["pvPower", "loadsPower", "SoC", "gridConsumptionPower", "feedinPower"],
+                              int(w0.timestamp() * 1000), int(w1.timestamp() * 1000))
+            for ds in ((res[0].get("datas") if res else None) or []):
+                col = keymap.get(ds.get("variable"))
+                if not col:
+                    continue
+                for pt in (ds.get("data") or []):
+                    if pt.get("time") is not None:
+                        by_time.setdefault(pt["time"][:19], {})[col] = pt.get("value")
+        for t in sorted(by_time):
+            r = by_time[t]
+            w.writerow([t, "actual", r.get("soc_pct", ""), r.get("pv_kw", ""), r.get("load_kw", ""),
+                        r.get("grid_import_kw", ""), r.get("grid_export_kw", ""), "", "", "", "", "", "", ""])
+    except Exception as e:
+        w.writerow([f"# actuals unavailable: {e}"])
+    # --- forecast / plan (from the snapshot, no extra API calls) ---
+    proj = {round(d["h"], 2): d["soc"] for d in (snap.get("projection") or [])}
+    plan = snap.get("plan") or {}
+    psoc = {round(h, 2): s for h, s in (plan.get("soc_line") or [])}
+    pflo = {round(h, 2): s for h, s in (plan.get("floor_line") or [])}
+    now = datetime.now()
+    for s in (snap.get("plan_slots") or []):
+        k = round(s["h"], 2)
+        sp = s.get("sell_price")
+        w.writerow([(now + timedelta(hours=s["h"])).strftime("%Y-%m-%d %H:%M"), "forecast", "", "", "", "", "",
+                    round(s["price"], 3), round(sp, 3) if isinstance(sp, (int, float)) else "",
+                    round(s["load"], 3), round(s["solar"], 3),
+                    proj.get(k, ""), psoc.get(k, ""), pflo.get(k, "")])
+    return buf.getvalue()
+
+
 def make_handler(cfg):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):  # quiet
@@ -2773,6 +2915,13 @@ def make_handler(cfg):
             if self.path.startswith("/api/state"):
                 with LAST_LOCK:
                     self._send(200, json.dumps(LAST, default=str), "application/json")
+            elif self.path.startswith("/api/export.csv"):
+                with LAST_LOCK:
+                    snap = dict(LAST)
+                try:
+                    self._send(200, build_export_csv(cfg, snap), "text/csv")
+                except Exception as e:
+                    self._send(200, f"error,{e}", "text/csv")
             elif self.path.startswith("/api/log"):
                 n = 50
                 if "n=" in self.path:
