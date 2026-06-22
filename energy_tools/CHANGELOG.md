@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.26.1
+- Default `ev_charger_switch` to `switch.6294ha_series_2_socket_2` (the Tuya socket feeding the car charger) so EV solar-diversion activates on update. Power/energy tracking uses `sensor.6294ha_series_2_power` (the existing `ev_power_entity`).
+
 ## 1.26.0
 - **EV solar-diversion.** foxctl can now turn a car-charger power point ON when export is too cheap to bother (feed-in ≤ `ev_divert_feedin_max`, default $0.10, while actually exporting ≥ `ev_divert_min_export_kw`) and/or when grid import is cheap (≤ the charge-start price), and OFF otherwise — soaking surplus into the car instead of dumping it to the grid. It **yields to the house battery**: while the shadow planner is pre-charging the battery toward its target before a sell (`battery_priority`, default on), the charger stays off so the battery fills first. Edge-triggered with a dwell (`ev_divert_min_dwell_min`) so it won't cycle the charger; needs `control.allow_control`. Set `ev_charger_switch` to your HA switch entity to enable (blank = off).
 - **EV tracking sensors.** New `sensor.foxctl_ev_power` (kW), `foxctl_ev_energy` (cumulative kWh, Energy-dashboard ready), and `foxctl_ev_charger` (on/off), plus an EV card on the page. Uses the existing `ev_power_entity` for measurement.

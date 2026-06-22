@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.26.0"
+version: "1.26.1"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -34,7 +34,7 @@ options:
   battery_capacity_kwh: 30
   typical_daily_load_kwh: 30
   ev_power_entity: ""
-  ev_charger_switch: ""
+  ev_charger_switch: "switch.6294ha_series_2_socket_2"
   ev_divert_feedin_max: 0.10
   ev_divert_allow_grid: true
   ev_divert_min_export_kw: 1.0
