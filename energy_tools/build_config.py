@@ -18,6 +18,16 @@ fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 fc["state_dir"] = "/data/.config/foxctl"   # persistent across restarts/updates (rolling consumption)
 if opt.get("ev_power_entity"):
     fc["ha"]["ev_power_entity"] = opt["ev_power_entity"]
+# Solar diversion to a car-charger power point (needs allow_control). switch="" disables.
+fc["ev_divert"] = {
+    "switch": opt.get("ev_charger_switch", ""),
+    "feedin_max": float(opt.get("ev_divert_feedin_max", 0.10)),
+    "allow_grid": bool(opt.get("ev_divert_allow_grid", True)),
+    "min_export_kw": float(opt.get("ev_divert_min_export_kw", 1.0)),
+    "min_soc": int(opt.get("ev_divert_min_soc", 0)),
+    "battery_priority": bool(opt.get("ev_divert_battery_priority", True)),
+    "min_dwell_min": int(opt.get("ev_divert_min_dwell_min", 10)),
+}
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
               "host": "core-mosquitto", "port": 1883,

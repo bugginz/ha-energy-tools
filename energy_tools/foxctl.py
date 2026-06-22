@@ -114,6 +114,10 @@ DEFAULT_CONFIG = {
     # Push notifications when a decision is worth a human look (via HA notify service).
     "notify": {"enabled": False, "service": "notify.mobile_app_phoney",
                "on_llm_disagree": True, "on_spike": True, "on_ludicrous": True},
+    # Solar diversion: turn a car-charger power point ON when export is too cheap to bother (and/or grid
+    # is cheap), OFF otherwise. Needs control.allow_control. switch="" disables. Tracked via ev_power_entity.
+    "ev_divert": {"switch": "", "feedin_max": 0.10, "allow_grid": True,
+                  "min_export_kw": 1.0, "min_dwell_min": 10},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -1216,6 +1220,67 @@ def maybe_llm_review(cfg, ctx, force=False):
 _NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
            "last_action": None, "last_action_ts": 0.0, "last_selling": False}
 
+_EV = {"on": None, "last_change": 0.0}   # car-charger divert state (edge-trigger + dwell)
+
+
+def ha_call_service(cfg, domain, service, entity_id):
+    """Call an arbitrary HA service on an entity (e.g. switch.turn_on)."""
+    url = cfg["ha"]["url"].rstrip("/")
+    token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+    body = json.dumps({"entity_id": entity_id}).encode()
+    req = urllib.request.Request(f"{url}/api/services/{domain}/{service}", data=body, method="POST",
+        headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    urllib.request.urlopen(req, timeout=15).read()
+
+
+def ev_divert_decision(snap, ev):
+    """Pure policy: should the car charger be ON this cycle? Diverts when export is too cheap (≥min_export
+    at ≤feedin_max) and/or grid is cheap — BUT yields to the house battery when it's still charging toward
+    the (shadow-planner) target, so the battery hits ~100% before a sell first. Returns (want, reason)."""
+    feedin_price, feedin_power, buy = snap.get("feedin"), snap.get("feedin_power") or 0.0, snap.get("price")
+    soc = snap.get("soc")
+    surplus = (feedin_power >= ev.get("min_export_kw", 1.0)
+               and feedin_price is not None and feedin_price <= ev.get("feedin_max", 0.10))
+    charge_start = (snap.get("dynamic") or {}).get("charge_start_price")
+    cheap_grid = bool(ev.get("allow_grid")) and buy is not None and charge_start is not None and buy <= charge_start
+    # battery priority: don't steal energy the battery needs to reach the planner's target before a sell
+    gate = ev.get("min_soc", 0) or 0
+    plan_tgt = (snap.get("plan") or {}).get("target_now")
+    if ev.get("battery_priority", True) and isinstance(plan_tgt, (int, float)):
+        gate = max(gate, plan_tgt - 2)
+    battery_busy = isinstance(soc, (int, float)) and soc < gate
+    if battery_busy:
+        return False, f"battery {soc:.0f}% < target {gate:.0f}% (charging for sell first)"
+    if not (surplus or cheap_grid):
+        return False, "export not cheap / no surplus"
+    why = (f"export ${feedin_price:.2f}≤{ev.get('feedin_max',0.10):.2f} @ {feedin_power:.1f}kW" if surplus
+           else f"grid ${buy:.3f}≤charge-start")
+    return True, why
+
+
+def ev_divert_tick(cfg, snap):
+    """Drive the car-charger switch from ev_divert_decision, edge-triggered with a dwell so it doesn't
+    cycle the charger. Honours control.allow_control. No-op unless ev_divert.switch is configured."""
+    ev = cfg.get("ev_divert") or {}
+    sw = ev.get("switch")
+    if not sw:
+        return None
+    if not cfg["control"].get("allow_control"):
+        return "ev divert: control disabled"
+    want, why = ev_divert_decision(snap, ev)
+    now = time.time()
+    due = (now - _EV["last_change"]) >= ev.get("min_dwell_min", 10) * 60
+    if _EV["on"] is None or (want != _EV["on"] and due):
+        try:
+            ha_call_service(cfg, "switch", "turn_on" if want else "turn_off", sw)
+        except Exception as e:
+            print(f"ev divert switch failed: {e}", file=sys.stderr)
+            return f"ev divert error: {e}"
+        if _EV["on"] != want:
+            log_event("ev_divert", f"car charger {'ON' if want else 'OFF'} ({why})")
+        _EV["on"], _EV["last_change"] = want, now
+    return f"car charger {'ON' if _EV['on'] else 'off'} ({why})"
+
 
 def ha_notify(cfg, title, message):
     try:
@@ -1398,6 +1463,9 @@ _MQTT_SENSORS = [
     ("foxctl_battery_discharge_energy", "Battery discharge energy", "kWh", "energy", "total_increasing"),
     ("foxctl_solar_energy", "Solar energy", "kWh", "energy", "total_increasing"),
     ("foxctl_load_energy", "House load energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_ev_power", "EV charger power", "kW", "power", "measurement"),
+    ("foxctl_ev_energy", "EV charger energy", "kWh", "energy", "total_increasing"),
+    ("foxctl_ev_charger", "EV charger state", None, None, None),
     ("foxctl_charge_start", "Charge-start price", "$/kWh", None, None),
     ("foxctl_target_soc", "Target SoC", "%", None, None),
     # Forecast + shadow-planner metrics (Phase 2-4) so they're graphable/automatable in HA.
@@ -1471,7 +1539,9 @@ def mqtt_publish(cfg, snap):
         tele.update({"plan_target_soc": plan.get("target_now"), "plan_action": plan.get("action_now"),
                      "energy_shortfall": snap.get("energy_shortfall_kwh"),
                      "solar_remaining": sf.get("remaining_today"), "solar_tomorrow": sf.get("tomorrow"),
-                     "solar_cal_bias": sc.get("bias"), "avg_daily_load": cons.get("avg_daily_total_kwh")})
+                     "solar_cal_bias": sc.get("bias"), "avg_daily_load": cons.get("avg_daily_total_kwh"),
+                     "ev_power": snap.get("ev_kw"), "ev_energy": et.get("ev"),
+                     "ev_charger": ("on" if _EV.get("on") else "off") if (cfg.get("ev_divert") or {}).get("switch") else "n/a"})
         tele.update({k: round(v, 3) for k, v in ps.items()})
         cli.publish("foxctl/telemetry", json.dumps(tele), qos=0, retain=True)
     except Exception as e:
@@ -1639,10 +1709,14 @@ def gather_and_decide(cfg: dict) -> dict:
     bat_discharge_power = float(real.get("batDischargePower") or 0)
     battery_power = round(bat_charge_power - bat_discharge_power, 3)
     pv_strings = {f"pv{i}_power": float(real.get(f"pv{i}Power") or 0) for i in range(1, 7)}
+    # EV charger power (Tuya plug reports W; convert to kW) — read here so it feeds the energy counters too.
+    ev_kw = ha.get_num(cfg["ha"].get("ev_power_entity")) if cfg["ha"].get("ev_power_entity") else None
+    if ev_kw is not None and ev_kw > 100:
+        ev_kw = ev_kw / 1000.0
     # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
-                                 "solar": pv, "load": load}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
+                                 "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -1687,9 +1761,6 @@ def gather_and_decide(cfg: dict) -> dict:
     solar_bells = _solar_bells(sun_rise, sun_set, solar_tomorrow, solar_remaining)
 
     # Rolling household consumption (foxctl integrates load_power itself; EV plug tracked separately).
-    ev_kw = ha.get_num(cfg["ha"].get("ev_power_entity")) if cfg["ha"].get("ev_power_entity") else None
-    if ev_kw is not None and ev_kw > 100:   # entity is in W (Tuya plugs report watts) → kW
-        ev_kw = ev_kw / 1000.0
     consumption = update_consumption(cfg, load, ev_kw)
     # Prefer the FoxESS-history hour-of-day profile (accurate in days, not weeks) once it has matured;
     # falls back to the self-integrated profile until the backfill reaches FCAST_MIN_DAYS. Read-only.
@@ -1876,6 +1947,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "soc_updated_epoch": soc_ts,
         "data_age_s": int(now_epoch - soc_ts) if soc_ts else None,
         "load_kw": load,
+        "ev_kw": ev_kw,
         "solar_surplus_kw": round(pv - load, 2),
         "telemetry_source": tsrc,
         "price": prices.get("price"),
@@ -2054,6 +2126,8 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
         snap["applied"] = mo_msg
     elif do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
+    if do_apply:
+        snap["ev_divert"] = ev_divert_tick(cfg, snap)   # solar diversion to the car charger (auto only)
     mqtt_publish(cfg, snap)
     run_band_actions(cfg, snap)
     maybe_notify(cfg, snap)
@@ -2475,6 +2549,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)} load / {(snap.get('forecast_profiles') or {}).get('days_solar',0)} solar valid days)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
+ <div class=card style="{'background:#e8f5e9;border-color:#2ecc71' if (snap.get('ev_divert') or '').startswith('car charger ON') else ''}"><small>EV charger</small><div class=big>{'🔌 ' + (snap.get('ev_kw') if snap.get('ev_kw') is not None else '–')} <small>kW</small></div><small>{snap.get('ev_divert') or ('no switch set' if not (cfg.get('ev_divert') or {}).get('switch') else 'idle')}</small></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>
    <div class=big><span id=age>{snap.get('data_age_s') if snap.get('data_age_s') is not None else '–'}</span>s
    · <span id=countdown>–</span></div>

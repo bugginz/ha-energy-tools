@@ -318,6 +318,40 @@ class StatBackfillTest(unittest.TestCase):
         self.assertTrue(load_pts[0][0].isoformat())    # start is a tz-aware datetime
 
 
+class EvDivertTest(unittest.TestCase):
+    """Solar-diversion policy: divert to the car when export is cheap/grid is cheap, but yield to the
+    house battery while it's charging toward the planner target before a sell."""
+
+    EV = {"feedin_max": 0.10, "allow_grid": True, "min_export_kw": 1.0,
+          "min_soc": 0, "battery_priority": True, "min_dwell_min": 10}
+
+    def _snap(self, **kw):
+        s = {"feedin": 0.30, "feedin_power": 0.0, "price": 0.25, "soc": 98,
+             "dynamic": {"charge_start_price": 0.12}, "plan": {"target_now": 95}}
+        s.update(kw)
+        return s
+
+    def test_diverts_on_cheap_export_surplus(self):
+        want, _ = foxctl.ev_divert_decision(self._snap(feedin=0.05, feedin_power=3.0), self.EV)
+        self.assertTrue(want)
+
+    def test_diverts_on_cheap_grid(self):
+        want, _ = foxctl.ev_divert_decision(self._snap(price=0.10), self.EV)   # buy ≤ charge_start
+        self.assertTrue(want)
+
+    def test_battery_priority_blocks_when_below_plan_target(self):
+        # planner wants 100% (pre-sell charge) and SoC is 80% → battery first, car off
+        want, why = foxctl.ev_divert_decision(
+            self._snap(feedin=0.05, feedin_power=3.0, soc=80, plan={"target_now": 100}), self.EV)
+        self.assertFalse(want)
+        self.assertIn("charging for sell", why)
+
+    def test_no_divert_when_nothing_cheap(self):
+        want, why = foxctl.ev_divert_decision(self._snap(), self.EV)   # dear export, dear grid
+        self.assertFalse(want)
+        self.assertIn("not cheap", why)
+
+
 class PlannerTest(unittest.TestCase):
     """Phase 4 shadow planner: requirement-aware ideal SoC trajectory (no control side-effects)."""
 

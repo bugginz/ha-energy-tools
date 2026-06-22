@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.26.0
+- **EV solar-diversion.** foxctl can now turn a car-charger power point ON when export is too cheap to bother (feed-in ≤ `ev_divert_feedin_max`, default $0.10, while actually exporting ≥ `ev_divert_min_export_kw`) and/or when grid import is cheap (≤ the charge-start price), and OFF otherwise — soaking surplus into the car instead of dumping it to the grid. It **yields to the house battery**: while the shadow planner is pre-charging the battery toward its target before a sell (`battery_priority`, default on), the charger stays off so the battery fills first. Edge-triggered with a dwell (`ev_divert_min_dwell_min`) so it won't cycle the charger; needs `control.allow_control`. Set `ev_charger_switch` to your HA switch entity to enable (blank = off).
+- **EV tracking sensors.** New `sensor.foxctl_ev_power` (kW), `foxctl_ev_energy` (cumulative kWh, Energy-dashboard ready), and `foxctl_ev_charger` (on/off), plus an EV card on the page. Uses the existing `ev_power_entity` for measurement.
+- 4 new tests (34 total).
+
 ## 1.25.0
 - **More HA sensors (live).** foxctl now also publishes a cumulative **House load energy** counter (for the Energy dashboard) plus the forecast/planner metrics: plan target SoC + action, energy shortfall, calibrated solar remaining/tomorrow, solar forecast bias, and avg daily load — all updating every cycle (~5 min) as `sensor.foxctl_*`.
 - **HA history backfill.** New `backfill-ha` CLI + a "⤓ Backfill 7d → HA stats" button + `/api/backfill_ha` endpoint that import the last N days of hourly load + solar into HA long-term statistics via the WebSocket `recorder/import_statistics` API (external stats `foxctl:load_energy` / `foxctl:solar_energy`). Hourly is HA's import resolution — 5-min raw history can't be backfilled via any public API; the live 5-min sensors cover "now" going forward. No-data days are skipped per metric. Adds the `websocket-client` dep.
