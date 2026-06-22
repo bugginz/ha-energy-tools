@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.32.0
+- **Feed-in (export) price forecast — on the chart and in the logic.** foxctl now reads Amber's feed-in forecast (the `forecasts` attribute of the feed-in sensor) and plots it as a green dashed line alongside buy/AEMO. Crucially, the **"would sell" windows, the SoC projection, and the shadow planner now use the real per-slot feed-in forecast** to decide when to sell, instead of the buy-price proxy — so sell windows line up with when export is actually lucrative. Falls back to the buy-price proxy where no feed-in forecast is available.
+
 ## 1.31.1
 - **Fix work mode freezing.** The FoxESS work-mode read (every Nth cycle) wasn't error-wrapped, so a flaky/rate-limited settings call would throw, crash that cycle, and leave the cached work mode frozen at the last value it read (e.g. 'backup'). Now it's resilient: on failure it keeps the cached value, logs `work mode read failed …`, and the cycle continues. The Work mode card shows how long ago it was read (and flags ⚠️ stale > 30 min) so a failing read is visible.
 

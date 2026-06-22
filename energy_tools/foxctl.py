@@ -340,10 +340,16 @@ class HAPrices:
                     aemo_fc.append({"t": p.get("start_time"), "price": p.get("price")})
             except Exception:
                 pass
-        feedin = None
+        feedin, feedin_fc = None, []
         if self.feedin_entity:
             try:
-                feedin = float(self._state(self.feedin_entity)["state"])
+                fe = self._state(self.feedin_entity)
+                try:
+                    feedin = float(fe["state"])
+                except (ValueError, TypeError):
+                    feedin = None
+                for p in fe["attributes"].get("forecasts", []):   # Amber feed-in sensor carries its own forecast
+                    feedin_fc.append({"t": p.get("nem_date"), "price": p.get("per_kwh")})
             except Exception:
                 feedin = None  # entity not present yet (no solar/feed-in channel)
         return {
@@ -353,6 +359,7 @@ class HAPrices:
             "aemo_price": aemo_price,
             "aemo_forecast": aemo_fc,
             "feedin": feedin,
+            "feedin_forecast": feedin_fc,
         }
 
 
@@ -1671,7 +1678,7 @@ def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
     if arb_on:
         sell_ahead = 0.0
         for i in range(n - 1, -1, -1):
-            if slots[i]["price"] >= sell_thr:
+            if slots[i].get("sell_price", slots[i]["price"]) >= sell_thr:   # real feed-in forecast if present
                 sell_ahead += cpwr * slots[i]["dt"]      # this slot can export this much later
             want[i] = min(mx, req[i] + sell_ahead)
     # forward pass: simulate the ideal dispatch following the envelope
@@ -1694,7 +1701,7 @@ def plan_soc_trajectory(slots, soc0_pct, cap_kwh, p):
             if add > 0.01:
                 soc += add * eff
                 action = "charge"
-        if sell_on and sell_thr is not None and price >= sell_thr and soc > surv:
+        if sell_on and sell_thr is not None and s.get("sell_price", price) >= sell_thr and soc > surv:
             sell = min(step, soc - surv)
             if sell > 0.01:
                 soc -= sell
@@ -1920,6 +1927,12 @@ def gather_and_decide(cfg: dict) -> dict:
                     parsed.append((hh, float(pp["price"]), t))
         parsed.sort()
         hp = consumption.get("hour_profile") or {}
+        # per-slot feed-in (export) forecast → real sell prices for the planner (else buy-price proxy)
+        fin_map = {}
+        for pp in (prices.get("feedin_forecast") or []):
+            t = _parse_t(pp.get("t") or "")
+            if t and pp.get("price") is not None:
+                fin_map[round((t - now_utc).total_seconds() / 3600.0, 2)] = float(pp["price"])
         slots = []
         for i, (hh, price, t) in enumerate(parsed):
             nh = parsed[i + 1][0] if i + 1 < len(parsed) else hh + 0.5
@@ -1927,7 +1940,8 @@ def gather_and_decide(cfg: dict) -> dict:
             lh = t.astimezone().hour
             load_kwh = (hp.get(lh, hp.get(str(lh))) or 0.0) * dt
             slots.append({"h": hh, "price": price, "dt": dt,
-                          "load": load_kwh, "solar": _solar_kw_at(solar_bells, (hh + nh) / 2.0) * dt})
+                          "load": load_kwh, "solar": _solar_kw_at(solar_bells, (hh + nh) / 2.0) * dt,
+                          "sell_price": fin_map.get(round(hh, 2), price)})
         if slots and not zerohero:
             pp = {"reserve": reserve, "max_soc": foundation["max_soc"], "survival": survival_soc,
                   "charge_start": working.get("charge_start_price", strat.get("charge_start_price", 0.1)),
@@ -1993,6 +2007,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "aemo_forecast_next": prices.get("aemo_forecast", [])[:6],
         "forecast_h": prices.get("forecast", []),
         "aemo_forecast_h": prices.get("aemo_forecast", []),
+        "feedin_forecast_h": prices.get("feedin_forecast", []),
         "soc": soc,
         "pv_kw": pv,
         "real": real,
@@ -2259,6 +2274,14 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
             h = (t - now).total_seconds() / 3600.0
             if -0.3 <= h <= hours:
                 aemo.append((h, p["price"]))
+    fin = []                                          # Amber feed-in (export) price forecast
+    for p in snap.get("feedin_forecast_h") or []:
+        t = _parse_t(p.get("t") or "")
+        if t and p.get("price") is not None:
+            h = (t - now).total_seconds() / 3600.0
+            if -0.3 <= h <= hours:
+                fin.append((h, p["price"]))
+    fin_map = {round(h, 2): pr for h, pr in fin}      # per-slot feed-in lookup for the sell logic
     if not amber:
         return "<small>no forecast to chart yet</small>"
     tz = amber[0][2].tzinfo   # label the x-axis in the forecast's own (Sydney) time
@@ -2328,7 +2351,8 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
             lu = _usage_at(t)
             load_kwh = (lu or 0.0) * dt
             soc_pct = soc_kwh / cap * 100.0
-            sell = sell_on and buy >= sell_thr and soc_pct > survival
+            export_price = fin_map.get(round(h, 2), buy)   # real feed-in forecast if we have it, else buy proxy
+            sell = sell_on and export_price >= sell_thr and soc_pct > survival
             if buy <= csp and soc_kwh < tgt_kwh:                       # grid force-charge window
                 soc_kwh = min(tgt_kwh, soc_kwh + charge_kw * dt) + max(0.0, solar_kwh - load_kwh)
             elif sell:                                                  # export to grid down to floor
@@ -2413,6 +2437,10 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
     if aemo:
         pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr in aemo)
         out.append(f'<polyline points="{pl}" fill="none" stroke="#e67e22" stroke-width="1.4" stroke-dasharray="3 3" opacity="0.85"/>')
+    if fin:
+        pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr in fin)
+        out.append(f'<polyline points="{pl}" fill="none" stroke="#27ae60" stroke-width="1.8" '
+                   f'stroke-dasharray="6 2" opacity="0.95"/>')
     pl = " ".join(f"{X(h):.1f},{Y(pr):.1f}" for h, pr, _ in amber)
     out.append(f'<polyline points="{pl}" fill="none" stroke="#2980d9" stroke-width="2.2"/>')
     # rolling usage min–max range (shaded band) + avg overlay (right kW axis)
@@ -2482,14 +2510,15 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
               "s.addEventListener('mouseleave',hide);})();</script>")
     legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
+              '<span style="color:#27ae60">- - feed-in (export) forecast</span> · '
               '<span style="color:#b8860b">▮ solar forecast</span> <span style="color:#cf6a12">— typical solar from history (avg + min/max)</span> · '
               '<span style="color:#8e44ad">- - your usage avg + range band (right kW axis)</span> · '
               '<span style="color:#16a085">— projected SoC %</span> · '
               '<span style="color:#d35400">- - shadow plan (ideal SoC + floor)</span> · '
               '<span style="color:#2ecc71">▮ would grid-charge</span> · '
               '<span style="color:#e84393">▮ would sell</span> · hover for time<br>'
-              '<i>SoC projection &amp; sell windows are estimates (buy-price proxy for export, '
-              'forecast solar/load) — directional, not exact.</i></small>')
+              '<i>SoC projection &amp; sell windows use the feed-in forecast where available '
+              '(else buy-price proxy) + forecast solar/load — directional, not exact.</i></small>')
     return "".join(out) + script + legend
 
 

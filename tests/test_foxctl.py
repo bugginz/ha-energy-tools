@@ -487,6 +487,15 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(arb["action_now"], "charge")            # buys cheap to sell into the spike
         self.assertGreater(arb["target_now"], 50.0)
 
+    def test_uses_per_slot_feed_in_forecast_for_sell(self):
+        # buy price is low everywhere (no buy-proxy sell), but the feed-in forecast spikes in slot 1 →
+        # the planner should still see a sell opportunity from the real export price.
+        slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0, "sell_price": 0.05},
+                 {"h": 1.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0, "sell_price": 0.60}]
+        plan = foxctl.plan_soc_trajectory(slots, 50.0, 30.0, self._params())   # sell_thr 0.50
+        # arb target should pull the cheap first slot to charge toward the future export window
+        self.assertEqual(plan["action_now"], "charge")
+
     def test_no_arbitrage_when_spread_unprofitable(self):
         # future "sell" price below buy-after-efficiency → not worth pre-buying
         slots = [{"h": 0.0, "price": 0.10, "dt": 1.0, "load": 0.0, "solar": 0.0},
