@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.31.0
+- **Solar range now comes from your actual generation history, not a forecast-vs-actual calibration.** The chart draws a "typical solar" overlay — hour-of-day **average + min/max band** straight from the backfilled `pvPower` actuals (`forecast_profiles` now exposes `solar_min`/`solar_max`). It shows as soon as there's ≥1 day of generation, with no forward forecast-pairing needed (orange avg line + dashed min/max edges). The Solcast bell stays as the weather-aware "today's forecast"; the calibration-spread band is gone in favour of the real-data range.
+
 ## 1.30.1
 - **Solar forecast error band is now legible.** It was a same-gold wash over the gold bell (invisible). Now drawn as clear dashed dark-goldenrod **min/max edge lines** + a faint fill, so the calibration's forecast-error envelope actually shows.
 - **Solar calibration engages sooner:** `SOLAR_CAL_MIN` 5 → 3 days. (It still can't be backfilled — it needs the *external forecast made for each past day*, which only accrues going forward; the 7-day backfill only had actual generation.)

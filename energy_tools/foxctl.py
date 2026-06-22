@@ -836,13 +836,14 @@ def forecast_profiles():
                 lo[h], hi[h] = round(min(vals), 3), round(max(vals), 3)
         return avg, lo, hi
     load_avg, load_min, load_max = stats("load")
-    solar_avg, _, _ = stats("solar")
+    solar_avg, solar_min, solar_max = stats("solar")
     lvalid = valid_for("load")
     totals = [round(sum(x for x in d["load"] if isinstance(x, (int, float))), 1) for d in lvalid]
     daily = {"avg": round(sum(totals) / len(totals), 1), "min": min(totals), "max": max(totals)} if totals else {}
     return {"days": len(lvalid), "days_solar": len(valid_for("solar")),
             "load_profile": load_avg, "load_min": load_min, "load_max": load_max,
-            "solar_profile": solar_avg, "daily_total": daily}
+            "solar_profile": solar_avg, "solar_min": solar_min, "solar_max": solar_max,
+            "daily_total": daily}
 
 
 def update_forecast_store(cfg, fox):
@@ -2267,12 +2268,6 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
     xmin = min(h for h, _, _ in amber)
     xmax = max(h for h, _, _ in amber) or 1
     bells = snap.get("solar_bells") or []
-    # Solar forecast-error band factors (calibration actual/forecast spread, relative to the bias).
-    scal = snap.get("solar_cal") or {}
-    _cb = scal.get("bias") or 1.0
-    cal_applied = bool(scal.get("applied")) and _cb > 0
-    fhi = (scal.get("hi") or 1.0) / _cb if cal_applied else 1.0
-    flo = (scal.get("lo") or 1.0) / _cb if cal_applied else 1.0
     # Rolling hour-of-day usage profile (avg kWh in each wall-clock hour ≈ avg kW) + min/max range band.
     _cons = snap.get("consumption") or {}
     hour_profile = _cons.get("hour_profile") or {}
@@ -2286,8 +2281,13 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
     hmin, hmax = _cons.get("hour_min") or {}, _cons.get("hour_max") or {}
     usage_band = [(h, _prof_at(hmin, t), _prof_at(hmax, t)) for h, _, t in amber]
     usage_band = [(h, lo, hi) for h, lo, hi in usage_band if lo is not None and hi is not None]
+    # Historical solar from ACTUALS: hour-of-day avg + min/max range (real data, no forecast/calibration).
+    _fp = snap.get("forecast_profiles") or {}
+    s_avg, s_min, s_max = _fp.get("solar_profile") or {}, _fp.get("solar_min") or {}, _fp.get("solar_max") or {}
+    solar_hist = [(h, _prof_at(s_avg, t), _prof_at(s_min, t), _prof_at(s_max, t)) for h, _, t in amber]
+    solar_hist = [(h, a, lo, hi) for h, a, lo, hi in solar_hist if a is not None and lo is not None and hi is not None]
     peak_usage = max([v for _, v in usage] + [hi for _, _, hi in usage_band] + [0.0])
-    peak_solar = max([b["pmax"] for b in bells] + [0.0]) * max(1.0, fhi)   # include the error band's top
+    peak_solar = max([b["pmax"] for b in bells] + [hi for _, _, _, hi in solar_hist] + [0.0])
     skw = max([peak_solar, peak_usage, 1.0]) * 1.15   # right-axis kW scale (solar + usage)
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda p: padT + ih * (1 - (p - ymin) / ((ymax - ymin) or 1))
@@ -2334,41 +2334,35 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
             soc_kwh = max(floor_kwh, min(max_kwh, soc_kwh))
             proj.append({"h": h, "soc": round(soc_kwh / cap * 100.0, 1), "sell": sell})
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:14px system-ui">']
-    # SOLAR overlay (sunny times / intensity) — half-sine bell, area = forecast kWh, on right kW axis.
-    # Error margin (fhi/flo computed above): the calibration's actual/forecast spread drawn as a lighter
-    # band above/below the central bell — i.e. how far past days landed from the forecast.
+    # SOLAR forecast bell (Solcast, weather-aware for today) — filled gold, on the right kW axis.
     for b in bells:
         s, e = max(b["s"], xmin), min(b["e"], xmax)
         if e <= s or b["pmax"] <= 0:
             continue
         steps = 40
-        def _curve(pm):   # half-sine bell at peak `pm` over [s,e], as (x,y) points
-            out2 = []
-            for k in range(steps + 1):
-                h = s + (e - s) * k / steps
-                frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
-                out2.append((X(h), SY(pm * math.sin(math.pi * min(max(frac, 0), 1)))))
-            return out2
-        # central solar bell (forecast)
         pts = [f"{X(s):.1f},{SY(0):.1f}"]
-        for x, y in _curve(b["pmax"]):
-            pts.append(f"{x:.1f},{y:.1f}")
+        for k in range(steps + 1):
+            h = s + (e - s) * k / steps
+            frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
+            pts.append(f"{X(h):.1f},{SY(b['pmax'] * math.sin(math.pi * min(max(frac, 0), 1))):.1f}")
         pts.append(f"{X(e):.1f},{SY(0):.1f}")
-        out.append(f'<polygon points="{" ".join(pts)}" fill="#f5c518" opacity="0.22"/>')
-        # forecast-error envelope (calibration spread): clear dashed min + max edge lines on top, so the
-        # band is legible against the gold bell instead of a same-colour wash.
-        if cal_applied and fhi > flo + 0.01:
-            hp, lp = _curve(b["pmax"] * fhi), _curve(b["pmax"] * flo)
-            band = " ".join(f"{x:.1f},{y:.1f}" for x, y in hp) + " " + \
-                   " ".join(f"{x:.1f},{y:.1f}" for x, y in reversed(lp))
-            out.append(f'<polygon points="{band}" fill="#f5c518" opacity="0.10"/>')
-            for edge in (hp, lp):
-                out.append(f'<polyline points="{" ".join(f"{x:.1f},{y:.1f}" for x, y in edge)}" fill="none" '
-                           f'stroke="#b8860b" stroke-width="1.3" stroke-dasharray="5 3" opacity="0.9"/>')
+        out.append(f'<polygon points="{" ".join(pts)}" fill="#f5c518" opacity="0.18"/>')
         hpk = b["s"] + (b["e"] - b["s"]) / 2
         if xmin <= hpk <= xmax:
             out.append(f'<text x="{X(hpk):.1f}" y="{SY(b["pmax"])-4:.1f}" text-anchor="middle" '
                        f'fill="#b8860b">☀ {b["kwh"]}kWh (~{b["pmax"]}kW)</text>')
+    # TYPICAL solar from your ACTUAL history: hour-of-day avg (solid) + min/max range (dashed edges).
+    # Real data, shown as soon as there's ≥1 day of generation — no forecast or calibration needed.
+    if solar_hist:
+        top = " ".join(f"{X(h):.1f},{SY(hi):.1f}" for h, _, _, hi in solar_hist)
+        bot = " ".join(f"{X(h):.1f},{SY(lo):.1f}" for h, _, lo, _ in reversed(solar_hist))
+        out.append(f'<polygon points="{top} {bot}" fill="#e67e22" opacity="0.10"/>')
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{SY(hi):.1f}" for h, _, _, hi in solar_hist) +
+                   '" fill="none" stroke="#cf6a12" stroke-width="1" stroke-dasharray="5 3" opacity="0.75"/>')
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{SY(lo):.1f}" for h, _, lo, _ in solar_hist) +
+                   '" fill="none" stroke="#cf6a12" stroke-width="1" stroke-dasharray="5 3" opacity="0.75"/>')
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{SY(a):.1f}" for h, a, _, _ in solar_hist) +
+                   '" fill="none" stroke="#cf6a12" stroke-width="1.6" opacity="0.9"/>')
     # shaded "would grid-charge" bands (Amber price <= charge-start price)
     seg_start = None
     for h, pr, _ in amber + [(amber[-1][0], 1e9, None)]:
@@ -2484,7 +2478,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
               "s.addEventListener('mouseleave',hide);})();</script>")
     legend = ('<small><b style="color:#2980d9">— Amber retail</b> (charges on this) · '
               '<span style="color:#e67e22">- - AEMO wholesale</span> · '
-              '<span style="color:#b8860b">▮ est. solar + error band (right kW axis)</span> · '
+              '<span style="color:#b8860b">▮ solar forecast</span> <span style="color:#cf6a12">— typical solar from history (avg + min/max)</span> · '
               '<span style="color:#8e44ad">- - your usage avg + range band (right kW axis)</span> · '
               '<span style="color:#16a085">— projected SoC %</span> · '
               '<span style="color:#d35400">- - shadow plan (ideal SoC + floor)</span> · '
