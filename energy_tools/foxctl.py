@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
         "amber_forecast_entity": "sensor.home_general_forecast",
         # Solar offload / feed-in (export) tariff — appears once Amber feed-in channel is live.
         "amber_feedin_entity": "sensor.home_feed_in_price",
+        "amber_feedin_forecast_entity": "sensor.home_feed_in_forecast",
         "demand_window_entity": "binary_sensor.home_demand_window",
         # Read inverter telemetry from HA (foxess-ha integration) to avoid a 2nd FoxESS poller.
         "soc_entity": "sensor.foxess_bat_soc",
@@ -270,11 +271,13 @@ class HAPrices:
     """Reads Amber price + forecast from Home Assistant (reuses the HA token)."""
 
     def __init__(self, url: str, token: str, price_entity: str, forecast_entity: str,
-                 aemo_forecast_entity: str | None = None, feedin_entity: str | None = None):
+                 aemo_forecast_entity: str | None = None, feedin_entity: str | None = None,
+                 feedin_forecast_entity: str | None = None):
         self.url, self.token = url.rstrip("/"), token
         self.price_entity, self.forecast_entity = price_entity, forecast_entity
         self.aemo_forecast_entity = aemo_forecast_entity
         self.feedin_entity = feedin_entity
+        self.feedin_forecast_entity = feedin_forecast_entity
 
     def _state(self, entity: str) -> dict:
         req = urllib.request.Request(
@@ -343,15 +346,21 @@ class HAPrices:
         feedin, feedin_fc = None, []
         if self.feedin_entity:
             try:
-                fe = self._state(self.feedin_entity)
-                try:
-                    feedin = float(fe["state"])
-                except (ValueError, TypeError):
-                    feedin = None
-                for p in fe["attributes"].get("forecasts", []):   # Amber feed-in sensor carries its own forecast
-                    feedin_fc.append({"t": p.get("nem_date"), "price": p.get("per_kwh")})
+                feedin = float(self._state(self.feedin_entity)["state"])
             except Exception:
                 feedin = None  # entity not present yet (no solar/feed-in channel)
+        # Feed-in forecast: prefer a dedicated forecast sensor (mirrors the general forecast sensor);
+        # fall back to a 'forecasts' attribute on the feed-in price sensor if that's where it lives.
+        for src in (self.feedin_forecast_entity, self.feedin_entity):
+            if not src:
+                continue
+            try:
+                raw = self._state(src)["attributes"].get("forecasts", [])
+                if raw:
+                    feedin_fc = [{"t": p.get("nem_date"), "price": p.get("per_kwh")} for p in raw]
+                    break
+            except Exception:
+                pass
         return {
             "price": price,
             "descriptor": cur["attributes"].get("descriptor") if isinstance(cur.get("attributes"), dict) else None,
@@ -1719,7 +1728,7 @@ def gather_and_decide(cfg: dict) -> dict:
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
     ha = HAPrices(cfg["ha"]["url"], ha_token, cfg["ha"]["amber_price_entity"],
                   cfg["ha"]["amber_forecast_entity"], cfg["ha"].get("aemo_forecast_entity"),
-                  cfg["ha"].get("amber_feedin_entity"))
+                  cfg["ha"].get("amber_feedin_entity"), cfg["ha"].get("amber_feedin_forecast_entity"))
 
     prices = ha.snapshot()
     # foxctl is the SINGLE FoxESS poller: telemetry comes straight from the FoxESS API each cycle
@@ -2646,7 +2655,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Amber price</small><div class=big>${snap.get('price')}</div>
    <span class=pill style="background:{color}">{band}</span></div>
  <div class=card><small>AEMO (wholesale)</small><div class=big>${snap.get('aemo_price')}</div></div>
- <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
+ <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{('forecast: '+str(len(snap.get('feedin_forecast_h') or []))+'pt') if (snap.get('feedin_forecast_h')) else 'no forecast (check entity)'}</small></div>
  {grid_html}
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>

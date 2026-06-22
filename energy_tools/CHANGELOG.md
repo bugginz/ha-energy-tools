@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.32.1
+- **Fix: feed-in forecast wasn't showing.** It lives on a dedicated sensor (like the buy forecast's `..._general_forecast`), not as an attribute of the feed-in *price* sensor. Added `amber_feedin_forecast_entity` (default `sensor.amber_feed_in_forecast`) and read its `forecasts` (falls back to a `forecasts` attribute on the price sensor). The Feed-in card now shows `forecast: Npt` / `no forecast (check entity)` so you can verify the entity name.
+
 ## 1.32.0
 - **Feed-in (export) price forecast — on the chart and in the logic.** foxctl now reads Amber's feed-in forecast (the `forecasts` attribute of the feed-in sensor) and plots it as a green dashed line alongside buy/AEMO. Crucially, the **"would sell" windows, the SoC projection, and the shadow planner now use the real per-slot feed-in forecast** to decide when to sell, instead of the buy-price proxy — so sell windows line up with when export is actually lucrative. Falls back to the buy-price proxy where no feed-in forecast is available.
 
