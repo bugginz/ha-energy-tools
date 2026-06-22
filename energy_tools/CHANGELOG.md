@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.1
+- **Solar forecast error band is now legible.** It was a same-gold wash over the gold bell (invisible). Now drawn as clear dashed dark-goldenrod **min/max edge lines** + a faint fill, so the calibration's forecast-error envelope actually shows.
+- **Solar calibration engages sooner:** `SOLAR_CAL_MIN` 5 → 3 days. (It still can't be backfilled — it needs the *external forecast made for each past day*, which only accrues going forward; the 7-day backfill only had actual generation.)
+
 ## 1.30.0
 - **Interim daily car-charge cap** (until a real car-SoC sensor exists). `ev_session_cap_kwh` (default 30) limits how much the **auto-divert** charges the car per day — measured from the `ev_energy` counter, anchored to a 4am day boundary. Once hit, auto-divert holds the car off until the day rolls over or you press **Force car charge** (which clears the cap and starts a fresh session). Manual force-charge always overrides it. The EV status line shows `… · 12.3/30kWh today`. On the ~42 kWh Abarth pack, ~30 kWh ≈ a 0→80% day. Set to 0 to disable.
 

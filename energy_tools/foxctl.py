@@ -874,7 +874,7 @@ def update_forecast_store(cfg, fox):
 # bias = mean(actual)/mean(forecast) that corrects this site's systematic optimism/pessimism. Applied
 # (clamped, and only after enough samples) to the forward solar feeding survival/shortfall + projection.
 _SOLAR_CAL = {"path": None, "fc": {}, "samples": [], "loaded": False}
-SOLAR_CAL_MIN = 5               # need this many completed forecast-vs-actual days before applying
+SOLAR_CAL_MIN = 3               # need this many completed forecast-vs-actual days before applying
 SOLAR_CAL_CLAMP = (0.5, 1.6)    # never trust the correction beyond ±this
 
 
@@ -2349,16 +2349,22 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
                 frac = (h - b["s"]) / ((b["e"] - b["s"]) or 1)
                 out2.append((X(h), SY(pm * math.sin(math.pi * min(max(frac, 0), 1)))))
             return out2
-        if cal_applied and fhi > flo + 0.01:   # shaded forecast-error band between low/high outcomes
-            hp, lp = _curve(b["pmax"] * fhi), _curve(b["pmax"] * flo)
-            band = " ".join(f"{x:.1f},{y:.1f}" for x, y in hp) + " " + \
-                   " ".join(f"{x:.1f},{y:.1f}" for x, y in reversed(lp))
-            out.append(f'<polygon points="{band}" fill="#f5c518" opacity="0.15"/>')
+        # central solar bell (forecast)
         pts = [f"{X(s):.1f},{SY(0):.1f}"]
         for x, y in _curve(b["pmax"]):
             pts.append(f"{x:.1f},{y:.1f}")
         pts.append(f"{X(e):.1f},{SY(0):.1f}")
         out.append(f'<polygon points="{" ".join(pts)}" fill="#f5c518" opacity="0.22"/>')
+        # forecast-error envelope (calibration spread): clear dashed min + max edge lines on top, so the
+        # band is legible against the gold bell instead of a same-colour wash.
+        if cal_applied and fhi > flo + 0.01:
+            hp, lp = _curve(b["pmax"] * fhi), _curve(b["pmax"] * flo)
+            band = " ".join(f"{x:.1f},{y:.1f}" for x, y in hp) + " " + \
+                   " ".join(f"{x:.1f},{y:.1f}" for x, y in reversed(lp))
+            out.append(f'<polygon points="{band}" fill="#f5c518" opacity="0.10"/>')
+            for edge in (hp, lp):
+                out.append(f'<polyline points="{" ".join(f"{x:.1f},{y:.1f}" for x, y in edge)}" fill="none" '
+                           f'stroke="#b8860b" stroke-width="1.3" stroke-dasharray="5 3" opacity="0.9"/>')
         hpk = b["s"] + (b["e"] - b["s"]) / 2
         if xmin <= hpk <= xmax:
             out.append(f'<text x="{X(hpk):.1f}" y="{SY(b["pmax"])-4:.1f}" text-anchor="middle" '
@@ -2617,7 +2623,7 @@ def render(snap: dict, cfg: dict) -> str:
  {grid_html}
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
- <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{5}d learning)"}</small></div>
+ <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{SOLAR_CAL_MIN}d learning)"}</small></div>
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)} load / {(snap.get('forecast_profiles') or {}).get('days_solar',0)} solar valid days)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
  <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
