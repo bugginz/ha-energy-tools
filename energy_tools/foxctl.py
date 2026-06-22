@@ -1220,7 +1220,7 @@ def maybe_llm_review(cfg, ctx, force=False):
 _NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
            "last_action": None, "last_action_ts": 0.0, "last_selling": False}
 
-_EV = {"on": None, "last_change": 0.0}   # car-charger divert state (edge-trigger + dwell)
+_EV = {"on": None, "last_change": 0.0, "override_until": 0.0}   # car-charger divert state (+ manual force)
 
 
 def ha_call_service(cfg, domain, service, entity_id):
@@ -1267,9 +1267,14 @@ def ev_divert_tick(cfg, snap):
         return None
     if not cfg["control"].get("allow_control"):
         return "ev divert: control disabled"
-    want, why = ev_divert_decision(snap, ev)
     now = time.time()
+    if now < _EV.get("override_until", 0):       # manual force-charge: ignore economics, dwell, battery gate
+        want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
+    else:
+        want, why = ev_divert_decision(snap, ev)
     due = (now - _EV["last_change"]) >= ev.get("min_dwell_min", 10) * 60
+    if now < _EV.get("override_until", 0):
+        due = True                               # apply a manual force-charge immediately, no dwell wait
     if _EV["on"] is None or (want != _EV["on"] and due):
         try:
             ha_call_service(cfg, "switch", "turn_on" if want else "turn_off", sw)
@@ -2198,15 +2203,16 @@ async function tick(){const r=await fetch('/api/state');const d=await r.json();
  if(d.soc_updated_epoch){ae.textContent=Math.round(Date.now()/1000-d.soc_updated_epoch);}}
 setInterval(tick,1000);tick();
 refreshLog();refreshEvents();
-(function(){const c=document.getElementById('chartwrap');if(!c)return;
- try{const s=JSON.parse(localStorage.getItem('foxctl_chart')||'{}');if(s.w)c.style.width=s.w;if(s.h)c.style.height=s.h;}catch(e){}
- c.addEventListener('mouseup',()=>{try{localStorage.setItem('foxctl_chart',JSON.stringify({w:c.style.width,h:c.style.height}));}catch(e){}});})();"""
+document.querySelectorAll('.chartwrap').forEach(function(c){const k='foxctl_chart_'+c.id;
+ try{const s=JSON.parse(localStorage.getItem(k)||'{}');if(s.w)c.style.width=s.w;if(s.h)c.style.height=s.h;}catch(e){}
+ c.addEventListener('mouseup',()=>{try{localStorage.setItem(k,JSON.stringify({w:c.style.width,h:c.style.height}));}catch(e){}});});"""
 
 
-def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
-    """SVG of the 18h price horizon the controller reasons over: Amber + AEMO curves, the
-    LLM-set charge-start price, the foundation ceiling, shaded 'would-charge' windows, and the
-    cheapest/peak markers. Makes it visible whether the future schedule is actually considered."""
+def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, cid: str = "chartwrap") -> str:
+    """SVG of the price horizon the controller reasons over (out to `hours`): Amber + AEMO curves, the
+    LLM-set charge-start price, the foundation ceiling, shaded 'would-charge'/'would-sell' windows, the
+    projected + planned SoC, and usage/solar overlays. `cid` is the wrapping element id so multiple
+    charts on one page don't collide in the hover JS."""
     dyn = snap.get("dynamic") or {}
     now = datetime.now(timezone.utc)
     amber, aemo = [], []
@@ -2214,13 +2220,13 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
         t = _parse_t(p.get("t") or "")
         if t and p.get("price") is not None:
             h = (t - now).total_seconds() / 3600.0
-            if -0.3 <= h <= 18:
+            if -0.3 <= h <= hours:
                 amber.append((h, p["price"], t))
     for p in snap.get("aemo_forecast_h") or []:
         t = _parse_t(p.get("t") or "")
         if t and p.get("price") is not None:
             h = (t - now).total_seconds() / 3600.0
-            if -0.3 <= h <= 18:
+            if -0.3 <= h <= hours:
                 aemo.append((h, p["price"]))
     if not amber:
         return "<small>no forecast to chart yet</small>"
@@ -2364,8 +2370,9 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
                    f'<line x1="{padL}" y1="{Y(yv):.1f}" x2="{W-padR}" y2="{Y(yv):.1f}" stroke="#8884" stroke-width="0.5"/>')
         kv = skw * k / 4
         out.append(f'<text x="{W-padR+6}" y="{SY(kv)+4:.1f}" text-anchor="start" fill="#b8860b">{kv:.1f}kW</text>')
-    # x axis ticks every 3h — REAL clock times
-    for hh in range(0, 19, 3):
+    # x axis ticks — REAL clock times, spacing scaled to the horizon
+    tick = max(1, round((xmax - xmin) / 6))
+    for hh in range(0, int(xmax) + 1, tick):
         if xmin <= hh <= xmax:
             lab = (now + timedelta(hours=hh)).astimezone(tz).strftime("%H:%M")
             out.append(f'<line x1="{X(hh):.1f}" y1="{padT}" x2="{X(hh):.1f}" y2="{H-padB}" stroke="#8883" stroke-width="0.5"/>'
@@ -2427,7 +2434,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None) -> str:
                     "use": _usage_at(t), "umin": _prof_at(hmin, t), "umax": _prof_at(hmax, t),
                     "soc": (d["soc"] if d else None), "sell": (bool(d["sell"]) if d else False)})
     hover = {"pts": pts, "W": W, "padR": padR}
-    script = ("<script>(function(){var w=document.getElementById('chartwrap');if(!w)return;"
+    script = ("<script>(function(){var w=document.getElementById('" + cid + "');if(!w)return;"
               "var s=w.querySelector('svg');if(!s)return;var D=" + json.dumps(hover) + ";"
               "var ln=s.getElementById('hovline'),tp=s.getElementById('hovtip'),bg=s.getElementById('hovtipbg');"
               "function hide(){ln.style.display='none';tp.style.display='none';bg.style.display='none';}"
@@ -2503,11 +2510,16 @@ def render(snap: dict, cfg: dict) -> str:
     sell_p = dyn2.get("sell_price"); surv = dyn2.get("survival_soc")
     auto_sell_txt = (f'auto-sell ≥ ${sell_p} (keep ≥{surv}% overnight)' if dyn2.get("sell_enabled")
                      else "auto-sell off")
+    evbtns = "".join(f'<button onclick="ov(\'/api/ev_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 6))
+    ev_row = (f'<div style="margin-top:.4rem">🔌 <b>Force car charge:</b> {evbtns} '
+              f'<button onclick="ov(\'/api/ev_off\')">✖ stop → auto</button></div>'
+              if (cfg.get("ev_divert") or {}).get("switch") else "")
     controls_html = (f'<h3>Quick controls <small>(manual overrides — auto-revert when the timer ends)</small></h3>'
                      f'<div class=card><div><b>Status:</b> {ov_status} · buy ≤ ${round(eff_floor,3)}'
                      f'{" (override)" if ov.get("floor") is not None else ""} · {auto_sell_txt}</div>'
                      f'<div style="margin-top:.5rem">⚡ <b>Force-charge:</b> {fcbtns}</div>'
                      f'<div style="margin-top:.4rem">💰 <b>SELL (discharge to grid):</b> {sellbtns}</div>'
+                     f'{ev_row}'
                      f'<div style="margin-top:.4rem">🪙 <b>Floor:</b> '
                      f'<button onclick="ov(\'/api/floor?delta=-0.03\')">– relax</button>'
                      f'<button onclick="ov(\'/api/floor?delta=0.03\')">+ increase</button> '
@@ -2550,6 +2562,25 @@ def render(snap: dict, cfg: dict) -> str:
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta http-equiv=refresh content=60><title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl — {snap.get('ts','-')}</h1>
+<div class="card rec"><small>RECOMMENDATION</small>
+ <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}</div>
+ <div>{rec.get('reason','')}</div>
+ <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
+ <div><small>🔭 shadow plan (not driving): {(snap.get('plan') or {}).get('action_now','–')} → {(snap.get('plan') or {}).get('target_now','–')}%{' · ⚠️ differs from heuristic' if (snap.get('plan') or {}).get('diverges') else ' · agrees with heuristic' if snap.get('plan') else ''}</small></div>
+</div>
+{controls_html}
+<h3>Make things happen</h3>
+<button onclick="post('/api/evaluate')">Evaluate now</button>
+<button onclick="post('/api/apply')">Apply recommendation</button>
+<button onclick="post('/api/review')">🤖 LLM review now</button>
+<button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
+<button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
+<button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
+<div id=msg></div>
+<h3>Charts <small>(hover for time/price/SoC · drag corner ↘ to resize)</small></h3>
+<h4 style="margin:.3rem 0">Next 6 hours</h4><div class=card style="padding:.5rem"><div id=cw6 class=chartwrap style="height:300px">{render_forecast_svg(snap, cfg, 6, "cw6")}</div></div>
+<h4 style="margin:.3rem 0">Next 18 hours</h4><div class=card style="padding:.5rem"><div id=cw18 class=chartwrap style="height:440px">{render_forecast_svg(snap, cfg, 18, "cw18")}</div></div>
+<h4 style="margin:.3rem 0">Full forecast (all available)</h4><div class=card style="padding:.5rem"><div id=cwmax class=chartwrap style="height:320px">{render_forecast_svg(snap, cfg, 72, "cwmax")}</div></div>
 <div class=row>
  <div class=card><small>Amber price</small><div class=big>${snap.get('price')}</div>
    <span class=pill style="background:{color}">{band}</span></div>
@@ -2571,25 +2602,8 @@ def render(snap: dict, cfg: dict) -> str:
    <small>Force-charge</small><div class=big>{('⚡ ON' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ('sched on' if (snap.get('scheduler') or {}).get('enabled') else 'OFF'))}</div>
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>
 </div>
-<div class="card rec"><small>RECOMMENDATION</small>
- <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}</div>
- <div>{rec.get('reason','')}</div>
- <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
- <div><small>🔭 shadow plan (not driving): {(snap.get('plan') or {}).get('action_now','–')} → {(snap.get('plan') or {}).get('target_now','–')}%{' · ⚠️ differs from heuristic' if (snap.get('plan') or {}).get('diverges') else ' · agrees with heuristic' if snap.get('plan') else ''}</small></div>
-</div>
 {llm_html}
 {note_html}
-{controls_html}
-<h3>Forecast horizon <small>(what the policy reasons over — 18h ahead · drag the corner ↘ to resize)</small></h3>
-<div class=card style="padding:.5rem"><div id=chartwrap class=chartwrap>{render_forecast_svg(snap, cfg)}</div></div>
-<h3>Make things happen</h3>
-<button onclick="post('/api/evaluate')">Evaluate now</button>
-<button onclick="post('/api/apply')">Apply recommendation</button>
-<button onclick="post('/api/review')">🤖 LLM review now</button>
-<button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
-<button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
-<button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
-<div id=msg></div>
 <h3>Actions taken <small>(real changes: applies, force-charge, disables, band actions)</small></h3>
 <table id=events></table>
 <h3>Next forecast</h3>{atable}
@@ -2747,6 +2761,32 @@ def make_handler(cfg):
                     self._send(200, json.dumps({"baseline": res}, default=str), "application/json")
                 except Exception as e:
                     self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/ev_charge") or self.path.startswith("/api/ev_off"):
+                try:
+                    sw = (cfg.get("ev_divert") or {}).get("switch")
+                    if not sw:
+                        msg = "no ev_charger_switch configured"
+                    elif not cfg["control"].get("allow_control"):
+                        msg = "control disabled (allow_control=false)"
+                    elif self.path.startswith("/api/ev_off"):
+                        _EV["override_until"] = 0.0
+                        ha_call_service(cfg, "switch", "turn_off", sw)
+                        _EV["on"], _EV["last_change"] = False, time.time()
+                        msg = "car charging forced OFF → back to auto divert"
+                        log_event("ev_divert", msg)
+                    else:
+                        h = 2
+                        if "h=" in self.path:
+                            h = max(1, min(12, int(float(self.path.split("h=")[1].split("&")[0]))))
+                        _EV["override_until"] = time.time() + h * 3600
+                        ha_call_service(cfg, "switch", "turn_on", sw)
+                        _EV["on"], _EV["last_change"] = True, time.time()
+                        msg = f"car charging forced ON for {h}h (overrides divert economics + battery gate)"
+                        log_event("ev_divert", msg)
+                except Exception as e:
+                    msg = f"ERROR: {e}"
+                log_action(f"ev_charge -> {msg}")
+                self._send(200, json.dumps({"ev": msg}, default=str), "application/json")
             elif self.path.startswith("/api/cancel_override"):
                 try:
                     set_manual(cfg, None, 0, 0, 0)

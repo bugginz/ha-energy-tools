@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.28.0
+- **Force car charge for N hours.** New 🔌 quick-control buttons (1/2/3/4/6h) that turn the car-charger socket ON regardless of the divert economics and the battery gate, then auto-revert to auto divert (✖ stop → auto). Endpoint `/api/ev_charge?h=N` / `/api/ev_off`.
+- **Page reorganised.** Decision controls (quick-controls + action buttons) moved to the top under the recommendation so they're not buried; the at-a-glance status cards moved below the charts.
+- **Three charts instead of one** — **Next 6 hours**, **Next 18 hours** (large), and **Full forecast** (everything the feed provides). `render_forecast_svg` now takes a horizon + a unique container id, x-axis ticks scale to the horizon, and each chart keeps its own resize. Bigger by default.
+
 ## 1.27.0
 - **Grid-flow card.** The page now shows whether you're importing or exporting right now — `⬆ EXPORTING 3.2 kW @ $0.67/kWh` (highlighted green) or `⬇ importing 2.5 kW @ $0.20` — so the live grid direction + price is visible at a glance. (Note: a high feed-in like 67c means selling beats car-charging, so the EV divert correctly stays off then; divert is for cheap export ≤ $0.10.)
 
