@@ -349,6 +349,9 @@ class RenderSmokeTest(unittest.TestCase):
         self.assertIn("EV charger", html)
         self.assertIn("🔌 2.53", html)        # numeric ev_kw must format, not raise
         self.assertGreater(len(html), 5000)
+        # grid-flow card shows export when feeding in
+        exporting = dict(snap, feedin=0.67, feedin_power=3.2)
+        self.assertIn("EXPORTING @ $0.67", foxctl.render(exporting, cfg))
 
 
 class EvDivertTest(unittest.TestCase):

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.27.0
+- **Grid-flow card.** The page now shows whether you're importing or exporting right now — `⬆ EXPORTING 3.2 kW @ $0.67/kWh` (highlighted green) or `⬇ importing 2.5 kW @ $0.20` — so the live grid direction + price is visible at a glance. (Note: a high feed-in like 67c means selling beats car-charging, so the EV divert correctly stays off then; divert is for cheap export ≤ $0.10.)
+
 ## 1.26.2
 - **Fix dashboard crash** introduced in 1.26.0: the EV card concatenated the emoji with the numeric `ev_kw` (`str + float`), 500-ing the page once the charger reported power. Now formats safely. Added a full `render()` smoke test so a page-crashing template bug can't ship again.
 

@@ -2468,6 +2468,18 @@ def render(snap: dict, cfg: dict) -> str:
     ctrl = cfg["control"]
     dyn = snap.get("dynamic") or {}
     bat = snap.get("battery") or {}
+    # Grid flow card: are we importing or exporting right now, how much, at what price.
+    _exp = float(snap.get("feedin_power") or 0.0)
+    _imp = float(snap.get("grid_power") or 0.0)
+    if _exp > 0.1:
+        grid_html = (f'<div class=card style="background:#e8f5e9;border-color:#2ecc71"><small>Grid flow</small>'
+                     f'<div class=big>⬆ {_exp:.2f} <small>kW</small></div>'
+                     f'<small>EXPORTING @ ${snap.get("feedin")}/kWh</small></div>')
+    elif _imp > 0.1:
+        grid_html = (f'<div class=card><small>Grid flow</small><div class=big>⬇ {_imp:.2f} <small>kW</small></div>'
+                     f'<small>importing @ ${snap.get("price")}/kWh</small></div>')
+    else:
+        grid_html = '<div class=card><small>Grid flow</small><div class=big>– <small>kW</small></div><small>no grid flow</small></div>'
     note_esc = (get_note(cfg) or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     note_html = (f'<h3>Steering note <small>(free text — the LLM reads this as a priority instruction; '
                  f'a note relaxes the charge floor)</small></h3>'
@@ -2543,6 +2555,7 @@ def render(snap: dict, cfg: dict) -> str:
    <span class=pill style="background:{color}">{band}</span></div>
  <div class=card><small>AEMO (wholesale)</small><div class=big>${snap.get('aemo_price')}</div></div>
  <div class=card><small>Feed-in (export)</small><div class=big>{('$'+str(snap.get('feedin'))) if snap.get('feedin') is not None else 'n/a'}</div><small>{'solar offload' if snap.get('feedin') is not None else 'awaiting solar'}</small></div>
+ {grid_html}
  <div class=card><small>Battery SoC</small><div class=big>{round(snap.get('soc',0))}%</div></div>
  <div class=card><small>Solar (PV)</small><div class=big>{snap.get('pv_kw')} kW</div></div>
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{5}d learning)"}</small></div>
