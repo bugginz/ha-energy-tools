@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.29.1
+- Add a clear **⏹ stop** button directly on the Force-charge and SELL rows (cancels the active manual override → back to auto). Previously the only stop was the easy-to-miss "cancel override" on the Floor row.
+
 ## 1.29.0
 - **EV divert: charge the car alongside a cheap-grid battery top-off.** The battery-priority gate now applies ONLY to the limited solar-surplus path (give spare solar to the battery before a sell). On the cheap-GRID path it no longer holds the car off — cheap grid import is unlimited, so the car charges at the same cheap price while the battery finishes topping up. Previously the car waited for the battery even when both could charge cheaply from the grid. Reason strings updated.
 
