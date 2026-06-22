@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.29.0
+- **EV divert: charge the car alongside a cheap-grid battery top-off.** The battery-priority gate now applies ONLY to the limited solar-surplus path (give spare solar to the battery before a sell). On the cheap-GRID path it no longer holds the car off — cheap grid import is unlimited, so the car charges at the same cheap price while the battery finishes topping up. Previously the car waited for the battery even when both could charge cheaply from the grid. Reason strings updated.
+
 ## 1.28.0
 - **Force car charge for N hours.** New 🔌 quick-control buttons (1/2/3/4/6h) that turn the car-charger socket ON regardless of the divert economics and the battery gate, then auto-revert to auto divert (✖ stop → auto). Endpoint `/api/ev_charge?h=N` / `/api/ev_off`.
 - **Page reorganised.** Decision controls (quick-controls + action buttons) moved to the top under the recommendation so they're not buried; the at-a-glance status cards moved below the charts.

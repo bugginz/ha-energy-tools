@@ -375,12 +375,19 @@ class EvDivertTest(unittest.TestCase):
         want, _ = foxctl.ev_divert_decision(self._snap(price=0.10), self.EV)   # buy ≤ charge_start
         self.assertTrue(want)
 
-    def test_battery_priority_blocks_when_below_plan_target(self):
-        # planner wants 100% (pre-sell charge) and SoC is 80% → battery first, car off
+    def test_battery_priority_blocks_solar_surplus_below_target(self):
+        # SOLAR surplus + planner wants 100% and SoC is 80% → battery gets the spare solar first, car off
         want, why = foxctl.ev_divert_decision(
-            self._snap(feedin=0.05, feedin_power=3.0, soc=80, plan={"target_now": 100}), self.EV)
+            self._snap(feedin=0.05, feedin_power=3.0, price=0.25, soc=80, plan={"target_now": 100}), self.EV)
         self.assertFalse(want)
-        self.assertIn("charging for sell", why)
+        self.assertIn("solar to battery first", why)
+
+    def test_cheap_grid_charges_alongside_battery(self):
+        # CHEAP GRID (buy ≤ charge_start) does NOT yield — car charges while the battery tops off too
+        want, why = foxctl.ev_divert_decision(
+            self._snap(price=0.10, soc=80, plan={"target_now": 100}), self.EV)
+        self.assertTrue(want)
+        self.assertIn("car + battery", why)
 
     def test_no_divert_when_nothing_cheap(self):
         want, why = foxctl.ev_divert_decision(self._snap(), self.EV)   # dear export, dear grid

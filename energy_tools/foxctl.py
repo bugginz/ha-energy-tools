@@ -1235,26 +1235,29 @@ def ha_call_service(cfg, domain, service, entity_id):
 
 def ev_divert_decision(snap, ev):
     """Pure policy: should the car charger be ON this cycle? Diverts when export is too cheap (≥min_export
-    at ≤feedin_max) and/or grid is cheap — BUT yields to the house battery when it's still charging toward
-    the (shadow-planner) target, so the battery hits ~100% before a sell first. Returns (want, reason)."""
+    at ≤feedin_max) and/or grid is cheap. On the SOLAR-surplus path it yields to the house battery until
+    the battery reaches the (shadow-planner) target (so the battery fills before a sell); on the CHEAP-GRID
+    path it charges the car alongside the battery top-off (no yield — unlimited cheap import). (want, why)."""
     feedin_price, feedin_power, buy = snap.get("feedin"), snap.get("feedin_power") or 0.0, snap.get("price")
     soc = snap.get("soc")
     surplus = (feedin_power >= ev.get("min_export_kw", 1.0)
                and feedin_price is not None and feedin_price <= ev.get("feedin_max", 0.10))
     charge_start = (snap.get("dynamic") or {}).get("charge_start_price")
     cheap_grid = bool(ev.get("allow_grid")) and buy is not None and charge_start is not None and buy <= charge_start
-    # battery priority: don't steal energy the battery needs to reach the planner's target before a sell
-    gate = ev.get("min_soc", 0) or 0
-    plan_tgt = (snap.get("plan") or {}).get("target_now")
-    if ev.get("battery_priority", True) and isinstance(plan_tgt, (int, float)):
-        gate = max(gate, plan_tgt - 2)
-    battery_busy = isinstance(soc, (int, float)) and soc < gate
-    if battery_busy:
-        return False, f"battery {soc:.0f}% < target {gate:.0f}% (charging for sell first)"
     if not (surplus or cheap_grid):
         return False, "export not cheap / no surplus"
+    # Battery priority applies ONLY to the limited solar-surplus path — give the spare solar to the
+    # battery before a sell. Cheap GRID import is unlimited, so it can top the battery AND charge the
+    # car at the same cheap price; don't gate that path.
+    if surplus and not cheap_grid:
+        gate = ev.get("min_soc", 0) or 0
+        plan_tgt = (snap.get("plan") or {}).get("target_now")
+        if ev.get("battery_priority", True) and isinstance(plan_tgt, (int, float)):
+            gate = max(gate, plan_tgt - 2)
+        if isinstance(soc, (int, float)) and soc < gate:
+            return False, f"battery {soc:.0f}% < target {gate:.0f}% (solar to battery first)"
     why = (f"export ${feedin_price:.2f}≤{ev.get('feedin_max',0.10):.2f} @ {feedin_power:.1f}kW" if surplus
-           else f"grid ${buy:.3f}≤charge-start")
+           else f"grid ${buy:.3f}≤charge-start (cheap — charging car + battery)")
     return True, why
 
 
