@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.32.2
+- Feed-in forecast: align the sign to the live feed-in reading (Amber sometimes reports the forecast with the opposite/raw sign), so exporting earnings stay positive and the sell logic/chart read correctly. (Confirmed entity: `sensor.amber_feed_in_forecast`.)
+
 ## 1.32.1
 - **Fix: feed-in forecast wasn't showing.** It lives on a dedicated sensor (like the buy forecast's `..._general_forecast`), not as an attribute of the feed-in *price* sensor. Added `amber_feedin_forecast_entity` (default `sensor.amber_feed_in_forecast`) and read its `forecasts` (falls back to a `forecasts` attribute on the price sensor). The Feed-in card now shows `forecast: Npt` / `no forecast (check entity)` so you can verify the entity name.
 

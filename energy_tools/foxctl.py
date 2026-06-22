@@ -361,6 +361,15 @@ class HAPrices:
                     break
             except Exception:
                 pass
+        # Align the forecast sign to the live feed-in reading (Amber sometimes reports the forecast with
+        # the opposite/raw sign), so "earning to export" stays positive like the rest of the logic expects.
+        vals = [f["price"] for f in feedin_fc if isinstance(f.get("price"), (int, float))]
+        if feedin not in (None, 0) and vals:
+            med = sorted(vals)[len(vals) // 2]
+            if med != 0 and (feedin > 0) != (med > 0):
+                for f in feedin_fc:
+                    if isinstance(f.get("price"), (int, float)):
+                        f["price"] = -f["price"]
         return {
             "price": price,
             "descriptor": cur["attributes"].get("descriptor") if isinstance(cur.get("attributes"), dict) else None,
