@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.31.1
+- **Fix work mode freezing.** The FoxESS work-mode read (every Nth cycle) wasn't error-wrapped, so a flaky/rate-limited settings call would throw, crash that cycle, and leave the cached work mode frozen at the last value it read (e.g. 'backup'). Now it's resilient: on failure it keeps the cached value, logs `work mode read failed …`, and the cycle continues. The Work mode card shows how long ago it was read (and flags ⚠️ stale > 30 min) so a failing read is visible.
+
 ## 1.31.0
 - **Solar range now comes from your actual generation history, not a forecast-vs-actual calibration.** The chart draws a "typical solar" overlay — hour-of-day **average + min/max band** straight from the backfilled `pvPower` actuals (`forecast_profiles` now exposes `solar_min`/`solar_max`). It shows as soon as there's ≥1 day of generation, with no forward forecast-pairing needed (orange avg line + dashed min/max edges). The Solcast bell stays as the weather-aware "today's forecast"; the calibration-spread band is gone in favour of the real-data range.
 

@@ -546,7 +546,7 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
 
 LAST: dict = {}
 LAST_LOCK = Lock()
-_WM = {"value": None, "options": None, "i": 0}  # work-mode cache (refresh every Nth cycle)
+_WM = {"value": None, "options": None, "i": 0, "ts": 0.0}  # work-mode cache (refresh every Nth cycle)
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 _TELE = {"last": None, "ts": None}  # last good FoxESS telemetry (foxctl is the sole poller)
@@ -1753,8 +1753,11 @@ def gather_and_decide(cfg: dict) -> dict:
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
     if _WM["value"] is None or _WM["i"] % refresh == 0:
-        w = fox.work_mode()
-        _WM["value"], _WM["options"] = w.get("value"), w.get("enumList")
+        try:                                  # don't let a flaky/rate-limited settings read crash the cycle
+            w = fox.work_mode()               # (which would freeze the cached value indefinitely)
+            _WM["value"], _WM["options"], _WM["ts"] = w.get("value"), w.get("enumList"), time.time()
+        except Exception as e:
+            print(f"work mode read failed (keeping cached '{_WM.get('value')}'): {e}", file=sys.stderr)
     wm = {"value": _WM["value"], "enumList": _WM["options"]}
     sched = fox.scheduler_status()
     sched_active = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
@@ -1994,6 +1997,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "pv_kw": pv,
         "real": real,
         "work_mode": wm.get("value"),
+        "work_mode_age_s": int(time.time() - _WM["ts"]) if _WM.get("ts") else None,
         "work_mode_options": wm.get("enumList"),
         "recommendation": rec,
         "plan": plan,
@@ -2620,7 +2624,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div class=card><small>Solar forecast</small><div class=big>{(snap.get('solar_forecast') or {}).get('today_total','?')} <small>kWh today</small></div><small>{(snap.get('solar_forecast') or {}).get('remaining_today','?')} left · tomorrow {(snap.get('solar_forecast') or {}).get('tomorrow','?')}<br>cal ×{(snap.get('solar_cal') or {}).get('bias','?')} {'(applied)' if (snap.get('solar_cal') or {}).get('applied') else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{SOLAR_CAL_MIN}d learning)"}</small></div>
  <div class=card><small>Usage (rolling avg)</small><div class=big>{(snap.get('consumption') or {}).get('avg_daily_total_kwh') if (snap.get('consumption') or {}).get('days_sampled') else '–'} <small>kWh/day</small></div><small>range {(snap.get('consumption') or {}).get('min_daily_total_kwh','–')}–{(snap.get('consumption') or {}).get('max_daily_total_kwh','–')} · avg {(snap.get('consumption') or {}).get('avg_daily_total_kwh','–')} kWh ({(snap.get('consumption') or {}).get('days_sampled',0)}d)<br>EV {(snap.get('consumption') or {}).get('avg_daily_ev_kwh','0')} · today {(snap.get('consumption') or {}).get('today_so_far_kwh','0')} · profile: {(snap.get('consumption') or {}).get('profile_source','self')} ({(snap.get('forecast_profiles') or {}).get('days',0)} load / {(snap.get('forecast_profiles') or {}).get('days_solar',0)} solar valid days)</small></div>
  <div class=card><small>Demand window</small><div class=big>{'ACTIVE' if snap.get('demand_window') else 'off'}</div><small>{'no demand charge (EA116) — OK to charge if cheap' if snap.get('demand_window') else ''}</small></div>
- <div class=card><small>Work mode</small><div class=big>{snap.get('work_mode')}</div></div>
+ <div class=card style="{'background:#fff3e0;border-color:#e67e22' if (snap.get('work_mode_age_s') or 0) > 1800 else ''}"><small>Work mode</small><div class=big>{snap.get('work_mode')}</div><small>{('read '+str(snap.get('work_mode_age_s'))+'s ago' + (' ⚠️ stale' if (snap.get('work_mode_age_s') or 0) > 1800 else '')) if snap.get('work_mode_age_s') is not None else 'no read yet'}</small></div>
  <div class=card style="{'background:#e8f5e9;border-color:#2ecc71' if (snap.get('ev_divert') or '').startswith('car charger ON') else ''}"><small>EV charger</small><div class=big>🔌 {snap.get('ev_kw') if snap.get('ev_kw') is not None else '–'} <small>kW</small></div><small>{snap.get('ev_divert') or ('no switch set' if not (cfg.get('ev_divert') or {}).get('switch') else 'idle')}</small></div>
  <div class=card style="{'background:#fff3e0;border-color:#e67e22' if 'stale' in (snap.get('telemetry_source') or '') or 'down' in (snap.get('telemetry_source') or '') else ''}"><small>Data age / source</small>
    <div class=big><span id=age>{snap.get('data_age_s') if snap.get('data_age_s') is not None else '–'}</span>s
