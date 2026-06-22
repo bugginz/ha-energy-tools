@@ -27,6 +27,7 @@ fc["ev_divert"] = {
     "min_soc": int(opt.get("ev_divert_min_soc", 0)),
     "battery_priority": bool(opt.get("ev_divert_battery_priority", True)),
     "min_dwell_min": int(opt.get("ev_divert_min_dwell_min", 10)),
+    "session_cap_kwh": float(opt.get("ev_session_cap_kwh", 30)),
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),

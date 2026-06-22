@@ -395,6 +395,47 @@ class EvDivertTest(unittest.TestCase):
         self.assertIn("not cheap", why)
 
 
+class EvDailyCapTest(unittest.TestCase):
+    """Interim daily car cap: auto-divert charges up to N kWh/day then holds off (no car SoC needed)."""
+
+    def setUp(self):
+        self._orig = foxctl.ha_call_service
+        self.calls = []
+        foxctl.ha_call_service = lambda cfg, d, s, e: self.calls.append((d, s, e))
+        foxctl._EV.update({"on": None, "last_change": 0.0, "override_until": 0.0,
+                           "session_day": None, "session_start_kwh": None, "capped": False})
+        self.cfg = {"control": {"allow_control": True},
+                    "ev_divert": {"switch": "switch.x", "feedin_max": 0.10, "allow_grid": True,
+                                  "min_export_kw": 1.0, "min_dwell_min": 0, "battery_priority": False,
+                                  "session_cap_kwh": 30}}
+
+    def tearDown(self):
+        foxctl.ha_call_service = self._orig
+        foxctl._EV.update({"on": None, "last_change": 0.0, "override_until": 0.0,
+                           "session_day": None, "session_start_kwh": None, "capped": False})
+
+    def _snap(self, ev_cum):
+        return {"feedin": 0.06, "feedin_power": 3.0, "price": 0.10, "soc": 98,
+                "dynamic": {"charge_start_price": 0.12}, "plan": {"target_now": 95},
+                "energy_totals": {"ev": ev_cum}}
+
+    def test_charges_then_caps_at_kwh(self):
+        first = foxctl.ev_divert_tick(self.cfg, self._snap(0.0))   # session starts, car on
+        self.assertIn("ON", first)
+        self.assertTrue(foxctl._EV["on"])
+        capped = foxctl.ev_divert_tick(self.cfg, self._snap(31.0))  # 31 kWh delivered → over the 30 cap
+        self.assertIn("daily cap", capped)
+        self.assertFalse(foxctl._EV["on"])
+
+    def test_manual_force_overrides_cap(self):
+        foxctl._EV["capped"] = True
+        foxctl._EV["session_start_kwh"] = 0.0
+        foxctl._EV["override_until"] = 1e18      # active manual force
+        msg = foxctl.ev_divert_tick(self.cfg, self._snap(50.0))
+        self.assertIn("manual force-charge", msg)
+        self.assertTrue(foxctl._EV["on"])
+
+
 class PlannerTest(unittest.TestCase):
     """Phase 4 shadow planner: requirement-aware ideal SoC trajectory (no control side-effects)."""
 

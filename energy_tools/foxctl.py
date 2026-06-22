@@ -117,7 +117,11 @@ DEFAULT_CONFIG = {
     # Solar diversion: turn a car-charger power point ON when export is too cheap to bother (and/or grid
     # is cheap), OFF otherwise. Needs control.allow_control. switch="" disables. Tracked via ev_power_entity.
     "ev_divert": {"switch": "", "feedin_max": 0.10, "allow_grid": True,
-                  "min_export_kw": 1.0, "min_dwell_min": 10},
+                  "min_export_kw": 1.0, "min_dwell_min": 10,
+                  "battery_priority": True, "min_soc": 0,
+                  # Interim daily car cap (until a real car-SoC sensor exists): auto-divert charges up to
+                  # this many kWh/day then stops; resets ~4am or when you press Force car charge. 0 = off.
+                  "session_cap_kwh": 30},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -1220,7 +1224,8 @@ def maybe_llm_review(cfg, ctx, force=False):
 _NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
            "last_action": None, "last_action_ts": 0.0, "last_selling": False}
 
-_EV = {"on": None, "last_change": 0.0, "override_until": 0.0}   # car-charger divert state (+ manual force)
+_EV = {"on": None, "last_change": 0.0, "override_until": 0.0,
+       "session_day": None, "session_start_kwh": None, "capped": False}   # divert + manual force + daily cap
 
 
 def ha_call_service(cfg, domain, service, entity_id):
@@ -1271,10 +1276,28 @@ def ev_divert_tick(cfg, snap):
     if not cfg["control"].get("allow_control"):
         return "ev divert: control disabled"
     now = time.time()
-    if now < _EV.get("override_until", 0):       # manual force-charge: ignore economics, dwell, battery gate
+    # Interim daily car cap: count kWh delivered since the session start (4am-anchored day); once the
+    # cap is hit, hold off auto-divert until the day rolls over or a manual force-charge resets it.
+    cap = float(ev.get("session_cap_kwh", 0) or 0)
+    ev_cum = (snap.get("energy_totals") or {}).get("ev")
+    ev_cum = float(ev_cum) if isinstance(ev_cum, (int, float)) else None
+    day = (datetime.now() - timedelta(hours=4)).strftime("%Y-%m-%d")
+    if _EV.get("session_day") != day:            # new day (anchored at 4am) → reset the cap
+        _EV["session_day"], _EV["capped"], _EV["session_start_kwh"] = day, False, ev_cum
+    if _EV.get("session_start_kwh") is None and ev_cum is not None:
+        _EV["session_start_kwh"] = ev_cum
+    session = (ev_cum - _EV["session_start_kwh"]) if (ev_cum is not None and _EV.get("session_start_kwh") is not None) else 0.0
+    if now < _EV.get("override_until", 0):        # manual force-charge: ignore economics, dwell, battery gate, cap
         want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
     else:
         want, why = ev_divert_decision(snap, ev)
+        if cap > 0 and ev_cum is not None:
+            if session >= cap:
+                _EV["capped"] = True
+            if _EV.get("capped"):
+                want, why = False, f"daily cap {cap:.0f}kWh reached ({session:.1f}kWh) — resets ~4am / Force car charge"
+            elif want:
+                why += f" · {session:.1f}/{cap:.0f}kWh today"
     due = (now - _EV["last_change"]) >= ev.get("min_dwell_min", 10) * 60
     if now < _EV.get("override_until", 0):
         due = True                               # apply a manual force-charge immediately, no dwell wait
@@ -2784,9 +2807,12 @@ def make_handler(cfg):
                         if "h=" in self.path:
                             h = max(1, min(12, int(float(self.path.split("h=")[1].split("&")[0]))))
                         _EV["override_until"] = time.time() + h * 3600
+                        _EV["capped"] = False    # a manual force clears the daily cap and starts a fresh session
+                        ev_cum = (_ENERGY.get("totals") or {}).get("ev")
+                        _EV["session_start_kwh"] = float(ev_cum) if isinstance(ev_cum, (int, float)) else None
                         ha_call_service(cfg, "switch", "turn_on", sw)
                         _EV["on"], _EV["last_change"] = True, time.time()
-                        msg = f"car charging forced ON for {h}h (overrides divert economics + battery gate)"
+                        msg = f"car charging forced ON for {h}h (overrides divert economics + battery gate + daily cap)"
                         log_event("ev_divert", msg)
                 except Exception as e:
                     msg = f"ERROR: {e}"
