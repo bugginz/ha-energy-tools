@@ -1943,30 +1943,36 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
     z = strat.get("zerohero", {})
     fs, fe = z.get("free_start_h", 11), z.get("free_end_h", 14)
     es, ee = z.get("evening_start_h", 18), z.get("evening_end_h", 21)
+    ps, pe = z.get("peak_start_h", 16), z.get("peak_end_h", 23)   # full ToU peak (no import)
     max_soc = strat.get("max_soc", 90)
     reserve = strat.get("reserve_soc", 20)
     nowl = datetime.now()
     h = nowl.hour + nowl.minute / 60.0
     in_free = fs <= h < fe
     in_eve = es <= h < ee
+    in_peak = ps <= h < pe
     action, target_mode, fc, fd = "SET_MODE", (work_mode or "SelfUse"), False, False
     reasons = []
+    # Force-charge from grid ONLY in the FREE window — never before 11:00 and never in the peak.
     if in_free and soc < max_soc:
         action, fc = "FORCE_CHARGE", True
-        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 → grid-charge to {max_soc}% (free).")
+        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 → grid-charge to {max_soc}% (free) — full by {fe:02d}:00.")
     elif in_free:
         reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {max_soc}%). SelfUse.")
     elif in_eve and soc > survival_soc + 1:
         action, fd = "SELL", True
-        reasons.append(f"ZeroHero peak {es:02d}:00–{ee:02d}:00 → cover load (zero import = $1/day) + export "
-                       f"surplus at 9c down to survival {survival_soc}%.")
+        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 (Super Export) → cover load (zero import) + "
+                       f"export surplus down to survival {survival_soc}% (keeps enough to coast to 11:00).")
     elif in_eve:
-        reasons.append(f"ZeroHero peak {es:02d}:00–{ee:02d}:00 → hold; cover load from battery "
-                       f"(zero grid import = $1/day). SelfUse.")
+        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → hold at survival; cover load from battery "
+                       f"(zero grid import). SelfUse.")
+    elif in_peak:
+        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 → cover load from battery, ZERO grid import "
+                       f"(no force-charge in peak). SelfUse.")
     elif soc <= reserve:
         reasons.append(f"ZeroHero off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
     else:
-        reasons.append("ZeroHero off-window → run off battery, avoid grid import until the free window. SelfUse.")
+        reasons.append("ZeroHero off-window → run off battery, avoid grid import until the 11:00 free window. SelfUse.")
     rec = {"action": action, "target_mode": target_mode, "force_charge": fc, "force_discharge": fd,
            "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
            "reason": " ".join(reasons)}
@@ -3307,8 +3313,10 @@ def render(snap: dict, cfg: dict) -> str:
                      f'<button style="margin-top:.5rem" onclick="saveBaseline()">Set baseline</button></div>')
     if dyn.get("mode") == "zerohero":
         dyn_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ ZEROHERO MODE (GloBird)</small>'
-                    f'<div>free-charge 11:00–14:00 → {dyn.get("max_soc","?")}% · zero-import + export 18:00–21:00</div>'
-                    f'<small>keep ≥{dyn.get("survival_soc","?")}% overnight (survival to next free window) · '
+                    f'<div>FREE-charge 11:00–14:00 → <b>{dyn.get("max_soc","?")}%</b> by 2pm · export 18:00–21:00 · '
+                    f'no import 16:00–23:00 peak</div>'
+                    f'<small>before 11:00 &amp; 16:00–23:00 peak: run off battery, zero grid import · '
+                    f'export down to ≥{dyn.get("survival_soc","?")}% (keeps enough to coast to the 11:00 free window) · '
                     f'battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · feed-in ${snap.get("feedin","?")}</small></div>')
     else:
         _bb = rec.get("buy_bar"); _df = rec.get("import_deficit_kwh"); _ns = rec.get("buy_slots_needed")

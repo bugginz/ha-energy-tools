@@ -99,7 +99,9 @@
       "free_start_h": 11,
       "free_end_h": 14,
       "evening_start_h": 18,
-      "evening_end_h": 21
+      "evening_end_h": 21,
+      "peak_start_h": 16,
+      "peak_end_h": 23
     },
     "max_soc": 90,
     "inverter_min_soc": 10,

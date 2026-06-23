@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.47.0 — ZeroHero: explicit 16:00–23:00 peak (zero import)
+
+- **Makes the GloBird ZeroHero ToU exact.** The strategy already did the right shape (free-charge 11:00–14:00 → max, export 18:00–21:00, run off battery otherwise), but it only *named* the 18–21 export sub-window. It now models the **full 16:00–23:00 peak** as an explicit "cover load from battery, ZERO grid import, never force-charge" window (`peak_start_h`/`peak_end_h`, default 16/23), so the 16–18 and 21–23 shoulders of the peak are handled and shown clearly. Grid force-charge is hard-restricted to the free window — never before 11:00, never in the peak.
+- The export window (18–21) still discharges only **down to the survival floor**, which is sized to coast through the rest of the peak + overnight to the next 11:00 free window — i.e. "no import before 11am". The ZeroHero dashboard card now spells the whole schedule out.
+- 7 new ZeroHero window tests (free-charge, before-11 no-import, peak no-import even when low, export, hold-at-survival); 92 total green.
+
+To switch: set `tariff_mode: zerohero` in the add-on Configuration (and `max_soc: 100` to fill to full). In ZeroHero mode the Amber price logic + LLM strategist are bypassed for this deterministic schedule.
+
 ## 1.46.0 — TOP-UP mode: stay full for spike-sell readiness (buying cheaply)
 
 - **New `topup_to_target` option (default ON).** You wanted the battery kept **as full as possible** so there's always something to dump into an unpredictable spike — not the strict cost-minimal "only buy what you need" of Phase 2. Top-up mode targets the **headroom to the charge cap** (less today's remaining solar, so you don't pay grid for what the sun will still give) instead of just the survival deficit. Crucially it still buys **only in the cheapest forward slots ≤ ceiling** — so it fills *cheaply and opportunistically*, never at premium prices, and the spike auto-sell recoups it. Set `topup_to_target: false` to go back to minimal import.
