@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.43.0 — Charts match the new model + usable-in-HA dashboard (Phase 4)
+
+- **Fixes "no SoC line hits 100% any more" and "next cheap buy at 10am isn't on the chart".** Both charts and the SoC projection were still keyed to the old absolute `charge_start_price`, which Phase 2 made vestigial — so they never charged in the projection and never shaded the slots the controller actually buys. They now use the **relative buy bar** (`rec.buy_bar` — the cheapest forward slots covering the deficit): the green "buy ≤ $X (relative)" line + shading mark the real chosen windows (your 10am slot shows up), and the rules-model SoC line fills during them. (If the SoC line still tops out below 100%, that's your `max_soc` cap — raise `max_soc`/`target_soc` to 100 to see/charge to full.)
+- **Charts you can actually read in the HA iframe.** Removed the 60s `<meta refresh>` that reloaded the whole page and wiped any resize. Replaced with a **soft refresh** (every 60s it swaps just the live regions — recommendation, spike, cards, charts — preserving chart size, scroll, and the chat/note inputs) plus explicit **− / +** height buttons that work inside the sandboxed iframe (drag-to-resize still works when opened directly at `host:8770`).
+- **Buttons next to the results.** Evaluate / Apply / ↻ Refresh / Stop now sit **in the recommendation card** they act on; occasional actions (LLM review, test force-charge, backfill) moved into a collapsed "More actions". The FOUNDATION card shows the live need-based model (bar, deficit, slots).
+- 2 new chart tests; 72 total green.
+
 ## 1.42.0 — Need-based, RELATIVE buying (Phase 2 foundation)
 
 - **"Cheap" is now relative to the forward forecast and sized to what you actually need.** The buy decision no longer fires on an absolute `charge_start_price`. Instead, each cycle the controller forecasts the **import deficit** to the next solar ramp (load-to-next-solar from your trend profile, minus usable battery + remaining solar), then imports **only during the cheapest forward slots that cover that deficit** (`plan_buy_slots`). The affordability "bar" rises when the forecast is dear and falls when it's cheap — but never exceeds the **ceiling** (hard veto), and at/below the **floor** we always top up. **No forward deficit → no import** (so it stops buying mediocre power "just in case").

@@ -485,7 +485,7 @@ def plan_buy_slots(fc, price_now, now, deficit_kwh, charge_power_kw, ceiling, fl
         out["reason"] = f"price {price_now:.3f} > ceiling {ceiling:.3f}"
         return out
     if (deficit_kwh or 0.0) <= 0:
-        out["reason"] = "no forward deficit — nothing to import"
+        out.update(bar=round(float(floor), 3), reason="no forward deficit — only top up at/below floor")
         return out
     # Buyable candidates: now + each forward slot within the horizon, only at/below the ceiling.
     cand = [float(price_now)]
@@ -2304,8 +2304,15 @@ def gather_and_decide(cfg: dict) -> dict:
                           "load": load_kwh, "solar": _solar_kw_at(solar_bells, (hh + nh) / 2.0) * dt,
                           "sell_price": fin_map.get(round(hh, 2), price)})
         if slots and not zerohero:
+            # Phase 2: the projections + chart must charge on the SAME relative bar the controller uses
+            # (need-based cheapest slots), NOT the vestigial absolute charge_start_price — otherwise the
+            # SoC line never fills and the chosen cheap windows aren't shaded.
+            buy_bar = rec.get("buy_bar")
+            charge_thresh = buy_bar if isinstance(buy_bar, (int, float)) \
+                else max(foundation.get("charge_start_floor", 0.0),
+                         working.get("charge_start_price", strat.get("charge_start_price", 0.1)))
             pp = {"reserve": reserve, "max_soc": foundation["max_soc"], "survival": survival_soc,
-                  "charge_start": working.get("charge_start_price", strat.get("charge_start_price", 0.1)),
+                  "charge_start": charge_thresh,
                   "sell_thr": sell_eff, "sell_on": bool(strat.get("sell_enabled", True)),
                   "charge_kw": strat.get("force_charge_power_kw", 10.5), "eff": 0.92}
             plan = plan_soc_trajectory(slots, soc, cap_kwh, pp)
@@ -2653,11 +2660,28 @@ async function tick(){const r=await fetch('/api/state');const d=await r.json();
  if(d.next_poll_epoch){const s=Math.max(0,Math.round(d.next_poll_epoch-Date.now()/1000));
    el.textContent='next in '+s+'s';}
  if(d.soc_updated_epoch){ae.textContent=Math.round(Date.now()/1000-d.soc_updated_epoch);}}
+// Resize all charts together (works inside the HA iframe — buttons, no drag/localStorage needed).
+function chApply(h){document.querySelectorAll('.chartwrap').forEach(function(c){c.style.height=h+'px';});}
+function chSize(d){const c=document.querySelector('.chartwrap');if(!c)return;
+ const h=Math.max(160,(parseInt(c.style.height)||320)+d);chApply(h);
+ try{localStorage.setItem('foxctl_ch_h',h);}catch(e){}}
+(function(){try{const h=parseInt(localStorage.getItem('foxctl_ch_h'));if(h)chApply(h);}catch(e){}})();
+// SOFT refresh: swap only the live regions' innerHTML from a fresh render — charts keep their size,
+// inputs (chat/note) and the scroll position are untouched (replaces the old full-page meta-refresh
+// that wiped resizes in the HA iframe). manual=1 shows a flash in the header.
+async function softRefresh(manual){
+ try{
+  const r=await fetch(location.pathname,{cache:'no-store'});const t=await r.text();
+  const doc=new DOMParser().parseFromString(t,'text/html');
+  ['cw6','cw18','cwmax','socwrap'].forEach(function(id){const n=document.getElementById(id),m=doc.getElementById(id);if(n&&m)n.innerHTML=m.innerHTML;});
+  ['reccard','spikecard','cardsrow','dyncard','ts'].forEach(function(id){const n=document.getElementById(id),m=doc.getElementById(id);if(n&&m)n.innerHTML=m.innerHTML;});
+  const rf=document.getElementById('refr');if(rf)rf.textContent='updated '+new Date().toLocaleTimeString();
+  refreshLog();refreshEvents();
+ }catch(e){const rf=document.getElementById('refr');if(rf)rf.textContent='refresh failed';}
+}
 setInterval(tick,1000);tick();
 refreshLog();refreshEvents();
-document.querySelectorAll('.chartwrap').forEach(function(c){const k='foxctl_chart_'+c.id;
- try{const s=JSON.parse(localStorage.getItem(k)||'{}');if(s.w)c.style.width=s.w;if(s.h)c.style.height=s.h;}catch(e){}
- c.addEventListener('mouseup',()=>{try{localStorage.setItem(k,JSON.stringify({w:c.style.width,h:c.style.height}));}catch(e){}});});"""
+setInterval(softRefresh,60000);"""
 
 
 def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, cid: str = "chartwrap") -> str:
@@ -2693,7 +2717,12 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
     tz = amber[0][2].tzinfo   # label the x-axis in the forecast's own (Sydney) time
     W, H, padL, padR, padT, padB = 1180, 310, 50, 50, 16, 34
     iw, ih = W - padL - padR, H - padT - padB
-    csp = dyn.get("charge_start_price") or 0.0
+    # Phase 2: the green line/shading is the RELATIVE buy bar (cheapest slots covering the deficit),
+    # not the vestigial charge_start_price — so the chart shows the slots actually chosen to buy.
+    _rec = snap.get("recommendation") or {}
+    csp = _rec.get("buy_bar")
+    if not isinstance(csp, (int, float)):
+        csp = dyn.get("charge_start_price") or 0.0
     ceil = dyn.get("price_ceiling") or 0.20
     allp = [pr for _, pr, _ in amber] + [pr for _, pr in aemo] + [ceil, csp]
     ymax = max(allp) * 1.12 or 0.3
@@ -2822,7 +2851,7 @@ def render_forecast_svg(snap: dict, cfg: dict | None = None, hours: float = 18, 
                f'fill="#c0392b">ceiling ${ceil:.2f}</text>')
     out.append(f'<line x1="{padL}" y1="{Y(csp):.1f}" x2="{W-padR}" y2="{Y(csp):.1f}" stroke="#1a9e4b" '
                f'stroke-dasharray="5 4" stroke-width="1"/><text x="{padL+3}" y="{Y(csp)-3:.1f}" '
-               f'fill="#1a9e4b">charge ≤ ${csp:.2f}</text>')
+               f'fill="#1a9e4b">buy ≤ ${csp:.2f} (relative)</text>')
     # left y axis ($) + right y axis (kW solar)
     for k in range(5):
         yv = ymin + (ymax - ymin) * k / 4
@@ -2954,7 +2983,9 @@ def render_soc_svg(snap: dict, hours: float = 24) -> str:
             hh = (t - now).total_seconds() / 3600.0
             if xmin <= hh <= xmax:
                 buy.append((hh, float(p["price"])))
-    cstart = dyn.get("charge_start_price") or 0.0
+    cstart = (snap.get("recommendation") or {}).get("buy_bar")
+    if not isinstance(cstart, (int, float)):
+        cstart = dyn.get("charge_start_price") or 0.0
     sthr = dyn.get("sell_price") or 0.0
     dmax = (max([pr for _, pr in buy] + [cstart, sthr, 0.1])) * 1.1
     RY = lambda d: padT + ih * (1 - min(max(d, 0.0), dmax) / (dmax or 1))
@@ -3211,31 +3242,35 @@ def render(snap: dict, cfg: dict) -> str:
         llm_html = '<div class="card"><small>🤖 Dynamic LLM</small><div>off (enable llm_review + set API key in add-on options)</div></div>'
     llm_html = dyn_html + llm_html
     return f"""<!doctype html><html><head><meta charset=utf-8>
-<meta http-equiv=refresh content=60><title>foxctl</title><style>{CSS}</style></head><body>
-<h1>foxctl — {snap.get('ts','-')}</h1>
+<title>foxctl</title><style>{CSS}</style></head><body>
+<h1>foxctl — <span id=ts>{snap.get('ts','-')}</span> <small id=refr style="color:#888"></small></h1>
 {fox_banner}
-<div class="card rec"><small>RECOMMENDATION</small>
+<div id=reccard><div class="card rec"><small>RECOMMENDATION</small>
  <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}</div>
  <div>{rec.get('reason','')}</div>
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
  <div><small>🔭 shadow plan (not driving): {(snap.get('plan') or {}).get('action_now','–')} → {(snap.get('plan') or {}).get('target_now','–')}%{' · ⚠️ differs from heuristic' if (snap.get('plan') or {}).get('diverges') else ' · agrees with heuristic' if snap.get('plan') else ''}</small></div>
-</div>
-{spike_html}
-{controls_html}
-<h3>Make things happen</h3>
-<button onclick="post('/api/evaluate')">Evaluate now</button>
-<button onclick="post('/api/apply')">Apply recommendation</button>
-<button onclick="post('/api/review')">🤖 LLM review now</button>
-<button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
-<button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
-<button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
+ <div style="margin-top:.4rem">
+  <button onclick="post('/api/evaluate')">Evaluate now</button>
+  <button onclick="post('/api/apply')">Apply recommendation</button>
+  <button onclick="softRefresh(1)">↻ Refresh</button>
+  <button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
+ </div></div></div>
+<div id=spikecard>{spike_html}</div>
+<div id=controlscard>{controls_html}</div>
+<details style="margin:.3rem 0"><summary><small>More actions</small></summary>
+ <button onclick="post('/api/review')">🤖 LLM review now</button>
+ <button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy']['target_soc']}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
+ <button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
+</details>
 <div id=msg></div>
-<h3>Charts <small>(hover for time/price/SoC · drag corner ↘ to resize)</small></h3>
+<h3>Charts <small>(auto-refresh keeps your size · use −/+ or drag corner ↘ to resize)</small>
+ <button onclick="chSize(-80)" title="shorter">−</button><button onclick="chSize(80)" title="taller">+</button></h3>
 <h4 style="margin:.3rem 0">Next 6 hours</h4><div class=card style="padding:.5rem"><div id=cw6 class=chartwrap style="height:300px">{render_forecast_svg(snap, cfg, 6, "cw6")}</div></div>
 <h4 style="margin:.3rem 0">Next 18 hours</h4><div class=card style="padding:.5rem"><div id=cw18 class=chartwrap style="height:440px">{render_forecast_svg(snap, cfg, 18, "cw18")}</div></div>
 <h4 style="margin:.3rem 0">Full forecast (all available)</h4><div class=card style="padding:.5rem"><div id=cwmax class=chartwrap style="height:320px">{render_forecast_svg(snap, cfg, 72, "cwmax")}</div></div>
 <h4 style="margin:.3rem 0">Battery SoC % — rules model vs shadow plan</h4><div class=card style="padding:.5rem"><div id=socwrap class=chartwrap style="height:240px">{render_soc_svg(snap)}</div></div>
-<div class=row>
+<div class=row id=cardsrow>
  <div class=card><small>Amber price</small><div class=big>${snap.get('price')}</div>
    <span class=pill style="background:{color}">{band}</span></div>
  <div class=card><small>AEMO (wholesale)</small><div class=big>${snap.get('aemo_price')}</div></div>
@@ -3256,7 +3291,7 @@ def render(snap: dict, cfg: dict) -> str:
    <small>Force-charge</small><div class=big>{('⚡ ON' if (snap.get('scheduler') or {}).get('active') and snap['scheduler']['active']['mode']=='ForceCharge' else ('sched on' if (snap.get('scheduler') or {}).get('enabled') else 'OFF'))}</div>
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>
 </div>
-{llm_html}
+<div id=dyncard>{llm_html}</div>
 {chat_panel_html(cfg)}
 {note_html}
 <h3>Actions taken <small>(real changes: applies, force-charge, disables, band actions)</small></h3>

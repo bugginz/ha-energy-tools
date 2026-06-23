@@ -180,6 +180,31 @@ class DecideTest(unittest.TestCase):
         self.assertIn("FOUNDATION", rec["reason"])
 
 
+class ChartUsesRelativeBarTest(unittest.TestCase):
+    """The charts must visualise the need-based relative bar (rec['buy_bar']), not the vestigial
+    charge_start_price — so the chosen cheap buy slots shade and the SoC projection fills."""
+
+    def _snap(self, buy_bar):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fc = [{"t": (now + timedelta(hours=i * 0.5)).isoformat(),
+               "price": 0.10 if i == 4 else 0.25} for i in range(12)]
+        return {"forecast_h": fc, "feedin_forecast_h": [], "aemo_forecast_h": [], "solar_bells": [],
+                "recommendation": {"buy_bar": buy_bar, "force_charge": False},
+                "dynamic": {"charge_start_price": 0.05, "price_ceiling": 0.30, "sell_price": 0.5,
+                            "survival_soc": 30, "target_soc": 90, "max_soc": 90},
+                "plan": {"soc_line": [(0, 55), (2, 90)], "floor_line": [(0, 30), (2, 30)]},
+                "soc": 55.0}
+
+    def test_forecast_chart_draws_relative_bar(self):
+        svg = foxctl.render_forecast_svg(self._snap(0.18), None, 6, "cw6")
+        self.assertIn("buy ≤ $0.18 (relative)", svg)   # the bar, not the 0.05 charge_start_price
+
+    def test_falls_back_to_charge_start_when_no_bar(self):
+        svg = foxctl.render_forecast_svg(self._snap(None), None, 6, "cw6")
+        self.assertIn("buy ≤ $0.05", svg)              # graceful fallback
+
+
 class PlanBuySlotsTest(unittest.TestCase):
     """The relative, need-based buy planner in isolation."""
 
