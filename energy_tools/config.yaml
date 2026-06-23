@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.37.1"
+version: "1.38.0"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -55,7 +55,8 @@ options:
   set_force_charge: true
   llm_review: false
   anthropic_api_key: ""
-  llm_model: "claude-haiku-4-5-20251001"
+  llm_model: "claude-opus-4-8"
+  llm_fallback_model: "claude-haiku-4-5"
   llm_interval_min: 30
   notify_enabled: false
   notify_service: "notify.mobile_app_phoney"
@@ -110,6 +111,7 @@ schema:
   llm_review: bool
   anthropic_api_key: str
   llm_model: str
+  llm_fallback_model: str
   llm_interval_min: int(5,1440)
   notify_enabled: bool
   notify_service: str

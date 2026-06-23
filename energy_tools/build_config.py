@@ -71,7 +71,8 @@ for k in ("allow_control", "auto_apply", "set_work_mode", "set_force_charge"):
 L = fc.setdefault("llm", {})
 L["enabled"] = bool(opt.get("llm_review", False))
 L["api_key"] = opt.get("anthropic_api_key", "")
-L["model"] = opt.get("llm_model", "claude-haiku-4-5-20251001")
+L["model"] = opt.get("llm_model", "claude-opus-4-8")
+L["fallback_model"] = opt.get("llm_fallback_model", "claude-haiku-4-5")
 L["interval_min"] = int(opt.get("llm_interval_min", 30))
 
 # ---- notifications ----

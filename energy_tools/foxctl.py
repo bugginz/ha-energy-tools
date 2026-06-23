@@ -111,7 +111,9 @@ DEFAULT_CONFIG = {
     # e.g. {"ludicrous": ["/home/robwil/bin/force-downloads.sh"], "spike": ["/home/robwil/bin/shed-load.sh"]}
     "actions": {},
     # Advisory LLM review of each decision (Anthropic API) — never controls anything.
-    "llm": {"enabled": False, "api_key": "", "model": "claude-haiku-4-5-20251001", "interval_min": 30},
+    # model = the thorough strategist; fallback_model = a cheaper model used if the primary API call fails.
+    "llm": {"enabled": False, "api_key": "", "model": "claude-opus-4-8",
+            "fallback_model": "claude-haiku-4-5", "interval_min": 30},
     # Push notifications when a decision is worth a human look (via HA notify service).
     "notify": {"enabled": False, "service": "notify.mobile_app_phoney",
                "on_llm_disagree": True, "on_spike": True, "on_ludicrous": True},
@@ -633,6 +635,11 @@ def update_energy(cfg, powers):
     return _ENERGY["totals"]
 _CONS = {"days": {}, "last_ts": 0.0, "loaded": False, "path": None}  # rolling daily consumption (kWh)
 _NOTE = {"text": None}  # free-text operator steering note fed to the LLM
+# Persistent strategist conversation (mission-anchored, spans days): [{role, content, kind, ts}].
+# kind="policy" = automated state→knobs turns; kind="chat" = free-text operator dialogue.
+_CHAT = {"loaded": False, "msgs": []}
+CHAT_MAX_CHAT = 40      # retain the last N free-text chat messages (operator memory)
+CHAT_KEEP_POLICY = 2    # retain only the most recent policy exchange (routine telemetry would bloat it)
 # Overrides: floor = a persisted base charge-floor override (None = use config); manual = a temporary
 # forced action {mode: 'charge'|'sell', until: epoch, power, min_soc, cap} that the loop enforces.
 _OV = {"floor": None, "sell": None, "manual": None, "loaded": False}
@@ -718,6 +725,62 @@ def set_note(cfg, text):
     _LLM["last"] = None
     log_event("note", f"operator note set: {text[:160]}" if text else "operator note cleared")
     return text
+
+
+# ---- persistent strategist chat (mission + rolling history, referenceable over time) ----
+
+def load_chat(cfg):
+    if not _CHAT["loaded"]:
+        try:
+            _CHAT["msgs"] = json.loads((_state_dir(cfg) / "llm_chat.json").read_text()).get("msgs", [])
+        except Exception:
+            _CHAT["msgs"] = []
+        _CHAT["loaded"] = True
+    return _CHAT["msgs"]
+
+
+def save_chat(cfg):
+    try:
+        p = _state_dir(cfg) / "llm_chat.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"msgs": _CHAT["msgs"]}))
+    except Exception as e:
+        print(f"chat persist failed: {e}", file=sys.stderr)
+
+
+def _chat_add(role, content, kind):
+    _CHAT["msgs"].append({"role": role, "content": content, "kind": kind,
+                          "ts": datetime.now().isoformat(timespec="seconds")})
+
+
+def _prune_chat():
+    """Bound the history: keep the last CHAT_MAX_CHAT free-text chat messages (the operator memory) plus
+    only the most recent policy exchange; routine state→knobs turns would otherwise dominate. Index-based
+    so original chronological order (and user/assistant alternation within exchanges) is preserved."""
+    msgs = _CHAT["msgs"]
+    chat_idx = [i for i, m in enumerate(msgs) if m.get("kind") != "policy"][-CHAT_MAX_CHAT:]
+    pol_idx = [i for i, m in enumerate(msgs) if m.get("kind") == "policy"][-CHAT_KEEP_POLICY:]
+    keep = sorted(set(chat_idx) | set(pol_idx))
+    _CHAT["msgs"] = [msgs[i] for i in keep]
+
+
+def _api_messages(msgs):
+    """Turn the stored history into a valid Messages payload: merge consecutive same-role turns and drop
+    any leading assistant turn so it always starts with a user message."""
+    out = []
+    for m in msgs:
+        if out and out[-1]["role"] == m["role"]:
+            out[-1]["content"] += "\n\n" + m.get("content", "")
+        else:
+            out.append({"role": m["role"], "content": m.get("content", "")})
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    return out
+
+
+def chat_view(cfg, n=24):
+    load_chat(cfg)
+    return _CHAT["msgs"][-n:]
 
 
 def _cons_path(cfg):
@@ -1118,6 +1181,36 @@ GOAL = ("Goal priority: (1) MINIMISE COST — prefer $0 import; only grid-charge
         "operator is always willing to charge at; you may set charge_start_price higher (up to the "
         "ceiling) when the energy balance justifies it, but the floor will be applied either way.")
 
+# The frozen "overall mission" that anchors the PERSISTENT strategist conversation. It is sent as the
+# system prompt (prompt-cached) on every call so the running dialogue — automated policy turns AND the
+# operator's free-text chat — stays grounded in one continuous mission across days.
+MISSION = (
+    "You are foxctl's strategist: the persistent dynamic-policy advisor for a REAL home solar-battery "
+    "system in the Australian NEM (NSW). This is ONE continuous conversation that spans days — earlier "
+    "turns are your own prior reasoning about this same home, and the human operator also talks to you "
+    "here directly. Maintain continuity: remember what you advised before, learn from how prices and "
+    "solar actually played out, and keep the operator's standing intentions in mind.\n\n"
+    + GOAL + "\n\n"
+    "Two kinds of message arrive:\n"
+    "1. A message beginning 'POLICY CONTEXT' is an automated state + forecast update. Reply with ONLY a "
+    "JSON object (no prose, no code fences) setting the controller's two knobs:\n"
+    '{"charge_start_price": <num $/kWh at/below which to grid-charge>, "target_soc": <int %>, '
+    '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
+    '"operator_action": "<short thing that REQUIRES the human — e.g. change a foundation setting they '
+    'control (price_ceiling, charge_start_floor, max_soc, battery_capacity_kwh) — or empty string>", '
+    '"base_floor": <number or null — set ONLY when an operator note clearly asks for a LASTING change to '
+    'the minimum price always willing to charge at (the base floor); else null>}. '
+    "Stay within the foundation guardrails in the context (your values are hard-clamped anyway). Default "
+    "charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing; if import is "
+    "needed, buy at the CHEAPEST forecast point, not a mediocre price now. If operator_note is present it "
+    "is a DIRECT instruction — follow it as a priority within the guardrails (the charge floor is relaxed "
+    "while a note is active). rating: AGREE=same as baseline, REFINE=minor auto tweak, DISAGREE=you think "
+    "the policy/state is wrong. Only fill operator_action when you genuinely need a human to change "
+    "something you cannot; leave it empty for normal auto-applied tuning.\n"
+    "2. Any other message is the human operator talking to you. Reply conversationally and concisely (a "
+    "few sentences) — explain your reasoning, answer questions about strategy, or acknowledge new standing "
+    "guidance and carry it forward. Do NOT emit the policy JSON for these.")
+
 
 def _forecast_digest(fc, hours=18, step_min=30):
     """Condense a fine-grained forecast into a compact forward view for the LLM:
@@ -1178,36 +1271,54 @@ def _extract_json(text):
     return json.loads(text[s:e + 1])
 
 
-def _llm_dynamic(api_key, model, ctx):
-    """Ask the LLM for the two dynamic knobs. Returns {params, rating, text, ts, model}."""
-    system = ("You are the DYNAMIC POLICY layer of an automated home solar-battery controller in the "
-              "Australian NEM (NSW). " + GOAL + " You set two knobs the deterministic controller will "
-              "use: charge_start_price ($/kWh at/below which it grid-charges) and target_soc (%). Stay "
-              "within the foundation guardrails in the context (your values are hard-clamped anyway). "
-              "Default charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing. "
-              "If operator_note is present, it is a DIRECT instruction from the human operator — follow it as "
-              "a priority within the guardrails (ceiling + SoC limits; the charge floor is relaxed while a "
-              "note is active). E.g. a note to 'let the battery discharge until the 9c midday trough' means "
-              "set charge_start_price low (~0.09) and don't charge until then. "
-              "Reply with ONLY a JSON object: "
-              '{"charge_start_price": <num>, "target_soc": <int>, '
-              '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
-              '"operator_action": "<short suggestion that REQUIRES the human operator — e.g. change a '
-              'foundation setting they control (price_ceiling, charge_start_floor, max_soc, '
-              'battery_capacity_kwh) — or empty string if nothing needs them>", '
-              '"base_floor": <number or null — set ONLY when the operator_note clearly asks for a LASTING '
-              'change to the minimum price always willing to charge at (the base floor); else null>}. '
-              "Only fill operator_action when you genuinely want a human to change something you cannot; "
-              "leave it empty for normal auto-applied tuning. rating: AGREE=same as baseline, REFINE=minor "
-              "auto tweak, DISAGREE=you think the policy/state is wrong.")
-    user = "Context (JSON):\n" + json.dumps(ctx)
-    body = json.dumps({"model": model, "max_tokens": 320, "system": system,
-                       "messages": [{"role": "user", "content": user}]}).encode()
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, method="POST",
+def _supports_adaptive(model):
+    """Adaptive thinking is an Opus 4.x / Sonnet 4.6 feature; older/Haiku models would 400 on it."""
+    return model.startswith("claude-opus") or model == "claude-sonnet-4-6"
+
+
+def _llm_post(api_key, model, mission, messages, max_tokens, timeout=60):
+    """One raw Messages API call (urllib, no SDK — keeps the add-on dependency-free). The frozen mission
+    is the system prompt with cache_control so its tokens are reused across the running conversation."""
+    body = {"model": model, "max_tokens": max_tokens,
+            "system": [{"type": "text", "text": mission, "cache_control": {"type": "ephemeral"}}],
+            "messages": messages}
+    if _supports_adaptive(model):
+        body["thinking"] = {"type": "adaptive"}   # let the thorough model reason before answering
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(), method="POST",
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read().decode())
     text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text").strip()
+    return text, d.get("usage", {})
+
+
+def _llm_call(api_key, model, fallback, mission, messages, max_tokens=2048):
+    """Call the thorough primary model; on ANY API failure, fall back once to the cheaper/robust model so
+    the controller keeps getting guidance. Returns (text, used_model, usage)."""
+    try:
+        text, usage = _llm_post(api_key, model, mission, messages, max_tokens)
+        return text, model, usage
+    except Exception as e:
+        if fallback and fallback != model:
+            log_event("llm", f"primary {model} failed ({e}); falling back to {fallback}")
+            text, usage = _llm_post(api_key, fallback, mission, messages, max_tokens)
+            return text, fallback, usage
+        raise
+
+
+def _llm_dynamic(cfg, api_key, model, fallback, ctx):
+    """A POLICY turn in the persistent strategist conversation: append the state as a 'POLICY CONTEXT'
+    message, ask for the two knobs (grounded in the mission + prior turns), and record the exchange.
+    Returns {params, rating, text, operator_action, base_floor, ts, model}."""
+    load_chat(cfg)
+    user = "POLICY CONTEXT (JSON):\n" + json.dumps(ctx)
+    pending = _CHAT["msgs"] + [{"role": "user", "content": user, "kind": "policy"}]
+    text, used, usage = _llm_call(api_key, model, fallback, MISSION, _api_messages(pending), max_tokens=4096)
+    # Commit the exchange only now that the call succeeded (a failed call leaves history untouched).
+    _chat_add("user", user, "policy")
+    _chat_add("assistant", text, "policy")
+    _prune_chat(); save_chat(cfg)
     obj = _extract_json(text)
     rating = str(obj.get("rating", "")).upper()
     rating = rating if rating in ("AGREE", "REFINE", "DISAGREE") else "REFINE"
@@ -1221,7 +1332,31 @@ def _llm_dynamic(api_key, model, ctx):
     return {"params": params, "rating": rating, "agree": rating == "AGREE",
             "text": obj.get("reason", text)[:400], "operator_action": action[:300],
             "base_floor": float(bf) if isinstance(bf, (int, float)) else None,
-            "ts": datetime.now().isoformat(timespec="seconds"), "model": model}
+            "ts": datetime.now().isoformat(timespec="seconds"), "model": used}
+
+
+def llm_chat_reply(cfg, text):
+    """Operator sends a free-text message to the persistent strategist (same mission + shared history, so
+    they can reference earlier discussion). Records the exchange; returns {reply, model} or {error}."""
+    llm = cfg.get("llm", {})
+    if not llm.get("enabled") or not llm.get("api_key"):
+        return {"error": "LLM disabled — enable llm_review and set anthropic_api_key in the add-on options"}
+    text = (text or "").strip()[:2000]
+    if not text:
+        return {"error": "empty message"}
+    load_chat(cfg)
+    pending = _CHAT["msgs"] + [{"role": "user", "content": text, "kind": "chat"}]
+    try:
+        reply, used, _ = _llm_call(llm["api_key"], llm.get("model", "claude-opus-4-8"),
+                                   llm.get("fallback_model", "claude-haiku-4-5"),
+                                   MISSION, _api_messages(pending), max_tokens=2048)
+    except Exception as e:
+        return {"error": f"LLM error: {e}"}
+    _chat_add("user", text, "chat")
+    _chat_add("assistant", reply, "chat")
+    _prune_chat(); save_chat(cfg)
+    log_event("chat", f"operator: {text[:80]} → {reply[:120]}")
+    return {"reply": reply, "model": used}
 
 
 def apply_dynamic_params(strat, params, foundation):
@@ -1256,7 +1391,8 @@ def maybe_llm_review(cfg, ctx, force=False):
         return _LLM["last"]
     _LLM["last_ts"] = now
     try:
-        v = _llm_dynamic(llm["api_key"], llm.get("model", "claude-haiku-4-5-20251001"), ctx)
+        v = _llm_dynamic(cfg, llm["api_key"], llm.get("model", "claude-opus-4-8"),
+                         llm.get("fallback_model", "claude-haiku-4-5"), ctx)
         log_event("llm", f'{v["rating"]} csp={v["params"].get("charge_start_price")} '
                          f'target={v["params"].get("target_soc")}: {v["text"][:160]}')
         # A forceful note can lastingly change the base floor — apply it (bounded, logged).
@@ -2341,6 +2477,11 @@ async function saveNote(){const t=document.getElementById('note').value;
  const j=await r.json();document.getElementById('msg').textContent=JSON.stringify(j);
  setTimeout(()=>location.reload(),1800);}
 function clearNote(){document.getElementById('note').value='';saveNote();}
+async function sendChat(){const i=document.getElementById('chatmsg');const t=(i.value||'').trim();if(!t)return;
+ i.value='';document.getElementById('msg').textContent='asking strategist…';
+ const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
+ const j=await r.json();document.getElementById('msg').textContent=j.reply?('🤖 '+j.reply):JSON.stringify(j);
+ setTimeout(()=>location.reload(),1200);}
 async function saveBaseline(){const f=document.getElementById('bfloor').value,s=document.getElementById('bsell').value;
  document.getElementById('msg').textContent='saving baseline…';
  const r=await fetch('/api/baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({floor:f,sell:s})});
@@ -2723,6 +2864,45 @@ def render_soc_svg(snap: dict, hours: float = 24) -> str:
     return "".join(out) + legend
 
 
+def chat_panel_html(cfg: dict) -> str:
+    """The persistent strategist conversation + an input to talk to it. Reads the rolling history so the
+    operator can reference earlier turns; routine 'POLICY CONTEXT' uploads are collapsed for readability."""
+    def esc(s):
+        return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    try:
+        msgs = chat_view(cfg, 24)
+    except Exception:
+        msgs = []
+    if not msgs:
+        rows = ('<div><small>no conversation yet — turns appear once llm_review is enabled, '
+                'or just say hi below.</small></div>')
+    else:
+        parts = []
+        for m in msgs:
+            who = "🧑 you" if m["role"] == "user" else "🤖 claude"
+            content = m.get("content", "")
+            if m.get("kind") == "policy" and m["role"] == "user":
+                content = "POLICY CONTEXT — automated state + forecast update"
+            tag = " · policy" if m.get("kind") == "policy" else ""
+            parts.append(f'<div style="margin:.45rem 0;padding:.3rem .5rem;border-left:3px solid '
+                         f'{"#9c6ade" if m["role"] == "assistant" else "#bbb"}">'
+                         f'<small>{who} · {esc(m.get("ts", "")[5:16].replace("T", " "))}{tag}</small>'
+                         f'<div style="white-space:pre-wrap">{esc(content)}</div></div>')
+        rows = "".join(parts)
+    llmc = cfg.get("llm", {})
+    return (f'<h3>🤖 Strategist chat <small>(persistent — anchored to the mission, remembers earlier turns; '
+            f'shapes the auto policy)</small></h3>'
+            f'<div class=card style="border-color:#9c6ade">'
+            f'<div id=chatlog style="max-height:360px;overflow:auto">{rows}</div>'
+            f'<div style="margin-top:.5rem;display:flex;gap:.4rem">'
+            f'<input id=chatmsg style="flex:1;font:inherit;padding:.45rem;box-sizing:border-box" '
+            f'placeholder="Ask the strategist about its plan, or give standing guidance…" '
+            f'onkeydown="if(event.key===\'Enter\')sendChat()">'
+            f'<button onclick="sendChat()">Send</button></div>'
+            f'<small>model {esc(llmc.get("model", "-"))} · fallback {esc(llmc.get("fallback_model", "-"))}'
+            f'{"" if llmc.get("enabled") else " · ⚠️ llm_review off"}</small></div>')
+
+
 def render(snap: dict, cfg: dict) -> str:
     rec = snap.get("recommendation", {})
     band = rec.get("band", "unknown")
@@ -2882,6 +3062,7 @@ def render(snap: dict, cfg: dict) -> str:
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>
 </div>
 {llm_html}
+{chat_panel_html(cfg)}
 {note_html}
 <h3>Actions taken <small>(real changes: applies, force-charge, disables, band actions)</small></h3>
 <table id=events></table>
@@ -3056,6 +3237,14 @@ def make_handler(cfg):
                                                default=str), "application/json")
                 except Exception as e:
                     self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/chat"):
+                try:
+                    n = int(self.headers.get("Content-Length", 0))
+                    body = json.loads(self.rfile.read(n).decode()) if n else {}
+                    res = llm_chat_reply(cfg, body.get("text", ""))
+                except Exception as e:
+                    res = {"error": str(e)}
+                self._send(200, json.dumps(res, default=str), "application/json")
             elif self.path.startswith("/api/force_charge") or self.path.startswith("/api/sell"):
                 try:
                     q = self.path.split("?", 1)[1] if "?" in self.path else ""

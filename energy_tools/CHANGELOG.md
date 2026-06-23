@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.38.0
+- **Thorough strategist + persistent, mission-anchored chat.** The dynamic-policy LLM is now **Claude Opus 4.8** by default (was Haiku) with **adaptive thinking**, and Haiku 4.5 is kept as an automatic **fallback** if the primary API call fails — set via the new `llm_model` / `llm_fallback_model` add-on options.
+- The advisor is no longer a stateless one-shot. It's now **one continuous conversation that spans days**, anchored to a frozen "overall mission" system prompt (prompt-cached): each automated policy turn and every operator message share the same rolling history, so the strategist remembers what it advised before and how prices/solar actually played out. History is persisted to `/data` (`llm_chat.json`) so it survives restarts/updates, and is bounded (last ~40 chat messages + the most recent policy turn) to keep cost trivial.
+- **New "Strategist chat" panel** on the dashboard: read the running conversation and **talk to the advisor directly** — ask why it set a knob, or give standing guidance it carries forward (`/api/chat`). Routine "POLICY CONTEXT" state uploads are collapsed for readability. Still advisory: it only tunes `charge_start_price` + `target_soc` within the hard foundation guardrails.
+
 ## 1.37.1
 - Round the telemetry power values (PV, load, EV, grid import/export, battery) to 2 dp in the snapshot, so cards show `1.4 kW` instead of float artifacts like `1.4009999999999998 kW`. Also tidies the published MQTT sensor values.
 

@@ -530,5 +530,119 @@ class PlannerTest(unittest.TestCase):
         self.assertEqual(plan["target_now"], 55.0)
 
 
+class PersistentChatTest(unittest.TestCase):
+    """The mission-anchored strategist conversation: history hygiene, pruning, persistence, fallback."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = {"state_dir": self.tmp, "llm": {"enabled": True, "api_key": "k",
+                    "model": "claude-opus-4-8", "fallback_model": "claude-haiku-4-5"}}
+        foxctl._CHAT["loaded"] = False
+        foxctl._CHAT["msgs"] = []
+
+    def test_api_messages_merges_and_strips_leading_assistant(self):
+        msgs = [{"role": "assistant", "content": "stale"},   # dropped (must start with user)
+                {"role": "user", "content": "a"},
+                {"role": "user", "content": "b"},             # merged into one user turn
+                {"role": "assistant", "content": "c"}]
+        out = foxctl._api_messages(msgs)
+        self.assertEqual([m["role"] for m in out], ["user", "assistant"])
+        self.assertEqual(out[0]["content"], "a\n\nb")
+
+    def test_supports_adaptive(self):
+        self.assertTrue(foxctl._supports_adaptive("claude-opus-4-8"))
+        self.assertTrue(foxctl._supports_adaptive("claude-sonnet-4-6"))
+        self.assertFalse(foxctl._supports_adaptive("claude-haiku-4-5"))
+
+    def test_prune_keeps_chat_tail_and_latest_policy_only(self):
+        foxctl._CHAT["loaded"] = True
+        msgs = []
+        # two old policy exchanges + a chat exchange; only the most recent policy pair should survive
+        for i in range(2):
+            msgs.append({"role": "user", "content": f"POLICY {i}", "kind": "policy", "ts": f"t{i}u"})
+            msgs.append({"role": "assistant", "content": f"{{}} {i}", "kind": "policy", "ts": f"t{i}a"})
+        msgs.append({"role": "user", "content": "hi", "kind": "chat", "ts": "tcu"})
+        msgs.append({"role": "assistant", "content": "hello", "kind": "chat", "ts": "tca"})
+        foxctl._CHAT["msgs"] = msgs
+        foxctl._prune_chat()
+        kept = foxctl._CHAT["msgs"]
+        policy = [m for m in kept if m["kind"] == "policy"]
+        chat = [m for m in kept if m["kind"] == "chat"]
+        self.assertEqual(len(policy), foxctl.CHAT_KEEP_POLICY)
+        self.assertEqual(policy[-1]["content"], "{} 1")        # newest policy exchange retained
+        self.assertEqual(len(chat), 2)                          # chat dialogue retained
+        # insertion order preserved: the surviving policy pair, then the chat pair
+        self.assertEqual([m["content"] for m in kept], ["POLICY 1", "{} 1", "hi", "hello"])
+
+    def test_persistence_roundtrip(self):
+        foxctl._CHAT["loaded"] = True
+        foxctl._chat_add("user", "remember the mission", "chat")
+        foxctl._chat_add("assistant", "noted", "chat")
+        foxctl.save_chat(self.cfg)
+        foxctl._CHAT["loaded"] = False
+        foxctl._CHAT["msgs"] = []
+        loaded = foxctl.load_chat(self.cfg)
+        self.assertEqual([m["content"] for m in loaded], ["remember the mission", "noted"])
+
+    def test_dynamic_records_exchange_and_uses_fallback(self):
+        calls = {"n": 0, "models": []}
+
+        def fake_post(api_key, model, mission, messages, max_tokens, timeout=60):
+            calls["n"] += 1
+            calls["models"].append(model)
+            if model == "claude-opus-4-8":
+                raise RuntimeError("overloaded")               # primary fails → fallback
+            return ('{"charge_start_price": 0.09, "target_soc": 70, "rating": "REFINE", '
+                    '"reason": "wait for trough", "operator_action": "", "base_floor": null}'), {}
+
+        orig = foxctl._llm_post
+        foxctl._llm_post = fake_post
+        try:
+            v = foxctl._llm_dynamic(self.cfg, "k", "claude-opus-4-8", "claude-haiku-4-5",
+                                    {"soc": 50})
+        finally:
+            foxctl._llm_post = orig
+        self.assertEqual(calls["models"], ["claude-opus-4-8", "claude-haiku-4-5"])
+        self.assertEqual(v["model"], "claude-haiku-4-5")        # reports the model that actually answered
+        self.assertEqual(v["params"]["charge_start_price"], 0.09)
+        self.assertEqual(v["params"]["target_soc"], 70)
+        # the exchange is now in the persistent history (collapsed policy user + assistant reply)
+        kinds = [(m["role"], m["kind"]) for m in foxctl._CHAT["msgs"]]
+        self.assertIn(("user", "policy"), kinds)
+        self.assertIn(("assistant", "policy"), kinds)
+
+    def test_failed_call_leaves_history_untouched(self):
+        foxctl._CHAT["loaded"] = True
+
+        def boom(*a, **k):
+            raise RuntimeError("down")
+        orig = foxctl._llm_post
+        foxctl._llm_post = boom
+        try:
+            with self.assertRaises(RuntimeError):
+                # same model as fallback → no second attempt, error propagates
+                foxctl._llm_dynamic(self.cfg, "k", "claude-haiku-4-5", "claude-haiku-4-5", {"soc": 1})
+        finally:
+            foxctl._llm_post = orig
+        self.assertEqual(foxctl._CHAT["msgs"], [])              # nothing committed on failure
+
+    def test_chat_reply_records_and_returns(self):
+        def fake_post(api_key, model, mission, messages, max_tokens, timeout=60):
+            return "I'll hold the battery until the midday trough.", {}
+        orig = foxctl._llm_post
+        foxctl._llm_post = fake_post
+        try:
+            res = foxctl.llm_chat_reply(self.cfg, "why aren't you charging now?")
+        finally:
+            foxctl._llm_post = orig
+        self.assertIn("midday trough", res["reply"])
+        self.assertEqual([(m["role"], m["kind"]) for m in foxctl._CHAT["msgs"]],
+                         [("user", "chat"), ("assistant", "chat")])
+
+    def test_chat_reply_disabled_without_key(self):
+        res = foxctl.llm_chat_reply({"llm": {"enabled": False}}, "hi")
+        self.assertIn("error", res)
+
+
 if __name__ == "__main__":
     unittest.main()
