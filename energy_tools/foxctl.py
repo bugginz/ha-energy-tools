@@ -783,6 +783,18 @@ def chat_view(cfg, n=24):
     return _CHAT["msgs"][-n:]
 
 
+def clear_chat(cfg):
+    """Wipe the persistent strategist conversation (and force a fresh policy review) — e.g. to drop stale
+    reasoning after the mission/capabilities change."""
+    _CHAT["msgs"] = []
+    _CHAT["loaded"] = True
+    save_chat(cfg)
+    _LLM["last_ts"] = 0.0
+    _LLM["last"] = None
+    log_event("chat", "strategist conversation cleared")
+    return {"cleared": True}
+
+
 def _cons_path(cfg):
     d = cfg.get("state_dir") or str(Path.home() / "foxctl")
     return Path(d) / "consumption.json"
@@ -1191,6 +1203,23 @@ MISSION = (
     "here directly. Maintain continuity: remember what you advised before, learn from how prices and "
     "solar actually played out, and keep the operator's standing intentions in mind.\n\n"
     + GOAL + "\n\n"
+    "WHAT THE CONTROLLER DOES AUTOMATICALLY (you do NOT need a human for any of this — and must NOT ask "
+    "for it):\n"
+    "- AUTO-SELL: it force-discharges the battery to the grid whenever the feed-in/export price is at or "
+    "above the sell threshold, automatically holding back an overnight survival buffer. Price spikes are "
+    "ALREADY captured this way — never tell the operator to 'start exporting' or 'manually stop exporting' "
+    "during a spike; that happens on its own.\n"
+    "- AUTO FORCE-CHARGE: it grid-charges whenever the price is at or below charge_start_price (your knob), "
+    "within the floor/ceiling, up to target_soc (your knob).\n"
+    "- AUTO EV-DIVERT: when enabled it sends cheap surplus to the car charger on its own.\n"
+    "These run every cycle without you. The automation's current settings and state are in the context "
+    "('automation' + 'foundation'); read them so you don't recommend something already happening.\n\n"
+    "WHO CONTROLS WHAT:\n"
+    "- YOUR levers (auto-applied, hard-clamped): charge_start_price and target_soc. That's it.\n"
+    "- The OPERATOR's levers (the ONLY things operator_action may ask for): price_ceiling, "
+    "charge_start_floor, max_soc, battery_capacity_kwh, the sell threshold / turning auto-sell on or off, "
+    "and the manual force-charge / sell / floor override buttons. Never put a routine or automatic action "
+    "in operator_action — leave it empty unless you genuinely need the human to change one of THOSE.\n\n"
     "Two kinds of message arrive:\n"
     "1. A message beginning 'POLICY CONTEXT' is an automated state + forecast update. Reply with ONLY a "
     "JSON object (no prose, no code fences) setting the controller's two knobs:\n"
@@ -2110,6 +2139,26 @@ def gather_and_decide(cfg: dict) -> dict:
         "aemo_forecast_18h": _forecast_digest(prices.get("aemo_forecast", []), 18, 60),
         "foundation": {**foundation, "reserve_soc": strat.get("reserve_soc")},
         "baseline": {"charge_start_price": strat.get("charge_start_price"), "target_soc": strat.get("target_soc")},
+        # What the deterministic controller does on its own each cycle, so the strategist doesn't ask a
+        # human (or itself) to do something already automatic — e.g. exporting into a price spike.
+        "automation": {
+            "auto_sell": {
+                "enabled": bool(strat.get("sell_enabled", True)),
+                "exports_when_feedin_at_or_above": round(sell_eff, 3),
+                "keeps_overnight_survival_soc": survival_soc,
+                "mechanism": "controller sets the FoxESS scheduler to ForceDischarge and sells the battery "
+                             "to grid automatically — no human, app change, or 'Feed-in Priority' toggle "
+                             "needed. A high feed-in price during a spike triggers this on its own.",
+            },
+            "auto_force_charge": "grid-charges automatically when price <= charge_start_price (your knob), "
+                                 "within floor/ceiling, up to target_soc (your knob)",
+            "ev_divert_enabled": bool((cfg.get("ev_divert") or {}).get("switch")),
+            "your_levers": ["charge_start_price", "target_soc"],
+            "operator_levers": ["price_ceiling", "charge_start_floor", "max_soc", "battery_capacity_kwh",
+                                "sell_threshold", "auto_sell_on_off", "manual override buttons"],
+            "note": "Price spikes are captured automatically by auto-sell. Do NOT tell the operator to "
+                    "manually export, stop exporting, or switch inverter modes.",
+        },
     }
     _LLM["last_ctx"] = plan_ctx
     zerohero = strat.get("tariff_mode") == "zerohero"
@@ -2482,6 +2531,9 @@ async function sendChat(){const i=document.getElementById('chatmsg');const t=(i.
  const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})});
  const j=await r.json();document.getElementById('msg').textContent=j.reply?('🤖 '+j.reply):JSON.stringify(j);
  setTimeout(()=>location.reload(),1200);}
+async function clearChat(){document.getElementById('msg').textContent='clearing…';
+ const r=await fetch('/api/chat_clear',{method:'POST'});const j=await r.json();
+ document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>location.reload(),800);}
 async function saveBaseline(){const f=document.getElementById('bfloor').value,s=document.getElementById('bsell').value;
  document.getElementById('msg').textContent='saving baseline…';
  const r=await fetch('/api/baseline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({floor:f,sell:s})});
@@ -2898,7 +2950,8 @@ def chat_panel_html(cfg: dict) -> str:
             f'<input id=chatmsg style="flex:1;font:inherit;padding:.45rem;box-sizing:border-box" '
             f'placeholder="Ask the strategist about its plan, or give standing guidance…" '
             f'onkeydown="if(event.key===\'Enter\')sendChat()">'
-            f'<button onclick="sendChat()">Send</button></div>'
+            f'<button onclick="sendChat()">Send</button>'
+            f'<button class=danger onclick="if(confirm(\'Clear the whole strategist conversation?\'))clearChat()">🗑 Clear</button></div>'
             f'<small>model {esc(llmc.get("model", "-"))} · fallback {esc(llmc.get("fallback_model", "-"))}'
             f'{"" if llmc.get("enabled") else " · ⚠️ llm_review off"}</small></div>')
 
@@ -3237,6 +3290,12 @@ def make_handler(cfg):
                                                default=str), "application/json")
                 except Exception as e:
                     self._send(200, json.dumps({"error": str(e)}), "application/json")
+            elif self.path.startswith("/api/chat_clear"):
+                try:
+                    res = clear_chat(cfg)
+                except Exception as e:
+                    res = {"error": str(e)}
+                self._send(200, json.dumps(res, default=str), "application/json")
             elif self.path.startswith("/api/chat"):
                 try:
                     n = int(self.headers.get("Content-Length", 0))

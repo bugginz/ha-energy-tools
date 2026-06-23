@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.39.0
+- **Teach the strategist what the controller does automatically.** The LLM was recommending manual actions for things foxctl already does on its own — e.g. telling you to flip the inverter to "Feed-in Priority" to export into a price spike, when the controller **auto-sells** (sets the FoxESS scheduler to ForceDischarge, selling the battery to grid down to the overnight survival floor) the moment the feed-in price clears the sell threshold. The mission prompt now spells out the automation boundary — auto-sell, auto force-charge, auto EV-divert all run every cycle — and the per-cycle context carries the live `automation` state (auto-sell enabled? threshold? survival SoC?). It's told never to ask the operator to manually export/stop-exporting or switch inverter modes, and `operator_action` is restricted to the settings a human actually controls.
+- **Clear-chat button** on the Strategist panel (`/api/chat_clear`): wipe the conversation to drop stale reasoning after a capabilities change and start the mission fresh.
+
 ## 1.38.1
 - **Auto-migrate the LLM model on upgrade.** Home Assistant keeps your previously-saved add-on options across updates, so existing installs were still pinned to the old baked default (date-suffixed Haiku) — showing "model haiku · fallback haiku". Config build now treats that exact legacy string (or empty) as unset and upgrades it to `claude-opus-4-8`, so the thorough strategist takes effect without editing options. A deliberate `claude-haiku-4-5` choice is preserved.
 

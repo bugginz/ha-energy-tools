@@ -643,6 +643,27 @@ class PersistentChatTest(unittest.TestCase):
         res = foxctl.llm_chat_reply({"llm": {"enabled": False}}, "hi")
         self.assertIn("error", res)
 
+    def test_clear_chat_wipes_history(self):
+        foxctl._CHAT["loaded"] = True
+        foxctl._chat_add("user", "old confused thread", "chat")
+        foxctl.save_chat(self.cfg)
+        res = foxctl.clear_chat(self.cfg)
+        self.assertTrue(res["cleared"])
+        self.assertEqual(foxctl._CHAT["msgs"], [])
+        self.assertEqual(foxctl.load_chat(self.cfg), [])      # persisted wipe survives a reload
+
+
+class StrategistMissionContextTest(unittest.TestCase):
+    """The mission + context must tell the LLM the controller auto-sells, so it stops recommending
+    manual exporting during spikes."""
+
+    def test_mission_describes_auto_sell_and_boundary(self):
+        m = foxctl.MISSION.lower()
+        self.assertIn("auto-sell", m)
+        self.assertIn("never tell the operator", m)   # forbids the exact field-report mistake
+        self.assertIn("charge_start_price", m)
+        self.assertIn("target_soc", m)
+
 
 if __name__ == "__main__":
     unittest.main()
