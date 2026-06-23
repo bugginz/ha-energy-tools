@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.45.0 — Opus stays primary through transient API overloads
+
+- **Stop dropping to Haiku on a blip.** The strategist was falling back to the fallback model the instant a call failed — including **HTTP 529 (Overloaded)**, which is a transient server-side hiccup, not a real failure. So Opus 4.8 looked "not working" when it was just losing the occasional coin-flip. The call now **retries the primary model on transient errors (429/5xx/529) with a short backoff (1s→2s→4s)** before falling back; permanent errors (400/404 — bad model / no access) still fall back immediately, no wasted retries.
+- **No more silent fallback.** When a turn does end up on the fallback model, the Strategist panel now shows a clear notice ("⚠️ primary X was unavailable (e.g. 529 overloaded) — this turn ran on fallback Y"), so you can always tell which model actually answered.
+- 3 new tests (retry-then-succeed, fallback-after-exhaustion, no-retry-on-permanent); 80 total green.
+
 ## 1.44.0 — One chat-driven strategist (Phase 3)
 
 - **The two LLM boxes are now one.** The separate silent "Dynamic LLM" verdict card is gone; its rating, reasoning, current levers, and any "📣 Needs you" operator action are folded into the **single Strategist panel** alongside the conversation. One surface that both explains and (within hard guardrails) acts.

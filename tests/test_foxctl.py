@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 
@@ -697,6 +698,63 @@ class PersistentChatTest(unittest.TestCase):
         self.assertTrue(foxctl._supports_adaptive("claude-opus-4-8"))
         self.assertTrue(foxctl._supports_adaptive("claude-sonnet-4-6"))
         self.assertFalse(foxctl._supports_adaptive("claude-haiku-4-5"))
+
+    def test_retries_primary_on_529_then_succeeds(self):
+        # a 529 (Overloaded) is transient — retry the SAME model, don't immediately drop to fallback.
+        calls = {"n": 0}
+
+        def flaky(api_key, model, mission, messages, max_tokens, timeout=60):
+            calls["n"] += 1
+            if model == "claude-opus-4-8" and calls["n"] == 1:
+                raise urllib.error.HTTPError("u", 529, "Overloaded", {}, None)
+            return "ok", {}
+        orig, slept = foxctl._llm_post, []
+        foxctl._llm_post = flaky
+        _sleep = foxctl.time.sleep
+        foxctl.time.sleep = lambda s: slept.append(s)
+        try:
+            text, used, _ = foxctl._llm_call("k", "claude-opus-4-8", "claude-haiku-4-5", "m", [], retries=3)
+        finally:
+            foxctl._llm_post = orig
+            foxctl.time.sleep = _sleep
+        self.assertEqual((text, used), ("ok", "claude-opus-4-8"))   # primary succeeded on retry
+        self.assertTrue(slept)                                       # backoff happened
+
+    def test_falls_back_after_exhausting_retries(self):
+        def always529(api_key, model, mission, messages, max_tokens, timeout=60):
+            if model == "claude-opus-4-8":
+                raise urllib.error.HTTPError("u", 529, "Overloaded", {}, None)
+            return "fallback-answer", {}
+        orig, _sleep = foxctl._llm_post, foxctl.time.sleep
+        foxctl._llm_post = always529
+        foxctl.time.sleep = lambda s: None
+        try:
+            text, used, _ = foxctl._llm_call("k", "claude-opus-4-8", "claude-haiku-4-5", "m", [], retries=2)
+        finally:
+            foxctl._llm_post = orig
+            foxctl.time.sleep = _sleep
+        self.assertEqual((text, used), ("fallback-answer", "claude-haiku-4-5"))
+
+    def test_permanent_error_does_not_retry(self):
+        # a 404 (bad model / no access) is permanent — straight to fallback, no backoff sleeps.
+        calls = {"opus": 0}
+
+        def bad(api_key, model, mission, messages, max_tokens, timeout=60):
+            if model == "claude-opus-4-8":
+                calls["opus"] += 1
+                raise urllib.error.HTTPError("u", 404, "not found", {}, None)
+            return "fb", {}
+        orig, _sleep, slept = foxctl._llm_post, foxctl.time.sleep, []
+        foxctl._llm_post = bad
+        foxctl.time.sleep = lambda s: slept.append(s)
+        try:
+            _, used, _ = foxctl._llm_call("k", "claude-opus-4-8", "claude-haiku-4-5", "m", [], retries=3)
+        finally:
+            foxctl._llm_post = orig
+            foxctl.time.sleep = _sleep
+        self.assertEqual(used, "claude-haiku-4-5")
+        self.assertEqual(calls["opus"], 1)     # tried Opus once, no retries
+        self.assertEqual(slept, [])            # no backoff for a permanent error
 
     def test_prune_keeps_chat_tail_and_latest_policy_only(self):
         foxctl._CHAT["loaded"] = True

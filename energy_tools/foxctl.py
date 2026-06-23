@@ -1399,18 +1399,31 @@ def _llm_post(api_key, model, mission, messages, max_tokens, timeout=60):
     return text, d.get("usage", {})
 
 
-def _llm_call(api_key, model, fallback, mission, messages, max_tokens=2048):
-    """Call the thorough primary model; on ANY API failure, fall back once to the cheaper/robust model so
-    the controller keeps getting guidance. Returns (text, used_model, usage)."""
-    try:
-        text, usage = _llm_post(api_key, model, mission, messages, max_tokens)
-        return text, model, usage
-    except Exception as e:
-        if fallback and fallback != model:
-            log_event("llm", f"primary {model} failed ({e}); falling back to {fallback}")
-            text, usage = _llm_post(api_key, fallback, mission, messages, max_tokens)
-            return text, fallback, usage
-        raise
+def _is_transient_api(e):
+    """529 (Overloaded), 429 (rate limit) and 5xx are transient — worth RETRYING the SAME model before
+    dropping to the fallback. A 400/404 (bad model / no access) is permanent — fall back immediately."""
+    return getattr(e, "code", None) in (429, 500, 502, 503, 529)
+
+
+def _llm_call(api_key, model, fallback, mission, messages, max_tokens=2048, retries=3):
+    """Call the thorough primary model, RETRYING it on transient API errors (esp. 529 Overloaded) with a
+    short backoff before falling back to the cheaper/robust model. Returns (text, used_model, usage)."""
+    last = None
+    for attempt in range(retries):
+        try:
+            text, usage = _llm_post(api_key, model, mission, messages, max_tokens)
+            return text, model, usage
+        except Exception as e:
+            last = e
+            if _is_transient_api(e) and attempt < retries - 1:
+                time.sleep(min(8, 2 ** attempt))      # 1s, 2s, 4s — ride out a transient overload
+                continue
+            break
+    if fallback and fallback != model:
+        log_event("llm", f"primary {model} failed after {retries} tries ({last}); falling back to {fallback}")
+        text, usage = _llm_post(api_key, fallback, mission, messages, max_tokens)
+        return text, fallback, usage
+    raise last
 
 
 def _llm_dynamic(cfg, api_key, model, fallback, ctx):
@@ -3088,9 +3101,16 @@ def chat_panel_html(cfg: dict, snap: dict | None = None) -> str:
         act = (llm.get("operator_action") or "").strip()
         act_html = (f'<div style="margin-top:.4rem;padding:.5rem .7rem;background:#fff3cd;color:#5c4600;'
                     f'border-radius:8px"><b>📣 Needs you:</b> {esc(act)}</div>') if act else ""
+        # Surface a silent fallback: the model that ANSWERED vs the configured primary.
+        primary = (cfg.get("llm") or {}).get("model", "")
+        used = llm.get("model", "")
+        fb_html = (f'<div style="margin-top:.4rem;padding:.4rem .6rem;background:#fdecea;color:#7a271a;'
+                   f'border-radius:8px"><small>⚠️ primary <b>{esc(primary)}</b> was unavailable (e.g. 529 '
+                   f'overloaded) — this turn ran on the fallback <b>{esc(used)}</b>. Transient; it retries '
+                   f'the primary first each cycle.</small></div>') if (used and primary and used != primary) else ""
         head = (f'<div style="padding:.4rem .6rem;border-bottom:1px solid #9c6ade44;margin-bottom:.4rem">'
-                f'<b>{verdict}</b> <small>{esc(llm.get("model",""))} · {esc(llm.get("ts",""))}</small>'
-                f'<div>{esc(llm.get("text",""))}</div><small>levers: {levers}</small>{act_html}</div>')
+                f'<b>{verdict}</b> <small>{esc(used)} · {esc(llm.get("ts",""))}</small>'
+                f'<div>{esc(llm.get("text",""))}</div><small>levers: {levers}</small>{fb_html}{act_html}</div>')
     else:
         head = ('<div style="padding:.4rem .6rem;margin-bottom:.4rem"><small>advisory off — enable '
                 'llm_review + set the API key, or just chat below (it can\'t control until enabled)</small></div>')
