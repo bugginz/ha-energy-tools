@@ -71,8 +71,13 @@ for k in ("allow_control", "auto_apply", "set_work_mode", "set_force_charge"):
 L = fc.setdefault("llm", {})
 L["enabled"] = bool(opt.get("llm_review", False))
 L["api_key"] = opt.get("anthropic_api_key", "")
-L["model"] = opt.get("llm_model", "claude-opus-4-8")
-L["fallback_model"] = opt.get("llm_fallback_model", "claude-haiku-4-5")
+# HA preserves a user's saved options across updates, so old installs still carry the pre-1.38 baked
+# default (date-suffixed Haiku). Treat that exact legacy string (or empty) as "unset" and migrate it to
+# the new thorough default — nobody deliberately chose it. A real "claude-haiku-4-5" pick is preserved.
+_legacy = {"", "claude-haiku-4-5-20251001"}
+_m = opt.get("llm_model", "")
+L["model"] = "claude-opus-4-8" if _m in _legacy else _m
+L["fallback_model"] = opt.get("llm_fallback_model", "") or "claude-haiku-4-5"
 L["interval_min"] = int(opt.get("llm_interval_min", 30))
 
 # ---- notifications ----

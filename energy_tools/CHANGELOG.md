@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.38.1
+- **Auto-migrate the LLM model on upgrade.** Home Assistant keeps your previously-saved add-on options across updates, so existing installs were still pinned to the old baked default (date-suffixed Haiku) — showing "model haiku · fallback haiku". Config build now treats that exact legacy string (or empty) as unset and upgrades it to `claude-opus-4-8`, so the thorough strategist takes effect without editing options. A deliberate `claude-haiku-4-5` choice is preserved.
+
 ## 1.38.0
 - **Thorough strategist + persistent, mission-anchored chat.** The dynamic-policy LLM is now **Claude Opus 4.8** by default (was Haiku) with **adaptive thinking**, and Haiku 4.5 is kept as an automatic **fallback** if the primary API call fails — set via the new `llm_model` / `llm_fallback_model` add-on options.
 - The advisor is no longer a stateless one-shot. It's now **one continuous conversation that spans days**, anchored to a frozen "overall mission" system prompt (prompt-cached): each automated policy turn and every operator message share the same rolling history, so the strategist remembers what it advised before and how prices/solar actually played out. History is persisted to `/data` (`llm_chat.json`) so it survives restarts/updates, and is bounded (last ~40 chat messages + the most recent policy turn) to keep cost trivial.
