@@ -49,6 +49,8 @@ if "avoid_demand_window" in opt:
     S["avoid_demand_window"] = bool(opt["avoid_demand_window"])
 if "dynamic_policy" in opt:
     S["dynamic_policy"] = bool(opt["dynamic_policy"])
+if "topup_to_target" in opt:
+    S["topup_to_target"] = bool(opt["topup_to_target"])
 if "tariff_mode" in opt:
     S["tariff_mode"] = str(opt["tariff_mode"])
 if "sell_price" in opt:

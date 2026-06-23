@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.46.0 — TOP-UP mode: stay full for spike-sell readiness (buying cheaply)
+
+- **New `topup_to_target` option (default ON).** You wanted the battery kept **as full as possible** so there's always something to dump into an unpredictable spike — not the strict cost-minimal "only buy what you need" of Phase 2. Top-up mode targets the **headroom to the charge cap** (less today's remaining solar, so you don't pay grid for what the sun will still give) instead of just the survival deficit. Crucially it still buys **only in the cheapest forward slots ≤ ceiling** — so it fills *cheaply and opportunistically*, never at premium prices, and the spike auto-sell recoups it. Set `topup_to_target: false` to go back to minimal import.
+- This is why the SoC line wasn't reaching 100% — need-based buying only covered the ~5 kWh deficit. With top-up on, it now fills toward `target_soc` whenever cheap slots exist (in winter your small base load means solar covers the day and grid gently tops up overnight). The FOUNDATION card shows the active mode ("TOP-UP (keep full, buy cheap)" vs "NEED-BASED").
+- Sizing extracted to a tested `buy_target_kwh` helper (survival vs headroom vs buffer); 5 new tests, 85 total green.
+
 ## 1.45.0 — Opus stays primary through transient API overloads
 
 - **Stop dropping to Haiku on a blip.** The strategist was falling back to the fallback model the instant a call failed — including **HTTP 529 (Overloaded)**, which is a transient server-side hiccup, not a real failure. So Opus 4.8 looked "not working" when it was just losing the occasional coin-flip. The call now **retries the primary model on transient errors (429/5xx/529) with a short backoff (1s→2s→4s)** before falling back; permanent errors (400/404 — bad model / no access) still fall back immediately, no wasted retries.

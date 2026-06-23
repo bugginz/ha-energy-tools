@@ -71,6 +71,9 @@ DEFAULT_CONFIG = {
         "expensive_price": 0.35,    # Amber retail $/kWh at/above which we avoid grid import
         "target_soc": 100,          # force-charge cap (fdSoc)
         "spike_sell_buffer_kwh": 0.0,  # strategist lever: extra import beyond survival, for spike-sell readiness
+        # TOP-UP mode: buy (cheaply) toward target_soc to stay full for spike-sell readiness, instead of
+        # only covering the survival deficit. Still bounded by the ceiling + cheapest-slot selection.
+        "topup_to_target": True,
         "reserve_soc": 20,          # never plan to go below this
         "precharge_lookahead_h": 3, # if an expensive peak is within this window, pre-charge
         # AEMO wholesale thresholds (different scale to retail) used for forward peak/trough detection
@@ -507,6 +510,21 @@ def plan_buy_slots(fc, price_now, now, deficit_kwh, charge_power_kw, ceiling, fl
     out["reason"] = (f"need {out['deficit_kwh']:.1f}kWh → cheapest {slots_needed} slot(s) of {len(buyable)}; "
                      f"bar ${bar:.3f}; now ${price_now:.3f} {'≤' if out['should_charge'] else '>'} bar")
     return out
+
+
+def buy_target_kwh(soc, cap_kwh, eff_target, survival_def, solar_remaining, topup, buffer=0.0):
+    """How much grid energy the buy planner should aim to acquire this cycle.
+
+    NEED-BASED (topup=False): just the survival deficit (bridge to the next solar ramp). TOP-UP
+    (topup=True, operator preference): also fill the headroom to the charge cap — less today's
+    remaining solar, so we don't pay grid for what the sun will still give — to stay full for
+    spike-sell readiness. Plus the strategist's spike-sell buffer. The cheapest-slot selection +
+    ceiling still decide WHEN/IF to actually buy, so top-up fills cheaply, never at premium."""
+    need = max(0.0, float(survival_def or 0.0))
+    if topup:
+        headroom = max(0.0, (eff_target - soc) / 100.0 * cap_kwh)
+        need = max(need, max(0.0, headroom - (solar_remaining or 0.0)))
+    return round(need + float(buffer or 0.0), 1)
 
 
 def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
@@ -2305,10 +2323,15 @@ def gather_and_decide(cfg: dict) -> dict:
         # bridge the expensive overnight window — the "always look forward" the buy rule selects against.
         pred_solar = (predict_base_load(consumption.get("hour_profile"), hrs_to_solar)
                       if consumption.get("profile_days", 0) >= 2 else float(typical_load) * (hrs_to_solar / 24.0))
-        # Strategist's spike-sell buffer (clamped in apply_dynamic_params): import a little beyond strict
-        # survival so the battery carries something to export into an improbable-but-possible spike.
-        buffer = float(working.get("spike_sell_buffer_kwh", 0.0) or 0.0)
-        working["import_deficit_kwh"] = round(max(0.0, pred_solar - usable_now - (solar_remaining or 0.0)) + buffer, 1)
+        # Survival need: what we MUST import to bridge to the next solar ramp. TOP-UP mode (operator
+        # preference) additionally fills the headroom to the charge cap so the battery stays full for
+        # spike-sell readiness — still bought ONLY in the cheapest forward slots ≤ ceiling.
+        survival_def = max(0.0, pred_solar - usable_now - (solar_remaining or 0.0))
+        eff_tgt = min(working.get("target_soc", strat.get("target_soc", 100)), foundation["max_soc"])
+        working["import_deficit_kwh"] = buy_target_kwh(
+            soc, cap_kwh, eff_tgt, survival_def, solar_remaining,
+            topup=strat.get("topup_to_target", False),
+            buffer=working.get("spike_sell_buffer_kwh", 0.0))
         rec = decide(prices, soc, pv, wm.get("value"), working,
                      currently_charging=charging, load_kw=load, demand_window=demand_window)
 
@@ -2387,6 +2410,7 @@ def gather_and_decide(cfg: dict) -> dict:
                     "sell_price": (None if zerohero else sell_eff), "survival_soc": survival_soc,
                     "spike_sell_buffer_kwh": working.get("spike_sell_buffer_kwh", 0.0),
                     "buy_bar_cap": working.get("buy_bar_cap"),
+                    "topup": bool(strat.get("topup_to_target", False)),
                     "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
@@ -3290,9 +3314,10 @@ def render(snap: dict, cfg: dict) -> str:
         _bb = rec.get("buy_bar"); _df = rec.get("import_deficit_kwh"); _ns = rec.get("buy_slots_needed")
         _bar_txt = (f'buy in cheapest slots ≤ <b>${_bb:.3f}</b>' if isinstance(_bb, (int, float))
                     else 'no import needed')
-        dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION — NEED-BASED BUY (Amber)</small>'
+        _mode = "TOP-UP (keep full, buy cheap)" if dyn.get("topup") else "NEED-BASED (minimal import)"
+        dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION — {_mode} (Amber)</small>'
                     f'<div>{_bar_txt} · target <b>{dyn.get("target_soc","?")}%</b></div>'
-                    f'<small>need <b>{_df if _df is not None else "?"} kWh</b> to next solar → cheapest '
+                    f'<small>{"fill toward target" if dyn.get("topup") else "need"} <b>{_df if _df is not None else "?"} kWh</b> via cheapest '
                     f'{_ns if _ns is not None else "?"} forward slot(s); relative bar rises/falls with the forecast '
                     f'(floor ${dyn.get("charge_start_floor","?")} always-OK ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")}) · '
                     f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '

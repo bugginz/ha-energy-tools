@@ -206,6 +206,29 @@ class ChartUsesRelativeBarTest(unittest.TestCase):
         self.assertIn("buy ≤ $0.05", svg)              # graceful fallback
 
 
+class BuyTargetKwhTest(unittest.TestCase):
+    """NEED-BASED vs TOP-UP buy sizing. Top-up fills headroom to target (less solar) for spike readiness."""
+
+    def test_need_based_is_just_survival(self):
+        # topup off → only the survival deficit (+ buffer)
+        self.assertEqual(foxctl.buy_target_kwh(50, 30, 100, 5.0, 0.0, topup=False), 5.0)
+
+    def test_topup_fills_headroom_to_target(self):
+        # 50% of 30kWh, target 100 → 15 kWh headroom; survival only 2 → top-up dominates
+        self.assertEqual(foxctl.buy_target_kwh(50, 30, 100, 2.0, 0.0, topup=True), 15.0)
+
+    def test_topup_subtracts_remaining_solar(self):
+        # 15 kWh headroom less 4 kWh remaining solar → buy 11 from grid
+        self.assertEqual(foxctl.buy_target_kwh(50, 30, 100, 0.0, 4.0, topup=True), 11.0)
+
+    def test_topup_never_below_survival(self):
+        # near-full but a real survival deficit → survival wins
+        self.assertEqual(foxctl.buy_target_kwh(95, 30, 100, 6.0, 0.0, topup=True), 6.0)
+
+    def test_buffer_adds_on_top(self):
+        self.assertEqual(foxctl.buy_target_kwh(90, 30, 100, 1.0, 0.0, topup=True, buffer=3.0), 6.0)  # 3 headroom +3
+
+
 class DynamicLeversTest(unittest.TestCase):
     """Phase 3: the strategist nudges target_soc + spike-sell buffer + bar cap, all hard-clamped."""
 

@@ -103,6 +103,7 @@
     },
     "max_soc": 90,
     "inverter_min_soc": 10,
+    "topup_to_target": true,
     "battery_capacity_kwh": 30,
     "typical_daily_load_kwh": 30,
     "dynamic_policy": true,

@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.45.0"
+version: "1.46.0"
 slug: energy_tools
 description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -32,6 +32,7 @@ options:
   charge_start_floor: 0.15
   max_soc: 90
   inverter_min_soc: 10
+  topup_to_target: true
   battery_capacity_kwh: 30
   typical_daily_load_kwh: 30
   ev_power_entity: ""
@@ -88,6 +89,7 @@ schema:
   charge_start_floor: float
   max_soc: int(0,100)
   inverter_min_soc: int(0,100)
+  topup_to_target: bool
   battery_capacity_kwh: float
   typical_daily_load_kwh: float
   ev_power_entity: str?
