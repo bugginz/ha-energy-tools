@@ -87,6 +87,10 @@ DEFAULT_CONFIG = {
         "horizon_hours": 18,          # how far ahead to scan the price forecast
         "horizon_window_margin": 0.03,  # "near cheapest" = within this of the forward minimum
         "min_soc_on_grid": 10,
+        # The ONLY min-SoC foxctl ever writes to the inverter — a constant safety floor, never a
+        # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival and
+        # export buffers are enforced in software (when to stop charging/selling), never on the device.
+        "inverter_min_soc": 10,
         # Price bands ($/kWh, retail). Ordered low->high; "upto" is the exclusive upper bound,
         # last band (upto null) is the catch-all. charge_bands grid-charge; avoid_bands hold battery.
         "bands": [
@@ -268,7 +272,12 @@ class FoxESS:
 
     def enable_force_discharge(self, start_hm, end_hm, min_soc, power_kw) -> dict:
         """Activate ONE ForceDischarge window — sell battery to the grid (export) down to min_soc.
-        Same scheduler/enable schema as force-charge; fdSoc is the SoC floor to discharge to."""
+        Same scheduler/enable schema as force-charge; fdSoc is the SoC floor to discharge to.
+
+        IMPORTANT: min_soc here is the inverter's CONSTANT safety floor (inverter_min_soc), NOT a
+        computed survival level. survival/buffer is enforced in software (the loop stops the window
+        when the survival target is reached) — never pushed onto the device, because a high min that
+        leaks into SelfUse makes the inverter import expensive grid power to hold it."""
         sh, sm = start_hm; eh, em = end_hm
         fc = {"startHour": sh, "startMinute": sm, "endHour": eh, "endMinute": em,
               "workMode": "ForceDischarge", "minSocOnGrid": int(min_soc), "fdSoc": int(min_soc),
@@ -294,8 +303,25 @@ class FoxESS:
 
         The working stop is set/flag enable=0 (scheduler/disable returns an empty
         body and does NOT actually clear the enable flag on this firmware).
+
+        NB: disabling does NOT reset minSocOnGrid on the device — the last group's value persists.
+        That is exactly why foxctl never writes a value above the constant inverter_min_soc: so a
+        reverted SelfUse can never be stranded holding a high floor (the cause of the 66% import bug).
         """
         return self.call("/op/v0/device/scheduler/set/flag", {"deviceSN": self.sn, "enable": 0})
+
+    def get_min_soc(self):
+        """Read the inverter's configured grid min-SoC (%), best-effort. Used only to DETECT a stranded
+        high floor (e.g. a legacy 66%) and warn — foxctl never raises it. Returns int or None."""
+        for key in ("MinSocOnGrid", "MinSoc"):
+            try:
+                v = (self.call("/op/v0/device/setting/get", {"sn": self.sn, "key": key})
+                     .get("result") or {}).get("value")
+                if v is not None:
+                    return int(float(v))
+            except Exception:
+                continue
+        return None
 
 
 class HAPrices:
@@ -602,7 +628,7 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
 
 LAST: dict = {}
 LAST_LOCK = Lock()
-_WM = {"value": None, "options": None, "i": 0, "ts": 0.0}  # work-mode cache (refresh every Nth cycle)
+_WM = {"value": None, "options": None, "i": 0, "ts": 0.0, "min_soc": None}  # work-mode + device min-SoC cache
 _LLM = {"last_ts": 0.0, "last_fc": False, "last": None}  # LLM review state + cached verdict
 _CHARGE = {"until": 0.0}  # epoch until which WE intend to force-charge (survives a flaky scheduler read)
 _TELE = {"last": None, "ts": None}  # last good FoxESS telemetry (foxctl is the sole poller)
@@ -2026,6 +2052,16 @@ def gather_and_decide(cfg: dict) -> dict:
             _WM["value"], _WM["options"], _WM["ts"] = w.get("value"), w.get("enumList"), time.time()
         except Exception as e:
             print(f"work mode read failed (keeping cached '{_WM.get('value')}'): {e}", file=sys.stderr)
+        try:                                  # piggyback: detect a stranded high device min-SoC (legacy bug)
+            ms = fox.get_min_soc()
+            if ms is not None:
+                _WM["min_soc"] = ms
+                if ms > int(cfg["strategy"].get("inverter_min_soc", 10)) + 1:
+                    print(f"⚠️ inverter min-SoC reads {ms}% (> floor {cfg['strategy'].get('inverter_min_soc', 10)}%) "
+                          f"— will self-heal on the next force window; clear it in the FoxESS app to stop imports now.",
+                          file=sys.stderr)
+        except Exception:
+            pass
     wm = {"value": _WM["value"], "enumList": _WM["options"]}
     sched = fox.scheduler_status()
     sched_active = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
@@ -2274,7 +2310,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "energy_totals": energy,
         "sched_active": sched_active,
         "note": note,
-        "override": {"floor": _OV["floor"], "manual": _OV["manual"]},
+        "override": {"floor": _OV["floor"], "sell": _OV["sell"], "manual": _OV["manual"]},
         "ts": datetime.now().isoformat(timespec="seconds"),
         "scheduler": sched,
         "soc_updated_epoch": soc_ts,
@@ -2298,6 +2334,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "real": real,
         "work_mode": wm.get("value"),
         "work_mode_age_s": int(time.time() - _WM["ts"]) if _WM.get("ts") else None,
+        "inverter_min_soc_read": _WM.get("min_soc"),
+        "inverter_min_soc_floor": int(strat.get("inverter_min_soc", 10)),
         "work_mode_options": wm.get("enumList"),
         "recommendation": rec,
         "plan": plan,
@@ -2328,6 +2366,18 @@ def manual_tick(cfg, snap):
         log_event("override", f"manual {mo['mode']} expired → revert to auto")
         return None
     want = "ForceCharge" if mo["mode"] == "charge" else "ForceDischarge"
+    inv_floor = int(cfg["strategy"].get("inverter_min_soc", 10))   # constant device floor — never computed
+    # Manual SELL floor is enforced in SOFTWARE: stop the discharge when SoC reaches the requested
+    # floor, rather than pushing that floor onto the inverter (which would strand it in SelfUse).
+    soc_now = snap.get("soc")
+    if mo["mode"] == "sell" and isinstance(soc_now, (int, float)) and soc_now <= mo.get("min_soc", inv_floor):
+        try:
+            fox.disable_scheduler()
+        except Exception as e:
+            print(f"manual sell floor revert failed: {e}", file=sys.stderr)
+        _OV["manual"] = None; save_ov(cfg)
+        log_event("override", f"manual sell reached {mo.get('min_soc')}% floor → stop")
+        return None
     active = (snap.get("scheduler") or {}).get("active") or {}
     end = datetime.now() + timedelta(seconds=mo["until"] - now)
     hhmm = end.strftime("%H:%M")
@@ -2336,11 +2386,11 @@ def manual_tick(cfg, snap):
     nd = datetime.now()
     if mo["mode"] == "charge":
         fox.enable_force_charge((nd.hour, nd.minute), (end.hour, end.minute),
-                                cfg["strategy"]["min_soc_on_grid"], mo["cap"], mo["power"])
+                                inv_floor, mo["cap"], mo["power"])
         _CHARGE["until"] = mo["until"]
     else:
         fox.enable_force_discharge((nd.hour, nd.minute), (end.hour, end.minute),
-                                   mo["min_soc"], mo["power"])
+                                   inv_floor, mo["power"])
     msg = f"MANUAL {mo['mode']} START until {hhmm} @ {mo['power']}kW"
     log_event("override", msg)
     return msg
@@ -2385,10 +2435,11 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             mins = int(strat.get("force_charge_minutes", 120))
             tot = now.hour * 60 + now.minute + mins
             eh, em = (tot // 60) % 24, tot % 60
+            inv_floor = int(strat.get("inverter_min_soc", 10))   # constant device floor — never the survival number
             fox.enable_force_discharge((now.hour, now.minute), (eh, em),
-                                       rec.get("sell_floor", strat["reserve_soc"]),
-                                       strat["force_charge_power_kw"])
-            m = f"AUTO-SELL START until ~{eh:02d}:{em:02d} (down to {rec.get('sell_floor')}% @ {strat['force_charge_power_kw']}kW)"
+                                       inv_floor, strat["force_charge_power_kw"])
+            m = (f"AUTO-SELL START until ~{eh:02d}:{em:02d} (sells toward {rec.get('sell_floor')}% survival "
+                 f"[software-stopped]; inverter hard floor {inv_floor}% @ {strat['force_charge_power_kw']}kW)")
             msgs.append(m); log_event("sell", m, {"feedin": snap.get("feedin"), "soc": snap.get("soc")})
         return "; ".join(msgs) or "selling"
     if already_selling and not rec.get("force_discharge"):
@@ -2406,7 +2457,7 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             tot = now.hour * 60 + now.minute + mins
             eh, em = (tot // 60) % 24, tot % 60
             fox.enable_force_charge((now.hour, now.minute), (eh, em),
-                                    strat["min_soc_on_grid"], eff_target,
+                                    int(strat.get("inverter_min_soc", 10)), eff_target,
                                     strat["force_charge_power_kw"])
             _CHARGE["until"] = time.time() + mins * 60   # remember our intended charge window
             m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
@@ -2438,7 +2489,7 @@ def force_charge_test(cfg: dict, minutes: int = 10) -> str:
     tot = now.hour * 60 + now.minute + max(1, int(minutes))
     eh, em = (tot // 60) % 24, tot % 60
     fox.enable_force_charge((now.hour, now.minute), (eh, em),
-                            strat["min_soc_on_grid"], strat["target_soc"], strat["force_charge_power_kw"])
+                            int(strat.get("inverter_min_soc", 10)), strat["target_soc"], strat["force_charge_power_kw"])
     msg = (f"force-charge TEST enabled {now.hour:02d}:{now.minute:02d}→{eh:02d}:{em:02d} "
            f"cap {strat['target_soc']}% @ {strat['force_charge_power_kw']}kW")
     log_event("force_charge_test", msg)
@@ -2995,6 +3046,14 @@ def render(snap: dict, cfg: dict) -> str:
                       f'(last error {_fe["age"]}s ago: {_fe["msg"]}).</div>')
     else:
         fox_banner = ''
+    # Stranded-floor banner: the inverter's own min-SoC sits above our safety floor (legacy 66% bug).
+    _ims, _imf = snap.get("inverter_min_soc_read"), snap.get("inverter_min_soc_floor", 10)
+    if isinstance(_ims, (int, float)) and _ims > _imf + 1:
+        fox_banner += (f'<div style="background:#c0392b;color:#fff;padding:.6rem 1rem;border-radius:8px;'
+                       f'margin:.6rem 0;font-weight:600">⛔ Inverter min-SoC is {int(_ims)}% (should be ≤{_imf}%). '
+                       f'While stranded high, SelfUse imports grid power to hold it. foxctl will reset it to '
+                       f'{_imf}% on the next force-charge/sell window — or clear it now in the FoxESS app '
+                       f'(Min SoC On Grid).</div>')
     note_esc = (get_note(cfg) or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     note_html = (f'<h3>Steering note <small>(free text — the LLM reads this as a priority instruction; '
                  f'a note relaxes the charge floor)</small></h3>'

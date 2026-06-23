@@ -40,7 +40,7 @@ for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",
           "battery_capacity_kwh", "typical_daily_load_kwh"):
     if k in opt:
         S[k] = float(opt[k])
-for k in ("target_soc", "reserve_soc", "max_soc"):
+for k in ("target_soc", "reserve_soc", "max_soc", "inverter_min_soc"):
     if k in opt:
         S[k] = int(opt[k])
 if "poll_seconds" in opt:

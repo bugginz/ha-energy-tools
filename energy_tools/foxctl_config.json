@@ -102,6 +102,7 @@
       "evening_end_h": 21
     },
     "max_soc": 90,
+    "inverter_min_soc": 10,
     "battery_capacity_kwh": 30,
     "typical_daily_load_kwh": 30,
     "dynamic_policy": true,

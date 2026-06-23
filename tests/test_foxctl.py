@@ -665,5 +665,158 @@ class StrategistMissionContextTest(unittest.TestCase):
         self.assertIn("target_soc", m)
 
 
+class InverterMinSocSafetyTest(unittest.TestCase):
+    """Phase 1 safety: foxctl must NEVER push a computed survival level onto the inverter as its
+    min-SoG (the 66% import bug). The only min-SoC ever written is the constant inverter_min_soc."""
+
+    class _FakeFox:
+        """Captures every scheduler write so tests can assert the min-SoC argument."""
+        instances = []
+
+        def __init__(self, *a, **k):
+            self.fc = []      # force-charge calls
+            self.fd = []      # force-discharge calls
+            self.disabled = 0
+            self.wm = []
+            InverterMinSocSafetyTest._FakeFox.instances.append(self)
+
+        def enable_force_charge(self, s, e, min_soc, cap, pwr):
+            self.fc.append({"min_soc": min_soc, "cap": cap})
+
+        def enable_force_discharge(self, s, e, min_soc, pwr):
+            self.fd.append({"min_soc": min_soc})
+
+        def disable_scheduler(self):
+            self.disabled += 1
+
+        def set_work_mode(self, m):
+            self.wm.append(m)
+
+    def setUp(self):
+        self._orig = foxctl.FoxESS
+        foxctl.FoxESS = self._FakeFox
+        self._FakeFox.instances = []
+        self.cfg = {"control": {"allow_control": True, "auto_apply": True, "set_work_mode": True,
+                                "set_force_charge": True},
+                    "foxess": {"token": "t", "sn": "s"},
+                    "strategy": copy.deepcopy(foxctl.DEFAULT_CONFIG["strategy"])}
+        self.cfg["strategy"]["inverter_min_soc"] = 10
+
+    def tearDown(self):
+        foxctl.FoxESS = self._orig
+
+    def _snap(self, rec):
+        return {"recommendation": rec, "telemetry_source": "FoxESS", "work_mode": "SelfUse",
+                "scheduler": {"enabled": False, "active": None}, "dynamic": {"target_soc": 90},
+                "soc": 80, "feedin": 0.9}
+
+    def test_auto_sell_writes_constant_floor_not_survival(self):
+        # survival floor of 66% must NOT reach the inverter — only inverter_min_soc (10) does.
+        rec = {"action": "SELL", "force_charge": False, "force_discharge": True, "sell_floor": 66,
+               "target_mode": "SelfUse", "band": "spike"}
+        foxctl.apply_recommendation(self.cfg, self._snap(rec))
+        fd = self._FakeFox.instances[0].fd
+        self.assertEqual(len(fd), 1)
+        self.assertEqual(fd[0]["min_soc"], 10)        # constant floor, NOT 66
+
+    def test_force_charge_writes_constant_floor(self):
+        rec = {"action": "FORCE_CHARGE", "force_charge": True, "force_discharge": False,
+               "target_mode": "SelfUse", "band": "ludicrous"}
+        foxctl.apply_recommendation(self.cfg, self._snap(rec))
+        fc = self._FakeFox.instances[0].fc
+        self.assertEqual(fc[0]["min_soc"], 10)
+
+    def test_force_charge_test_uses_constant_floor(self):
+        foxctl.force_charge_test(self.cfg, 10)
+        self.assertEqual(self._FakeFox.instances[0].fc[0]["min_soc"], 10)
+
+    def test_get_min_soc_parses_value(self):
+        fox = self._orig("t", "s")
+        fox.call = lambda path, body=None: {"result": {"value": "66"}}
+        self.assertEqual(fox.get_min_soc(), 66)
+
+    def test_get_min_soc_none_on_error(self):
+        fox = self._orig("t", "s")
+        def boom(path, body=None):
+            raise RuntimeError("no such key")
+        fox.call = boom
+        self.assertIsNone(fox.get_min_soc())
+
+
+class ManualSellSoftwareFloorTest(unittest.TestCase):
+    """Manual SELL stops in software at the requested floor, instead of pushing it to the device."""
+
+    def setUp(self):
+        self._orig = foxctl.FoxESS
+        foxctl.FoxESS = InverterMinSocSafetyTest._FakeFox
+        InverterMinSocSafetyTest._FakeFox.instances = []
+        foxctl._OV["manual"] = {"mode": "sell", "until": __import__("time").time() + 3600,
+                                "power": 10.5, "min_soc": 20, "cap": None}
+        foxctl._OV["loaded"] = True
+        self.cfg = {"control": {"allow_control": True}, "foxess": {"token": "t", "sn": "s"},
+                    "strategy": {"inverter_min_soc": 10}, "state_dir": tempfile.mkdtemp()}
+
+    def tearDown(self):
+        foxctl.FoxESS = self._orig
+        foxctl._OV["manual"] = None
+
+    def test_stops_when_floor_reached(self):
+        snap = {"soc": 20, "scheduler": {"active": None}}     # at the 20% manual floor
+        out = foxctl.manual_tick(self.cfg, snap)
+        self.assertIsNone(out)                                # reverted to auto
+        self.assertIsNone(foxctl._OV["manual"])               # override cleared
+        self.assertEqual(InverterMinSocSafetyTest._FakeFox.instances[0].disabled, 1)
+
+    def test_runs_while_above_floor_with_constant_device_floor(self):
+        snap = {"soc": 50, "scheduler": {"active": None}}     # well above floor → discharge
+        foxctl.manual_tick(self.cfg, snap)
+        fd = InverterMinSocSafetyTest._FakeFox.instances[0].fd
+        self.assertEqual(fd[0]["min_soc"], 10)                # device floor is the constant, not 20
+
+
+class SellOverridePersistenceTest(unittest.TestCase):
+    """The sell threshold must round-trip AND appear in the snapshot so the form shows the saved value."""
+
+    def setUp(self):
+        self.cfg = {"state_dir": tempfile.mkdtemp(), "strategy": {"price_ceiling": 0.20, "sell_price": 0.50}}
+        foxctl._OV.update({"floor": None, "sell": None, "manual": None, "loaded": True})
+
+    def test_set_baseline_persists_sell(self):
+        foxctl.set_baseline(self.cfg, None, 0.65, 0.20)
+        self.assertEqual(foxctl._OV["sell"], 0.65)
+        foxctl._OV["loaded"] = False                          # force a reload from disk
+        foxctl.load_ov(self.cfg)
+        self.assertEqual(foxctl._OV["sell"], 0.65)
+
+    def test_render_form_shows_sell_override(self):
+        # the baseline form reads snap["override"]["sell"]; with a saved override of 0.65 the form
+        # input must show 0.65, not the config default 0.50 (the "sell value not sticking" bug).
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fc = [{"t": (now + timedelta(hours=i * 0.5)).isoformat(), "price": 0.15, "descriptor": "x"}
+              for i in range(12)]
+        snap = {"ts": "t", "price": 0.2, "aemo_price": 0.07, "feedin": 0.06, "soc": 50.0, "pv_kw": 0.0,
+                "ev_kw": None, "load_kw": 3.1, "forecast_next": fc, "forecast_h": fc, "aemo_forecast_h": [],
+                "recommendation": {"action": "SET_MODE", "target_mode": "SelfUse", "reason": "x",
+                                   "band": "normal", "force_charge": False},
+                "dynamic": {"charge_start_price": 0.12, "price_ceiling": 0.2, "target_soc": 90, "max_soc": 90,
+                            "survival_soc": 30, "sell_price": 0.65, "sell_enabled": True, "source": "LLM",
+                            "mode": "amber"},
+                "battery": {"capacity_kwh": 30.0, "stored_kwh": 15.0},
+                "consumption": {"avg_daily_total_kwh": 33.0, "days_sampled": 5,
+                                "hour_profile": {h: 1.0 for h in range(24)}},
+                "forecast_profiles": {"days": 5, "days_solar": 5},
+                "solar_forecast": {"today_total": 7, "remaining_today": 1, "tomorrow": 15},
+                "solar_cal": {"bias": 1.0, "applied": False, "samples": 2}, "solar_bells": [],
+                "plan": {"action_now": "hold", "target_now": 50.0, "soc_line": [], "floor_line": []},
+                "scheduler": {"enabled": False, "active": None}, "applied": "x", "llm": None,
+                "override": {"floor": None, "sell": 0.65, "manual": None}}
+        cfg = {"control": {"allow_control": True, "auto_apply": True, "set_force_charge": True},
+               "strategy": {"force_charge_power_kw": 10.5, "target_soc": 90, "charge_start_floor": 0.10,
+                            "sell_price": 0.50}, "ev_divert": {"switch": ""}}
+        html = foxctl.render(snap, cfg)
+        self.assertIn('value="0.65"', html)         # the saved override, not the 0.50 default
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.41.0 — SAFETY: stop stranding the inverter at a high min-SoC
+
+- **Root-cause fix for the "imports expensive power, sells nothing" bug.** Auto-sell was pushing the *computed survival level* onto the inverter as its grid min-SoC (`minSocOnGrid`), which lands on **66%** under normal evening math — and disabling the schedule never resets it, so in SelfUse the inverter kept importing grid power to hold 66%. foxctl now **never writes a computed or raised min-SoC**: the only value it ever sends is a constant safety floor, **`inverter_min_soc` (default 10%, new option)**, which you should set to match the FoxESS app. Survival and export-buffer are enforced **in software** (the loop stops charging/selling when the target is reached), never on the device.
+- **Self-healing + visibility:** the next force-charge/sell window rewrites the floor to 10%, undoing any legacy stranding; and if the inverter is read sitting above the floor, a red banner appears ("Inverter min-SoC is N% … clear it in the FoxESS app") plus a log warning, so a stranded value can never be silent again.
+- **Manual SELL** now stops at its requested floor in software too (no device floor pushed).
+- **Sell threshold "sticks":** the saved sell override was applied to decisions but missing from the snapshot the baseline form read back, so the form showed the default — fixed; the form now shows your saved value.
+- Tests: 9 new — no scheduler write ever carries a min-SoC above the constant floor (incl. a 66% survival case), `get_min_soc` parsing, manual-sell software floor, and sell-override persistence + display.
+
+This is the first of a multi-phase rework (safety first); relative need-based buying, a single chat-driven strategist, and the UI fixes follow.
+
 ## 1.40.0
 - **Spike-readiness card** at the top of the dashboard (right under the recommendation). At a glance: is auto-sell armed, the export threshold, and **how much is sellable above the survival buffer** right now (kWh + %), with a clear state — ✅ ready, 💰 selling now, 🔌 charging (will sell once it tops & price clears), or ⚠️ auto-sell off / at the buffer. Spells out that the buffer keeps *N%* (~*X* kWh) specifically to ride out **extended** high-price runs without importing — so a single ephemeral spike isn't critical, but sustained volatility still leaves a cushion.
 
