@@ -205,6 +205,56 @@ class ChartUsesRelativeBarTest(unittest.TestCase):
         self.assertIn("buy ≤ $0.05", svg)              # graceful fallback
 
 
+class DynamicLeversTest(unittest.TestCase):
+    """Phase 3: the strategist nudges target_soc + spike-sell buffer + bar cap, all hard-clamped."""
+
+    def _foundation(self):
+        return {"price_ceiling": 0.30, "max_soc": 90, "charge_start_floor": 0.10, "note_active": False}
+
+    def _strat(self):
+        s = copy.deepcopy(foxctl.DEFAULT_CONFIG["strategy"])
+        s["battery_capacity_kwh"] = 30
+        return s
+
+    def test_buffer_clamped_to_half_pack(self):
+        out = foxctl.apply_dynamic_params(self._strat(), {"spike_sell_buffer_kwh": 999}, self._foundation())
+        self.assertEqual(out["spike_sell_buffer_kwh"], 15.0)      # ≤ 0.5 * 30 kWh
+
+    def test_bar_cap_clamped_to_floor_ceiling(self):
+        out = foxctl.apply_dynamic_params(self._strat(), {"buy_bar_cap": 0.99}, self._foundation())
+        self.assertEqual(out["buy_bar_cap"], 0.30)               # capped at ceiling
+        out2 = foxctl.apply_dynamic_params(self._strat(), {"buy_bar_cap": 0.01}, self._foundation())
+        self.assertEqual(out2["buy_bar_cap"], 0.10)              # floored at the floor
+
+    def test_target_soc_clamped_to_max(self):
+        out = foxctl.apply_dynamic_params(self._strat(), {"target_soc": 150}, self._foundation())
+        self.assertEqual(out["target_soc"], 90)
+
+    def test_bar_cap_tightens_buy_ceiling_in_decide(self):
+        # a bar cap below the ceiling must stop buying above it even with a big deficit
+        strat = self._strat()
+        strat["import_deficit_kwh"] = 20.0
+        strat["price_ceiling"] = 0.30
+        strat["buy_bar_cap"] = 0.12                              # refuse to buy above 12c
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fwd = [{"t": (now + timedelta(hours=i + 1)).isoformat(), "price": 0.20} for i in range(4)]
+        rec = foxctl.decide({"price": 0.20, "forecast": fwd, "aemo_forecast": [], "feedin": None},
+                            soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+        self.assertFalse(rec["force_charge"])                    # 0.20 > bar cap 0.12 → hold
+
+    def test_buffer_adds_to_import_deficit_concept(self):
+        # the buffer is added to the forward deficit (unit-level: bigger deficit → bar can rise to buy now)
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        fwd = [{"t": (now + timedelta(hours=i + 1)).isoformat(), "price": p}
+               for i, p in enumerate([0.08, 0.15, 0.25])]
+        small = foxctl.plan_buy_slots(fwd, 0.20, now, 2.0, 10.5, 0.30, 0.05)    # tiny need → bar low
+        big = foxctl.plan_buy_slots(fwd, 0.20, now, 20.0, 10.5, 0.30, 0.05)     # +buffer → bar rises
+        self.assertFalse(small["should_charge"])
+        self.assertTrue(big["should_charge"])
+
+
 class PlanBuySlotsTest(unittest.TestCase):
     """The relative, need-based buy planner in isolation."""
 
@@ -686,8 +736,9 @@ class PersistentChatTest(unittest.TestCase):
             calls["models"].append(model)
             if model == "claude-opus-4-8":
                 raise RuntimeError("overloaded")               # primary fails → fallback
-            return ('{"charge_start_price": 0.09, "target_soc": 70, "rating": "REFINE", '
-                    '"reason": "wait for trough", "operator_action": "", "base_floor": null}'), {}
+            return ('{"target_soc": 70, "spike_sell_buffer_kwh": 4, "buy_bar_cap": 0.18, '
+                    '"rating": "REFINE", "reason": "buffer for tonight\'s spike", '
+                    '"operator_action": "", "base_floor": null}'), {}
 
         orig = foxctl._llm_post
         foxctl._llm_post = fake_post
@@ -698,8 +749,9 @@ class PersistentChatTest(unittest.TestCase):
             foxctl._llm_post = orig
         self.assertEqual(calls["models"], ["claude-opus-4-8", "claude-haiku-4-5"])
         self.assertEqual(v["model"], "claude-haiku-4-5")        # reports the model that actually answered
-        self.assertEqual(v["params"]["charge_start_price"], 0.09)
         self.assertEqual(v["params"]["target_soc"], 70)
+        self.assertEqual(v["params"]["spike_sell_buffer_kwh"], 4.0)
+        self.assertEqual(v["params"]["buy_bar_cap"], 0.18)
         # the exchange is now in the persistent history (collapsed policy user + assistant reply)
         kinds = [(m["role"], m["kind"]) for m in foxctl._CHAT["msgs"]]
         self.assertIn(("user", "policy"), kinds)

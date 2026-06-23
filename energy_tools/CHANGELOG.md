@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.44.0 — One chat-driven strategist (Phase 3)
+
+- **The two LLM boxes are now one.** The separate silent "Dynamic LLM" verdict card is gone; its rating, reasoning, current levers, and any "📣 Needs you" operator action are folded into the **single Strategist panel** alongside the conversation. One surface that both explains and (within hard guardrails) acts.
+- **Re-targeted the strategist's levers onto the Phase-2 model.** The old `charge_start_price` knob (made vestigial by need-based buying) is replaced by three **relative** nudges, all hard-clamped: `target_soc` (charge cap), **`spike_sell_buffer_kwh`** (extra import beyond strict survival so the battery carries something to export into an improbable-but-possible spike — clamped ≤ half the pack and added to the forward deficit), and **`buy_bar_cap`** (refuse to buy above $X even when needed — clamped to [floor, ceiling], tightens the buy ceiling). The mission prompt + LLM context now describe exactly these.
+- Operator chat + the persistent mission history are unchanged; the strategist just has coherent, model-appropriate levers again (an operator note like "hold out for cheaper" maps to a bar cap; "keep some to sell tonight" maps to a buffer).
+- 6 new tests (lever clamps + buy-ceiling tightening); 77 total green.
+
+This completes the safety → foundation → strategist → UX rework (Phases 1–4).
+
 ## 1.43.0 — Charts match the new model + usable-in-HA dashboard (Phase 4)
 
 - **Fixes "no SoC line hits 100% any more" and "next cheap buy at 10am isn't on the chart".** Both charts and the SoC projection were still keyed to the old absolute `charge_start_price`, which Phase 2 made vestigial — so they never charged in the projection and never shaded the slots the controller actually buys. They now use the **relative buy bar** (`rec.buy_bar` — the cheapest forward slots covering the deficit): the green "buy ≤ $X (relative)" line + shading mark the real chosen windows (your 10am slot shows up), and the rules-model SoC line fills during them. (If the SoC line still tops out below 100%, that's your `max_soc` cap — raise `max_soc`/`target_soc` to 100 to see/charge to full.)

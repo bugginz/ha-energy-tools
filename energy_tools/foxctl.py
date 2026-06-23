@@ -70,6 +70,7 @@ DEFAULT_CONFIG = {
         "cheap_price": 0.10,        # Amber retail $/kWh at/below which we charge from grid
         "expensive_price": 0.35,    # Amber retail $/kWh at/above which we avoid grid import
         "target_soc": 100,          # force-charge cap (fdSoc)
+        "spike_sell_buffer_kwh": 0.0,  # strategist lever: extra import beyond survival, for spike-sell readiness
         "reserve_soc": 20,          # never plan to go below this
         "precharge_lookahead_h": 3, # if an expensive peak is within this window, pre-charge
         # AEMO wholesale thresholds (different scale to retail) used for forward peak/trough detection
@@ -590,8 +591,11 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     # always-OK; ceiling = hard veto; no deficit → no import.
     floor = strat.get("charge_start_floor", 0.0)
     deficit = strat.get("import_deficit_kwh", strat.get("energy_shortfall_kwh", 0.0)) or 0.0
+    # Strategist's optional cap on the relative bar — refuse to buy above $X even when needed (tighter
+    # than, never looser than, the foundation ceiling).
+    buy_ceiling = min(ceiling, float(strat.get("buy_bar_cap", ceiling)))
     buy = plan_buy_slots(fc, price, now, deficit, strat.get("force_charge_power_kw", 10.5),
-                         ceiling, floor, horizon_h=horizon_h, slot_h=strat.get("slot_hours", 0.5))
+                         buy_ceiling, floor, horizon_h=horizon_h, slot_h=strat.get("slot_hours", 0.5))
     bar = buy.get("bar")
     stop_margin = strat.get("charge_stop_margin", 0.02)
 
@@ -1273,33 +1277,42 @@ MISSION = (
     "above the sell threshold, automatically holding back an overnight survival buffer. Price spikes are "
     "ALREADY captured this way — never tell the operator to 'start exporting' or 'manually stop exporting' "
     "during a spike; that happens on its own.\n"
-    "- AUTO FORCE-CHARGE: it grid-charges whenever the price is at or below charge_start_price (your knob), "
-    "within the floor/ceiling, up to target_soc (your knob).\n"
+    "- AUTO FORCE-CHARGE is NEED-BASED and RELATIVE: each cycle the controller forecasts the import "
+    "deficit to the next solar ramp, then buys only during the CHEAPEST forward slots that cover it "
+    "(an affordability 'bar' that rises when the forecast is dear, falls when it's cheap, capped by the "
+    "ceiling; at/below the floor it always tops up). You do NOT set an absolute buy price — that is "
+    "computed. No deficit → no import.\n"
     "- AUTO EV-DIVERT: when enabled it sends cheap surplus to the car charger on its own.\n"
     "These run every cycle without you. The automation's current settings and state are in the context "
-    "('automation' + 'foundation'); read them so you don't recommend something already happening.\n\n"
+    "('automation' + 'foundation' + 'buy'); read them so you don't recommend something already happening.\n\n"
     "WHO CONTROLS WHAT:\n"
-    "- YOUR levers (auto-applied, hard-clamped): charge_start_price and target_soc. That's it.\n"
+    "- YOUR levers (auto-applied, hard-clamped) — three relative nudges only:\n"
+    "  • target_soc (%): the charge cap.\n"
+    "  • spike_sell_buffer_kwh: extra energy to import beyond strict survival so the battery carries "
+    "something to EXPORT into an improbable-but-possible spike. 0 = buy only what's needed; raise it when "
+    "a fat sell looks plausible. Clamped to ≤ half the pack.\n"
+    "  • buy_bar_cap ($/kWh): refuse to buy above this even when needed (tighter than the ceiling) — use "
+    "it to hold out for cheaper when the deficit isn't urgent. Clamped to [floor, ceiling].\n"
     "- The OPERATOR's levers (the ONLY things operator_action may ask for): price_ceiling, "
     "charge_start_floor, max_soc, battery_capacity_kwh, the sell threshold / turning auto-sell on or off, "
     "and the manual force-charge / sell / floor override buttons. Never put a routine or automatic action "
     "in operator_action — leave it empty unless you genuinely need the human to change one of THOSE.\n\n"
     "Two kinds of message arrive:\n"
     "1. A message beginning 'POLICY CONTEXT' is an automated state + forecast update. Reply with ONLY a "
-    "JSON object (no prose, no code fences) setting the controller's two knobs:\n"
-    '{"charge_start_price": <num $/kWh at/below which to grid-charge>, "target_soc": <int %>, '
+    "JSON object (no prose, no code fences) setting your relative levers:\n"
+    '{"target_soc": <int %>, "spike_sell_buffer_kwh": <num ≥0>, '
+    '"buy_bar_cap": <num $/kWh or null to leave at the ceiling>, '
     '"rating": "AGREE"|"REFINE"|"DISAGREE", "reason": "<=2 sentences", '
     '"operator_action": "<short thing that REQUIRES the human — e.g. change a foundation setting they '
     'control (price_ceiling, charge_start_floor, max_soc, battery_capacity_kwh) — or empty string>", '
     '"base_floor": <number or null — set ONLY when an operator note clearly asks for a LASTING change to '
     'the minimum price always willing to charge at (the base floor); else null>}. '
-    "Stay within the foundation guardrails in the context (your values are hard-clamped anyway). Default "
-    "charge_start_price near 0 unless the forecast/SoC/solar genuinely justify importing; if import is "
-    "needed, buy at the CHEAPEST forecast point, not a mediocre price now. If operator_note is present it "
-    "is a DIRECT instruction — follow it as a priority within the guardrails (the charge floor is relaxed "
-    "while a note is active). rating: AGREE=same as baseline, REFINE=minor auto tweak, DISAGREE=you think "
-    "the policy/state is wrong. Only fill operator_action when you genuinely need a human to change "
-    "something you cannot; leave it empty for normal auto-applied tuning.\n"
+    "Stay within the foundation guardrails in the context (your values are hard-clamped anyway). Keep "
+    "spike_sell_buffer_kwh at 0 unless a profitable export window genuinely looks likely; the controller "
+    "already buys at the cheapest forecast points. If operator_note is present it is a DIRECT instruction "
+    "— follow it as a priority within the guardrails. rating: AGREE=same as baseline, REFINE=minor auto "
+    "tweak, DISAGREE=you think the policy/state is wrong. Only fill operator_action when you genuinely "
+    "need a human to change something you cannot; leave it empty for normal auto-applied tuning.\n"
     "2. Any other message is the human operator talking to you. Reply conversationally and concisely (a "
     "few sentences) — explain your reasoning, answer questions about strategy, or acknowledge new standing "
     "guidance and carry it forward. Do NOT emit the policy JSON for these.")
@@ -1416,10 +1429,12 @@ def _llm_dynamic(cfg, api_key, model, fallback, ctx):
     rating = str(obj.get("rating", "")).upper()
     rating = rating if rating in ("AGREE", "REFINE", "DISAGREE") else "REFINE"
     params = {}
-    if isinstance(obj.get("charge_start_price"), (int, float)):
-        params["charge_start_price"] = float(obj["charge_start_price"])
     if isinstance(obj.get("target_soc"), (int, float)):
         params["target_soc"] = int(obj["target_soc"])
+    if isinstance(obj.get("spike_sell_buffer_kwh"), (int, float)):
+        params["spike_sell_buffer_kwh"] = float(obj["spike_sell_buffer_kwh"])
+    if isinstance(obj.get("buy_bar_cap"), (int, float)):
+        params["buy_bar_cap"] = float(obj["buy_bar_cap"])
     action = str(obj.get("operator_action", "") or "").strip()
     bf = obj.get("base_floor")
     return {"params": params, "rating": rating, "agree": rating == "AGREE",
@@ -1453,21 +1468,25 @@ def llm_chat_reply(cfg, text):
 
 
 def apply_dynamic_params(strat, params, foundation):
-    """Merge the LLM's knobs into a copy of strat, hard-clamped to the foundation guardrails.
-    charge_start_price is floored at charge_start_floor (always willing to charge that cheap) and
-    capped at the price_ceiling: effective = clamp(max(LLM, floor), 0, ceiling)."""
+    """Merge the strategist's relative levers into a copy of strat, hard-clamped to the foundation
+    guardrails. Phase 3 levers (the only things it can nudge): target_soc (charge cap), a spike-sell
+    buffer (extra kWh to import beyond strict survival, so there's something to export into a spike),
+    and a cap on the relative buy bar (refuse to buy above $X even when needed). Everything else —
+    the need-based buy slot selection, floor, ceiling, sell threshold — stays deterministic."""
     out = dict(strat)
-    # A live operator note relaxes the charge floor so guidance like "wait for 9c" can take effect
-    # (still capped by the ceiling and SoC limits).
-    floor = 0.0 if foundation.get("note_active") else float(foundation.get("charge_start_floor", 0.0))
-    ceiling = foundation["price_ceiling"]
-    csp = params.get("charge_start_price")
-    base = float(csp) if isinstance(csp, (int, float)) else floor
-    out["charge_start_price"] = round(max(0.0, min(max(base, floor), ceiling)), 3)
+    floor = float(foundation.get("charge_start_floor", 0.0))
+    ceiling = float(foundation["price_ceiling"])
+    cap_kwh = float(strat.get("battery_capacity_kwh", 30))
     ts = params.get("target_soc")
     if isinstance(ts, (int, float)):
         lo, hi = strat.get("reserve_soc", 20) + 10, foundation["max_soc"]
         out["target_soc"] = int(max(lo, min(int(ts), hi)))
+    buf = params.get("spike_sell_buffer_kwh")
+    if isinstance(buf, (int, float)):
+        out["spike_sell_buffer_kwh"] = round(max(0.0, min(float(buf), 0.5 * cap_kwh)), 1)  # ≤ half the pack
+    cap = params.get("buy_bar_cap")
+    if isinstance(cap, (int, float)):
+        out["buy_bar_cap"] = round(max(floor, min(float(cap), ceiling)), 3)               # within [floor, ceiling]
     return out
 
 
@@ -2212,7 +2231,9 @@ def gather_and_decide(cfg: dict) -> dict:
         "amber_forecast_18h": _forecast_digest(prices.get("forecast", []), 18, 30),
         "aemo_forecast_18h": _forecast_digest(prices.get("aemo_forecast", []), 18, 60),
         "foundation": {**foundation, "reserve_soc": strat.get("reserve_soc")},
-        "baseline": {"charge_start_price": strat.get("charge_start_price"), "target_soc": strat.get("target_soc")},
+        "baseline": {"target_soc": strat.get("target_soc"),
+                     "spike_sell_buffer_kwh": strat.get("spike_sell_buffer_kwh", 0.0),
+                     "buy_bar_cap": strat.get("buy_bar_cap")},
         # What the deterministic controller does on its own each cycle, so the strategist doesn't ask a
         # human (or itself) to do something already automatic — e.g. exporting into a price spike.
         "automation": {
@@ -2224,10 +2245,12 @@ def gather_and_decide(cfg: dict) -> dict:
                              "to grid automatically — no human, app change, or 'Feed-in Priority' toggle "
                              "needed. A high feed-in price during a spike triggers this on its own.",
             },
-            "auto_force_charge": "grid-charges automatically when price <= charge_start_price (your knob), "
-                                 "within floor/ceiling, up to target_soc (your knob)",
+            "auto_force_charge": "NEED-BASED + RELATIVE: each cycle it forecasts the import deficit to the "
+                                 "next solar ramp and buys only the cheapest forward slots that cover it, "
+                                 "capped by the ceiling and your buy_bar_cap; floor is always-OK. The buy "
+                                 "price is computed, not set. No deficit → no import.",
             "ev_divert_enabled": bool((cfg.get("ev_divert") or {}).get("switch")),
-            "your_levers": ["charge_start_price", "target_soc"],
+            "your_levers": ["target_soc", "spike_sell_buffer_kwh", "buy_bar_cap"],
             "operator_levers": ["price_ceiling", "charge_start_floor", "max_soc", "battery_capacity_kwh",
                                 "sell_threshold", "auto_sell_on_off", "manual override buttons"],
             "note": "Price spikes are captured automatically by auto-sell. Do NOT tell the operator to "
@@ -2269,7 +2292,10 @@ def gather_and_decide(cfg: dict) -> dict:
         # bridge the expensive overnight window — the "always look forward" the buy rule selects against.
         pred_solar = (predict_base_load(consumption.get("hour_profile"), hrs_to_solar)
                       if consumption.get("profile_days", 0) >= 2 else float(typical_load) * (hrs_to_solar / 24.0))
-        working["import_deficit_kwh"] = round(max(0.0, pred_solar - usable_now - (solar_remaining or 0.0)), 1)
+        # Strategist's spike-sell buffer (clamped in apply_dynamic_params): import a little beyond strict
+        # survival so the battery carries something to export into an improbable-but-possible spike.
+        buffer = float(working.get("spike_sell_buffer_kwh", 0.0) or 0.0)
+        working["import_deficit_kwh"] = round(max(0.0, pred_solar - usable_now - (solar_remaining or 0.0)) + buffer, 1)
         rec = decide(prices, soc, pv, wm.get("value"), working,
                      currently_charging=charging, load_kw=load, demand_window=demand_window)
 
@@ -2346,6 +2372,8 @@ def gather_and_decide(cfg: dict) -> dict:
                     "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
                     "charge_start_floor": (None if zerohero else foundation["charge_start_floor"]),
                     "sell_price": (None if zerohero else sell_eff), "survival_soc": survival_soc,
+                    "spike_sell_buffer_kwh": working.get("spike_sell_buffer_kwh", 0.0),
+                    "buy_bar_cap": working.get("buy_bar_cap"),
                     "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
@@ -3042,11 +3070,30 @@ def render_soc_svg(snap: dict, hours: float = 24) -> str:
     return "".join(out) + legend
 
 
-def chat_panel_html(cfg: dict) -> str:
-    """The persistent strategist conversation + an input to talk to it. Reads the rolling history so the
-    operator can reference earlier turns; routine 'POLICY CONTEXT' uploads are collapsed for readability."""
+def chat_panel_html(cfg: dict, snap: dict | None = None) -> str:
+    """The ONE strategist surface: its latest verdict + current relative levers, the persistent
+    conversation, and an input to talk to it. (Phase 3 merged the old separate 'Dynamic LLM' verdict
+    box into here.) Reads the rolling history; routine 'POLICY CONTEXT' uploads are collapsed."""
     def esc(s):
         return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    snap = snap or {}
+    # Verdict header — the strategist's latest rating/reason, its live levers, and anything needing a human.
+    llm = snap.get("llm") or {}
+    dyn = snap.get("dynamic") or {}
+    if llm.get("rating"):
+        verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE", "DISAGREE": "🔍 DISAGREE"}.get(llm.get("rating"), "⚠️")
+        levers = (f'target {dyn.get("target_soc","?")}% · spike-buffer '
+                  f'{dyn.get("spike_sell_buffer_kwh", 0)}kWh · bar-cap '
+                  f'{("$"+format(dyn.get("buy_bar_cap"),".3f")) if isinstance(dyn.get("buy_bar_cap"), (int,float)) else "—"}')
+        act = (llm.get("operator_action") or "").strip()
+        act_html = (f'<div style="margin-top:.4rem;padding:.5rem .7rem;background:#fff3cd;color:#5c4600;'
+                    f'border-radius:8px"><b>📣 Needs you:</b> {esc(act)}</div>') if act else ""
+        head = (f'<div style="padding:.4rem .6rem;border-bottom:1px solid #9c6ade44;margin-bottom:.4rem">'
+                f'<b>{verdict}</b> <small>{esc(llm.get("model",""))} · {esc(llm.get("ts",""))}</small>'
+                f'<div>{esc(llm.get("text",""))}</div><small>levers: {levers}</small>{act_html}</div>')
+    else:
+        head = ('<div style="padding:.4rem .6rem;margin-bottom:.4rem"><small>advisory off — enable '
+                'llm_review + set the API key, or just chat below (it can\'t control until enabled)</small></div>')
     try:
         msgs = chat_view(cfg, 24)
     except Exception:
@@ -3068,9 +3115,10 @@ def chat_panel_html(cfg: dict) -> str:
                          f'<div style="white-space:pre-wrap">{esc(content)}</div></div>')
         rows = "".join(parts)
     llmc = cfg.get("llm", {})
-    return (f'<h3>🤖 Strategist chat <small>(persistent — anchored to the mission, remembers earlier turns; '
-            f'shapes the auto policy)</small></h3>'
+    return (f'<h3>🤖 Strategist <small>(one surface — verdict + chat; nudges target SoC / spike-buffer / '
+            f'bar-cap within hard guardrails, and explains)</small></h3>'
             f'<div class=card style="border-color:#9c6ade">'
+            f'{head}'
             f'<div id=chatlog style="max-height:360px;overflow:auto">{rows}</div>'
             f'<div style="margin-top:.5rem;display:flex;gap:.4rem">'
             f'<input id=chatmsg style="flex:1;font:inherit;padding:.45rem;box-sizing:border-box" '
@@ -3229,18 +3277,8 @@ def render(snap: dict, cfg: dict) -> str:
                     f'(floor ${dyn.get("charge_start_floor","?")} always-OK ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")}) · '
                     f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '
                     f'feed-in ${snap.get("feedin","?")}</small></div>')
-    llm = snap.get("llm")
-    if llm:
-        verdict = {"AGREE": "✅ AGREE", "REFINE": "🔧 REFINE",
-                   "DISAGREE": "🔍 DISAGREE"}.get(llm.get("rating"), "⚠️ n/a")
-        act = (llm.get("operator_action") or "").strip()
-        act_html = (f'<div style="margin-top:.4rem;padding:.5rem .7rem;background:#fff3cd;color:#5c4600;'
-                    f'border-radius:8px"><b>📣 Needs you:</b> {act}</div>') if act else ""
-        llm_html = (f'<div class="card" style="border-color:#9c6ade"><small>🤖 DYNAMIC LLM ({llm.get("model","")} · {llm.get("ts","")})</small>'
-                    f'<div class=big>{verdict}</div><div>{llm.get("text","")}</div>{act_html}</div>')
-    else:
-        llm_html = '<div class="card"><small>🤖 Dynamic LLM</small><div>off (enable llm_review + set API key in add-on options)</div></div>'
-    llm_html = dyn_html + llm_html
+    # The strategist's verdict is now shown INSIDE the single chat panel (one surface), not a 2nd box.
+    llm_html = dyn_html
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl — <span id=ts>{snap.get('ts','-')}</span> <small id=refr style="color:#888"></small></h1>
@@ -3292,7 +3330,7 @@ def render(snap: dict, cfg: dict) -> str:
    <small>{(snap.get('scheduler') or {}).get('active',{}).get('window','') if (snap.get('scheduler') or {}).get('active') else ''}</small></div>
 </div>
 <div id=dyncard>{llm_html}</div>
-{chat_panel_html(cfg)}
+{chat_panel_html(cfg, snap)}
 {note_html}
 <h3>Actions taken <small>(real changes: applies, force-charge, disables, band actions)</small></h3>
 <table id=events></table>
