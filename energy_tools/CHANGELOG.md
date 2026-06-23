@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.40.0
+- **Spike-readiness card** at the top of the dashboard (right under the recommendation). At a glance: is auto-sell armed, the export threshold, and **how much is sellable above the survival buffer** right now (kWh + %), with a clear state — ✅ ready, 💰 selling now, 🔌 charging (will sell once it tops & price clears), or ⚠️ auto-sell off / at the buffer. Spells out that the buffer keeps *N%* (~*X* kWh) specifically to ride out **extended** high-price runs without importing — so a single ephemeral spike isn't critical, but sustained volatility still leaves a cushion.
+
 ## 1.39.0
 - **Teach the strategist what the controller does automatically.** The LLM was recommending manual actions for things foxctl already does on its own — e.g. telling you to flip the inverter to "Feed-in Priority" to export into a price spike, when the controller **auto-sells** (sets the FoxESS scheduler to ForceDischarge, selling the battery to grid down to the overnight survival floor) the moment the feed-in price clears the sell threshold. The mission prompt now spells out the automation boundary — auto-sell, auto force-charge, auto EV-divert all run every cycle — and the per-cycle context carries the live `automation` state (auto-sell enabled? threshold? survival SoC?). It's told never to ask the operator to manually export/stop-exporting or switch inverter modes, and `operator_action` is restricted to the settings a human actually controls.
 - **Clear-chat button** on the Strategist panel (`/api/chat_clear`): wipe the conversation to drop stale reasoning after a capabilities change and start the mission fresh.

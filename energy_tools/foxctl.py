@@ -3018,6 +3018,40 @@ def render(snap: dict, cfg: dict) -> str:
     sell_p = dyn2.get("sell_price"); surv = dyn2.get("survival_soc")
     auto_sell_txt = (f'auto-sell ≥ ${sell_p} (keep ≥{surv}% overnight)' if dyn2.get("sell_enabled")
                      else "auto-sell off")
+    # Spike readiness: at a glance, is the controller set up to dump into a price spike, and how much
+    # headroom sits above the survival buffer (the buffer that rides out *extended* high-price runs).
+    cap_kwh2 = bat.get("capacity_kwh") or cfg["strategy"].get("battery_capacity_kwh", 30)
+    soc_now = snap.get("soc"); feed_now = snap.get("feedin")
+    sell_on = bool(dyn2.get("sell_enabled")) and isinstance(sell_p, (int, float))
+    selling_now = bool(rec.get("force_discharge"))
+    charging_now = bool(rec.get("force_charge")) or bool(snap.get("currently_charging"))
+    head_pct = max(0, round(soc_now - surv)) if isinstance(soc_now, (int, float)) and isinstance(surv, (int, float)) else None
+    head_kwh = round(cap_kwh2 * head_pct / 100.0, 1) if head_pct is not None else None
+    buf_kwh = round(cap_kwh2 * surv / 100.0, 1) if isinstance(surv, (int, float)) else None
+    if dyn2.get("mode") == "zerohero":
+        sp_col, sp_icon, sp_txt = "#2ecc71", "⏰", f"ZeroHero exports in the evening window; keeps ≥{surv}% overnight buffer"
+        sp_head = f'export window 18:00–21:00'
+    elif not sell_on:
+        sp_col, sp_icon, sp_txt = "#e67e22", "⚠️", "auto-sell is OFF — a spike will NOT be captured (enable auto_sell / set a sell threshold)"
+        sp_head = "export disabled"
+    elif selling_now:
+        sp_col, sp_icon, sp_txt = "#2ecc71", "💰", f"SELLING NOW into ${feed_now}/kWh — discharging to grid down to the {surv}% buffer"
+        sp_head = f"export ≥ ${sell_p}"
+    elif head_pct is not None and head_pct <= 1:
+        sp_col, sp_icon, sp_txt = "#e67e22", "⚠️", f"at the {surv}% survival buffer — nothing sellable until it refills"
+        sp_head = f"export ≥ ${sell_p}"
+    elif charging_now:
+        sp_col, sp_icon, sp_txt = "#3498db", "🔌", f"charging now; {head_kwh}kWh above the buffer is ready to sell once feed-in ≥ ${sell_p}"
+        sp_head = f"export ≥ ${sell_p}"
+    else:
+        sp_col, sp_icon, sp_txt = "#2ecc71", "✅", f"ready — {head_kwh}kWh ({head_pct}%) sellable above the {surv}% buffer when feed-in ≥ ${sell_p}"
+        sp_head = f"export ≥ ${sell_p}"
+    spike_html = (f'<div class="card" style="border-color:{sp_col}"><small>⚡ SPIKE READINESS · auto-sell '
+                  f'{"ON" if sell_on or dyn2.get("mode") == "zerohero" else "OFF"}</small>'
+                  f'<div class=big>{sp_icon} {sp_head}</div><div>{sp_txt}</div>'
+                  f'<small>buffer: keeps {surv}% (~{buf_kwh}kWh) to ride out <b>extended</b> high prices without '
+                  f'importing · SoC {round(soc_now) if isinstance(soc_now, (int, float)) else "?"}% · battery '
+                  f'{bat.get("stored_kwh", "?")}/{cap_kwh2}kWh · feed-in now ${feed_now}</small></div>')
     evbtns = "".join(f'<button onclick="ov(\'/api/ev_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 6))
     ev_row = (f'<div style="margin-top:.4rem">🔌 <b>Force car charge:</b> {evbtns} '
               f'<button onclick="ov(\'/api/ev_off\')">✖ stop → auto</button></div>'
@@ -3079,6 +3113,7 @@ def render(snap: dict, cfg: dict) -> str:
  <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
  <div><small>🔭 shadow plan (not driving): {(snap.get('plan') or {}).get('action_now','–')} → {(snap.get('plan') or {}).get('target_now','–')}%{' · ⚠️ differs from heuristic' if (snap.get('plan') or {}).get('diverges') else ' · agrees with heuristic' if snap.get('plan') else ''}</small></div>
 </div>
+{spike_html}
 {controls_html}
 <h3>Make things happen</h3>
 <button onclick="post('/api/evaluate')">Evaluate now</button>
