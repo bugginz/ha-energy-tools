@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.48.0 — ZeroHero: real tariff, export off by default
+
+- **Matches the actual GloBird ZeroHero charges** and the "feed-in is bad, don't export" call. ZeroHero export to grid is now **gated on `sell_enabled` (auto_sell)** — with it off (set `auto_sell: false`), the 18:00–21:00 window simply behaves like the rest of the peak: cover load from battery, **zero grid import, no feed-in**. The schedule is now purely import-cost driven: FREE-charge 11:00–14:00 (first 50 kWh @ 0c) → full by 2pm; **never import** in the 16:00–23:00 peak (44c); run off battery through the 14–16 & 23–11 shoulder/overnight (33c) until the next free window.
+- Dashboard ZeroHero card updated to show the real tariff bands (0c / 44c / 33c) and whether export is on or off.
+- 1 new test (no export when feed-in disabled → falls through to peak hold); 93 total green.
+
+To run your plan: `tariff_mode: zerohero`, `auto_sell: false` (no export), `max_soc: 100` (fill to full midday).
+
 ## 1.47.0 — ZeroHero: explicit 16:00–23:00 peak (zero import)
 
 - **Makes the GloBird ZeroHero ToU exact.** The strategy already did the right shape (free-charge 11:00–14:00 → max, export 18:00–21:00, run off battery otherwise), but it only *named* the 18–21 export sub-window. It now models the **full 16:00–23:00 peak** as an explicit "cover load from battery, ZERO grid import, never force-charge" window (`peak_start_h`/`peak_end_h`, default 16/23), so the 16–18 and 21–23 shoulders of the peak are handled and shown clearly. Grid force-charge is hard-restricted to the free window — never before 11:00, never in the peak.

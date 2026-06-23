@@ -1934,11 +1934,12 @@ def mqtt_publish(cfg, snap):
 
 
 def decide_zerohero(soc, work_mode, strat, survival_soc):
-    """GloBird ZeroHero time-of-use strategy (no price forecasting):
-      • 11:00–14:00 free window  → grid-charge battery to full (FREE).
-      • 18:00–21:00 evening peak → cover all load from battery (zero grid import → $1/day credit)
-        and export surplus to grid (9c + Super Export) down to the overnight survival floor.
-      • all other times          → run off battery, avoid grid import.
+    """GloBird ZeroHero time-of-use strategy (import-cost driven, no price forecasting):
+      • 11:00–14:00 FREE window  → grid-charge battery to full (first 50 kWh/day are 0c).
+      • 16:00–23:00 PEAK (44c)   → cover ALL load from battery, ZERO grid import.
+      • 14–16 & 23–11 (33c)      → run off battery, avoid grid import until the free window.
+      • Export to grid is OFF by default (poor feed-in) — gate on sell_enabled (auto_sell) if you want
+        the 18:00–21:00 export window back.
     Returns a rec dict in the same shape decide() produces."""
     z = strat.get("zerohero", {})
     fs, fe = z.get("free_start_h", 11), z.get("free_end_h", 14)
@@ -1946,6 +1947,7 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
     ps, pe = z.get("peak_start_h", 16), z.get("peak_end_h", 23)   # full ToU peak (no import)
     max_soc = strat.get("max_soc", 90)
     reserve = strat.get("reserve_soc", 20)
+    sell_on = bool(strat.get("sell_enabled", True))              # export to grid (feed-in) — off → never export
     nowl = datetime.now()
     h = nowl.hour + nowl.minute / 60.0
     in_free = fs <= h < fe
@@ -1956,23 +1958,22 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
     # Force-charge from grid ONLY in the FREE window — never before 11:00 and never in the peak.
     if in_free and soc < max_soc:
         action, fc = "FORCE_CHARGE", True
-        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 → grid-charge to {max_soc}% (free) — full by {fe:02d}:00.")
+        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 (0c, first 50kWh) → grid-charge to "
+                       f"{max_soc}% — full by {fe:02d}:00.")
     elif in_free:
         reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {max_soc}%). SelfUse.")
-    elif in_eve and soc > survival_soc + 1:
+    elif in_eve and sell_on and soc > survival_soc + 1:
         action, fd = "SELL", True
-        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 (Super Export) → cover load (zero import) + "
-                       f"export surplus down to survival {survival_soc}% (keeps enough to coast to 11:00).")
-    elif in_eve:
-        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → hold at survival; cover load from battery "
-                       f"(zero grid import). SelfUse.")
+        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
+                       f"(keeps enough to coast to 11:00).")
     elif in_peak:
-        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 → cover load from battery, ZERO grid import "
-                       f"(no force-charge in peak). SelfUse.")
+        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 (44c) → cover load from battery, ZERO grid "
+                       f"import (no force-charge, no feed-in). SelfUse.")
     elif soc <= reserve:
         reasons.append(f"ZeroHero off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
     else:
-        reasons.append("ZeroHero off-window → run off battery, avoid grid import until the 11:00 free window. SelfUse.")
+        reasons.append(f"ZeroHero shoulder/overnight (33c) → run off battery, avoid grid import until the "
+                       f"{fs:02d}:00 free window. SelfUse.")
     rec = {"action": action, "target_mode": target_mode, "force_charge": fc, "force_discharge": fd,
            "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
            "reason": " ".join(reasons)}
@@ -3312,12 +3313,14 @@ def render(snap: dict, cfg: dict) -> str:
                      f'<small>auto-sell when feed-in ≥ this</small><br>'
                      f'<button style="margin-top:.5rem" onclick="saveBaseline()">Set baseline</button></div>')
     if dyn.get("mode") == "zerohero":
+        _exp = dyn.get("sell_enabled")
+        _exp_txt = (f'export 18:00–21:00 down to ≥{dyn.get("survival_soc","?")}%' if _exp
+                    else 'no feed-in/export (disabled)')
         dyn_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ ZEROHERO MODE (GloBird)</small>'
-                    f'<div>FREE-charge 11:00–14:00 → <b>{dyn.get("max_soc","?")}%</b> by 2pm · export 18:00–21:00 · '
-                    f'no import 16:00–23:00 peak</div>'
-                    f'<small>before 11:00 &amp; 16:00–23:00 peak: run off battery, zero grid import · '
-                    f'export down to ≥{dyn.get("survival_soc","?")}% (keeps enough to coast to the 11:00 free window) · '
-                    f'battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · feed-in ${snap.get("feedin","?")}</small></div>')
+                    f'<div>FREE-charge 11:00–14:00 (0c) → <b>{dyn.get("max_soc","?")}%</b> by 2pm · '
+                    f'<b>no import</b> 16:00–23:00 peak (44c) · {_exp_txt}</div>'
+                    f'<small>14–16 &amp; 23–11 shoulder/overnight (33c) &amp; peak: run off battery, zero grid import '
+                    f'until the 11:00 free window · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh</small></div>')
     else:
         _bb = rec.get("buy_bar"); _df = rec.get("import_deficit_kwh"); _ns = rec.get("buy_slots_needed")
         _bar_txt = (f'buy in cheapest slots ≤ <b>${_bb:.3f}</b>' if isinstance(_bb, (int, float))

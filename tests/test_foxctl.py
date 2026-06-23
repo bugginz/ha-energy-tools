@@ -216,7 +216,7 @@ class ZeroHeroTest(unittest.TestCase):
     def tearDown(self):
         foxctl.datetime = self._orig
 
-    def _rec(self, hour, soc, survival=30):
+    def _rec(self, hour, soc, survival=30, sell_enabled=True):
         import datetime as _dt
 
         class FDT(_dt.datetime):
@@ -227,6 +227,7 @@ class ZeroHeroTest(unittest.TestCase):
         strat = copy.deepcopy(foxctl.DEFAULT_CONFIG["strategy"])
         strat["max_soc"] = 100
         strat["reserve_soc"] = 20
+        strat["sell_enabled"] = sell_enabled
         return foxctl.decide_zerohero(soc, "SelfUse", strat, survival)
 
     def test_free_window_grid_charges_to_max(self):
@@ -253,13 +254,20 @@ class ZeroHeroTest(unittest.TestCase):
         self.assertFalse(r["force_charge"])
         self.assertFalse(r["force_discharge"])
 
-    def test_evening_window_exports(self):
-        r = self._rec(19, 80, survival=30)
+    def test_evening_window_exports_when_enabled(self):
+        r = self._rec(19, 80, survival=30, sell_enabled=True)
         self.assertTrue(r["force_discharge"])
 
     def test_evening_holds_at_survival(self):
-        r = self._rec(19, 30, survival=30)   # at survival → don't export below it
+        r = self._rec(19, 30, survival=30, sell_enabled=True)   # at survival → don't export below it
         self.assertFalse(r["force_discharge"])
+
+    def test_no_export_when_feedin_disabled(self):
+        # feed-in is bad → auto_sell off → 18–21 behaves like peak: cover from battery, no export
+        r = self._rec(19, 90, survival=30, sell_enabled=False)
+        self.assertFalse(r["force_discharge"])
+        self.assertFalse(r["force_charge"])
+        self.assertIn("PEAK", r["reason"])
 
 
 class BuyTargetKwhTest(unittest.TestCase):
