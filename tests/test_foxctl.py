@@ -389,6 +389,25 @@ class EvDivertTest(unittest.TestCase):
         self.assertTrue(want)
         self.assertIn("car + battery", why)
 
+    def test_held_off_while_selling(self):
+        s = self._snap(price=0.10, recommendation={"force_discharge": True})   # cheap grid, but we're selling
+        want, why = foxctl.ev_divert_decision(s, self.EV)
+        self.assertFalse(want)
+        self.assertIn("selling", why)
+
+    def test_held_off_while_force_charging_below_target(self):
+        s = self._snap(price=0.10, soc=80, recommendation={"force_charge": True},
+                       dynamic={"charge_start_price": 0.12, "target_soc": 100})
+        want, why = foxctl.ev_divert_decision(s, self.EV)
+        self.assertFalse(want)
+        self.assertIn("force-charging", why)
+
+    def test_charges_when_force_charge_near_target(self):
+        # 98% with target 100 → within 5% of target, battery top-off nearly done → car may charge too
+        s = self._snap(price=0.10, soc=98, recommendation={"force_charge": True},
+                       dynamic={"charge_start_price": 0.12, "target_soc": 100})
+        self.assertTrue(foxctl.ev_divert_decision(s, self.EV)[0])
+
     def test_no_divert_when_nothing_cheap(self):
         want, why = foxctl.ev_divert_decision(self._snap(), self.EV)   # dear export, dear grid
         self.assertFalse(want)

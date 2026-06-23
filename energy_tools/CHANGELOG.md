@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.37.0
+- **EV divert now yields to active battery operations (safety).** The car charger is held OFF while the inverter is **selling** (force-discharge to grid) or **force-charging the battery toward a target it's still >5% below** — so plugging in at a critical moment can't redirect power away from a high-price export or starve a critical battery fill. Near the top of a charge (within 5% of target) the car may still charge alongside a cheap top-off. Status shows e.g. `battery is selling to grid — car held off`.
+
 ## 1.36.0
 - **Buy price on the SoC chart.** The dedicated SoC chart now overlays the forecast **buy price** (blue line, right $ axis) plus the charge-start (green) and sell (pink) threshold lines — so you can see whether the shadow plan actually tracks price (charging below charge-start, selling above the sell threshold).
 - **EV "no draw" detection.** If the car-charger socket is ON but pulling ~0 kW for 5+ minutes, the EV status now flags `⚠️ no draw — car full or unplugged`, so an idle socket is obvious instead of looking like it's charging.

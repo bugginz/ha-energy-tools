@@ -1300,6 +1300,17 @@ def ev_divert_decision(snap, ev):
     path it charges the car alongside the battery top-off (no yield — unlimited cheap import). (want, why)."""
     feedin_price, feedin_power, buy = snap.get("feedin"), snap.get("feedin_power") or 0.0, snap.get("price")
     soc = snap.get("soc")
+    # SAFETY: never divert to the car while the inverter is actively SELLING (export→grid) or
+    # FORCE-CHARGING the battery toward a target it's still well below — plugging in would steal that
+    # power (drain export revenue / starve the critical battery fill). Yields to the battery scheduler.
+    rec = snap.get("recommendation") or {}
+    active = (snap.get("scheduler") or {}).get("active") or {}
+    if rec.get("force_discharge") or active.get("mode") == "ForceDischarge":
+        return False, "battery is selling to grid — car held off (don't redirect export)"
+    target = (snap.get("dynamic") or {}).get("target_soc")
+    if (rec.get("force_charge") or active.get("mode") == "ForceCharge") and isinstance(soc, (int, float)) \
+            and isinstance(target, (int, float)) and soc < target - 5:
+        return False, f"battery force-charging to {target}% (now {soc:.0f}%) — car held off"
     surplus = (feedin_power >= ev.get("min_export_kw", 1.0)
                and feedin_price is not None and feedin_price <= ev.get("feedin_max", 0.10))
     charge_start = (snap.get("dynamic") or {}).get("charge_start_price")
