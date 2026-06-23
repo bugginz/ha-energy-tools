@@ -1279,7 +1279,7 @@ def maybe_llm_review(cfg, ctx, force=False):
 _NOTIFY = {"last_band": None, "last_llm_ts": None, "last_stale": False,
            "last_action": None, "last_action_ts": 0.0, "last_selling": False}
 
-_EV = {"on": None, "last_change": 0.0, "override_until": 0.0,
+_EV = {"on": None, "last_change": 0.0, "override_until": 0.0, "lowdraw_since": 0.0,
        "session_day": None, "session_start_kwh": None, "capped": False}   # divert + manual force + daily cap
 
 
@@ -1365,7 +1365,16 @@ def ev_divert_tick(cfg, snap):
         if _EV["on"] != want:
             log_event("ev_divert", f"car charger {'ON' if want else 'OFF'} ({why})")
         _EV["on"], _EV["last_change"] = want, now
-    return f"car charger {'ON' if _EV['on'] else 'off'} ({why})"
+    # No-draw detection: socket on but ~0 power for a while → car is full or not plugged in.
+    ev_kw = snap.get("ev_kw")
+    note = ""
+    if _EV["on"] and isinstance(ev_kw, (int, float)) and ev_kw < 0.1:
+        _EV["lowdraw_since"] = _EV.get("lowdraw_since") or now
+        if now - _EV["lowdraw_since"] > 300:
+            note = " · ⚠️ no draw — car full or unplugged"
+    else:
+        _EV["lowdraw_since"] = 0.0
+    return f"car charger {'ON' if _EV['on'] else 'off'} ({why}){note}"
 
 
 def ha_notify(cfg, title, message):
@@ -2636,10 +2645,35 @@ def render_soc_svg(snap: dict, hours: float = 24) -> str:
     iw, ih = W - padL - padR, H - padT - padB
     X = lambda h: padL + iw * (h - xmin) / ((xmax - xmin) or 1)
     Y = lambda pct: padT + ih * (1 - max(0.0, min(100.0, pct)) / 100.0)
+    # right $ axis: forecast buy price + charge-start / sell thresholds, so you can see if the plan
+    # tracks price (charges below charge-start, sells above the sell threshold).
+    dyn = snap.get("dynamic") or {}
+    buy = []
+    for p in snap.get("forecast_h") or []:
+        t = _parse_t(p.get("t") or "")
+        if t and p.get("price") is not None:
+            hh = (t - now).total_seconds() / 3600.0
+            if xmin <= hh <= xmax:
+                buy.append((hh, float(p["price"])))
+    cstart = dyn.get("charge_start_price") or 0.0
+    sthr = dyn.get("sell_price") or 0.0
+    dmax = (max([pr for _, pr in buy] + [cstart, sthr, 0.1])) * 1.1
+    RY = lambda d: padT + ih * (1 - min(max(d, 0.0), dmax) / (dmax or 1))
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" style="font:13px system-ui">']
     for pct in (0, 20, 40, 60, 80, 100):
         out.append(f'<line x1="{padL}" y1="{Y(pct):.1f}" x2="{W-padR}" y2="{Y(pct):.1f}" stroke="#8884" '
                    f'stroke-width="0.5"/><text x="{padL-4}" y="{Y(pct)+4:.1f}" text-anchor="end" fill="#999">{pct}%</text>')
+    for k in range(3):                                    # right-axis $ labels
+        dv = dmax * k / 2
+        out.append(f'<text x="{W-padR+4}" y="{RY(dv)+4:.1f}" fill="#2980d9">${dv:.2f}</text>')
+    out.append(f'<line x1="{padL}" y1="{RY(cstart):.1f}" x2="{W-padR}" y2="{RY(cstart):.1f}" stroke="#1a9e4b" '
+               f'stroke-dasharray="5 4" stroke-width="0.8" opacity="0.7"/>')
+    if sthr:
+        out.append(f'<line x1="{padL}" y1="{RY(sthr):.1f}" x2="{W-padR}" y2="{RY(sthr):.1f}" stroke="#e84393" '
+                   f'stroke-dasharray="5 4" stroke-width="0.8" opacity="0.7"/>')
+    if buy:
+        out.append('<polyline points="' + " ".join(f"{X(h):.1f},{RY(pr):.1f}" for h, pr in buy) +
+                   '" fill="none" stroke="#2980d9" stroke-width="1.6" opacity="0.85"/>')
     tick = max(1, round((xmax - xmin) / 6))
     for hh in range(0, int(xmax) + 1, tick):
         if xmin <= hh <= xmax:
@@ -2672,6 +2706,8 @@ def render_soc_svg(snap: dict, hours: float = 24) -> str:
     legend = ('<small><span style="color:#16a085">— rules-model SoC</span> · '
               '<span style="color:#d35400">- - shadow plan + floor</span> · '
               '<span style="color:#c0392b">- - survival</span> · '
+              '<span style="color:#2980d9">— buy $ (right axis)</span> '
+              '<span style="color:#1a9e4b">·charge≤</span> <span style="color:#e84393">·sell≥</span> · '
               '<a href="/api/export.csv">⤓ export CSV (actuals + forecast/plan)</a></small>')
     return "".join(out) + legend
 

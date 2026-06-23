@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.0
+- **Buy price on the SoC chart.** The dedicated SoC chart now overlays the forecast **buy price** (blue line, right \$ axis) plus the charge-start (green) and sell (pink) threshold lines — so you can see whether the shadow plan actually tracks price (charging below charge-start, selling above the sell threshold).
+- **EV "no draw" detection.** If the car-charger socket is ON but pulling ~0 kW for 5+ minutes, the EV status now flags `⚠️ no draw — car full or unplugged`, so an idle socket is obvious instead of looking like it's charging.
+
 ## 1.35.0
 - **Dedicated SoC % chart** (its own single axis, below the price charts) comparing the **rules-model projection** (teal) against the **shadow plan + floor envelope** (orange) with the survival line and current SoC — so you can see why the plan runs leaner without fighting the crowded 3-axis price chart. Backed by a new shared `project_soc_path` (the rules-model forward sim) so both the price chart and this one use the same numbers.
 - **CSV export** (`/api/export.csv`, linked under the SoC chart): yesterday + today **5-minute actuals** (SoC, PV, load, grid import/export, from FoxESS history in ≤24h windows) **plus** the forward per-slot **forecast/plan** (buy + feed-in price, expected load/solar, rules-model SoC, shadow-plan SoC, plan floor) — one spreadsheet to see what actually happened vs what's planned.
