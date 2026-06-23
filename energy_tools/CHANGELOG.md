@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.37.1
+- Round the telemetry power values (PV, load, EV, grid import/export, battery) to 2 dp in the snapshot, so cards show `1.4 kW` instead of float artifacts like `1.4009999999999998 kW`. Also tidies the published MQTT sensor values.
+
 ## 1.37.0
 - **EV divert now yields to active battery operations (safety).** The car charger is held OFF while the inverter is **selling** (force-discharge to grid) or **force-charging the battery toward a target it's still >5% below** — so plugging in at a critical moment can't redirect power away from a high-price export or starve a critical battery fill. Near the top of a charge (within 5% of target) the car may still charge alongside a cheap top-off. Status shows e.g. `battery is selling to grid — car held off`.
 
