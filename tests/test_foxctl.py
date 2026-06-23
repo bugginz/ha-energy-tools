@@ -123,31 +123,100 @@ class ApplyRecommendationGateTest(unittest.TestCase):
 
 
 class DecideTest(unittest.TestCase):
-    """Core recommendation logic — the FORCE_CHARGE branch from the bug report (price <= start)."""
+    """Core recommendation logic — Phase 2 need-based, RELATIVE buying (no absolute charge_start_price)."""
 
-    def _prices(self, price, **kw):
-        return {"price": price, "forecast": [], "aemo_forecast": [], "feedin": None, **kw}
+    def _prices(self, price, forecast=None, **kw):
+        return {"price": price, "forecast": forecast or [], "aemo_forecast": [], "feedin": None, **kw}
 
-    def test_force_charge_when_price_at_or_below_start(self):
-        strat = base_strat()  # charge_start_price = 0.12
-        rec = foxctl.decide(self._prices(0.11), soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+    def _fwd(self, *prices):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        return [{"t": (now + timedelta(hours=i + 1)).isoformat(), "price": p} for i, p in enumerate(prices)]
+
+    def test_charges_when_now_is_cheapest_slot_covering_deficit(self):
+        strat = base_strat()
+        strat["import_deficit_kwh"] = 5.0          # we must import
+        strat["price_ceiling"] = 0.30
+        rec = foxctl.decide(self._prices(0.10, self._fwd(0.25, 0.25, 0.25)),
+                            soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
         self.assertTrue(rec["force_charge"])
-        self.assertEqual(rec["action"], "FORCE_CHARGE")
+        self.assertIn("NEED-BASED", rec["reason"])
+
+    def test_defers_when_a_cheaper_future_slot_covers_the_need(self):
+        strat = base_strat()
+        strat["import_deficit_kwh"] = 2.0          # ~1 slot needed
+        strat["price_ceiling"] = 0.30
+        rec = foxctl.decide(self._prices(0.20, self._fwd(0.08)),
+                            soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+        self.assertFalse(rec["force_charge"])      # now 0.20 > bar 0.08 → wait
+
+    def test_no_charge_without_a_forward_deficit(self):
+        strat = base_strat()
+        strat["import_deficit_kwh"] = 0.0          # battery+solar already cover the day
+        rec = foxctl.decide(self._prices(0.05), soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+        self.assertFalse(rec["force_charge"])
+
+    def test_floor_always_charges_below_it(self):
+        strat = base_strat()
+        strat["charge_start_floor"] = 0.12         # always-OK at/below this
+        strat["import_deficit_kwh"] = 0.0
+        rec = foxctl.decide(self._prices(0.10), soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+        self.assertTrue(rec["force_charge"])
 
     def test_no_charge_when_battery_full(self):
         strat = base_strat()
-        rec = foxctl.decide(self._prices(0.11), soc=100, pv_kw=0.0, work_mode="SelfUse", strat=strat)
+        strat["import_deficit_kwh"] = 10.0
+        rec = foxctl.decide(self._prices(0.05), soc=100, pv_kw=0.0, work_mode="SelfUse", strat=strat)
         self.assertFalse(rec["force_charge"])
         self.assertEqual(rec["target_mode"], "SelfUse")
 
     def test_foundation_ceiling_blocks_charge_above_price_ceiling(self):
-        # price above the absolute ceiling must never grid-charge, even if a branch proposed it.
+        # price above the absolute ceiling must never grid-charge, however big the deficit.
         strat = base_strat()
-        strat["charge_start_price"] = 0.50  # tempt the price<=start branch into firing at a high price
+        strat["import_deficit_kwh"] = 20.0
         strat["price_ceiling"] = 0.20
         rec = foxctl.decide(self._prices(0.30), soc=50, pv_kw=0.0, work_mode="SelfUse", strat=strat)
         self.assertFalse(rec["force_charge"])
         self.assertIn("FOUNDATION", rec["reason"])
+
+
+class PlanBuySlotsTest(unittest.TestCase):
+    """The relative, need-based buy planner in isolation."""
+
+    def _now_fc(self, *prices):
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        return now, [{"t": (now + timedelta(hours=i + 1)).isoformat(), "price": p} for i, p in enumerate(prices)]
+
+    def test_floor_is_always_ok(self):
+        now, _ = self._now_fc()
+        r = foxctl.plan_buy_slots([], 0.05, now, 0.0, 10.5, 0.30, 0.10)
+        self.assertTrue(r["should_charge"])
+        self.assertEqual(r["bar"], 0.10)
+
+    def test_no_deficit_no_buy(self):
+        now, _ = self._now_fc()
+        self.assertFalse(foxctl.plan_buy_slots([], 0.05, now, 0.0, 10.5, 0.30, 0.0)["should_charge"])
+
+    def test_ceiling_blocks(self):
+        now, _ = self._now_fc()
+        self.assertFalse(foxctl.plan_buy_slots([], 0.40, now, 5.0, 10.5, 0.30, 0.10)["should_charge"])
+
+    def test_picks_cheapest_covering_slot(self):
+        now, fc = self._now_fc(0.25, 0.25, 0.25)
+        r = foxctl.plan_buy_slots(fc, 0.10, now, 5.0, 10.5, 0.30, 0.05)
+        self.assertTrue(r["should_charge"])
+        self.assertEqual(r["slots_needed"], 1)
+
+    def test_defers_to_cheaper_future(self):
+        now, fc = self._now_fc(0.08)
+        self.assertFalse(foxctl.plan_buy_slots(fc, 0.20, now, 2.0, 10.5, 0.30, 0.05)["should_charge"])
+
+    def test_large_deficit_widens_the_bar(self):
+        now, fc = self._now_fc(0.08, 0.15, 0.25)
+        r = foxctl.plan_buy_slots(fc, 0.20, now, 20.0, 10.5, 0.30, 0.05)
+        self.assertTrue(r["should_charge"])        # need ~4 slots → bar rises to accept now
+        self.assertGreaterEqual(r["slots_needed"], 4)
 
 
 class FoxESSReadEndpointsTest(unittest.TestCase):

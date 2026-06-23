@@ -458,6 +458,56 @@ def classify_band(price, bands) -> str:
     return bands[-1]["name"] if bands else "unknown"
 
 
+def plan_buy_slots(fc, price_now, now, deficit_kwh, charge_power_kw, ceiling, floor,
+                   horizon_h=18, slot_h=0.5):
+    """Need-based, RELATIVE buy planner — the Phase 2 foundation rule.
+
+    "Cheap" is relative to the forward forecast and sized to what we actually need: forecast the
+    import deficit (what trend data says we must buy to bridge to the next solar window), then accept
+    only the cheapest forward slots that cover it. The affordability 'bar' rises when the forecast is
+    dear and falls when it's cheap — but never exceeds the ceiling. At/below the operator's floor we
+    always top up (cheap insurance). No deficit → no import.
+
+    Returns {should_charge, bar, slots_needed, deficit_kwh, eligible, reason}.
+    """
+    out = {"should_charge": False, "bar": None, "slots_needed": 0,
+           "deficit_kwh": round(float(deficit_kwh or 0.0), 1), "eligible": 0, "reason": ""}
+    # Always-OK floor: at/below the operator's floor we top up regardless (it's cheap insurance, and
+    # leaves the battery ready to ride expensive periods / export into a spike).
+    if price_now is not None and floor is not None and price_now <= floor:
+        out.update(should_charge=True, bar=round(float(floor), 3),
+                   reason=f"price {price_now:.3f} ≤ floor {floor:.3f} (always-OK)")
+        return out
+    if price_now is None:
+        out["reason"] = "no price"
+        return out
+    if price_now > ceiling:
+        out["reason"] = f"price {price_now:.3f} > ceiling {ceiling:.3f}"
+        return out
+    if (deficit_kwh or 0.0) <= 0:
+        out["reason"] = "no forward deficit — nothing to import"
+        return out
+    # Buyable candidates: now + each forward slot within the horizon, only at/below the ceiling.
+    cand = [float(price_now)]
+    for p in fc:
+        t = _parse_t(p.get("t") or "")
+        pr = p.get("price")
+        if t and pr is not None:
+            dt = (t - now).total_seconds()
+            if 0 < dt <= horizon_h * 3600 and pr <= ceiling:
+                cand.append(float(pr))
+    energy_per_slot = max(0.01, charge_power_kw * slot_h)
+    slots_needed = max(1, math.ceil(deficit_kwh / energy_per_slot))
+    buyable = sorted(cand)
+    k = min(slots_needed, len(buyable))
+    bar = round(buyable[k - 1], 3)            # most expensive slot we'd accept given the need
+    out.update(slots_needed=slots_needed, eligible=len(buyable), bar=bar,
+               should_charge=(price_now <= bar))
+    out["reason"] = (f"need {out['deficit_kwh']:.1f}kWh → cheapest {slots_needed} slot(s) of {len(buyable)}; "
+                     f"bar ${bar:.3f}; now ${price_now:.3f} {'≤' if out['should_charge'] else '>'} bar")
+    return out
+
+
 def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
            currently_charging: bool = False, load_kw: float = 0.0,
            demand_window: bool = False) -> dict:
@@ -535,6 +585,16 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     peak_coming = peak_future_h is not None and peak_future_h >= exp
     near_cheapest = (min_future_h is not None and price is not None and price <= min_future_h + win_margin)
 
+    # FOUNDATION (Phase 2): import is NEED-BASED and RELATIVE — buy only the cheapest forward slots
+    # that cover the forecast deficit (trend-derived), never an absolute "charge below $X". floor =
+    # always-OK; ceiling = hard veto; no deficit → no import.
+    floor = strat.get("charge_start_floor", 0.0)
+    deficit = strat.get("import_deficit_kwh", strat.get("energy_shortfall_kwh", 0.0)) or 0.0
+    buy = plan_buy_slots(fc, price, now, deficit, strat.get("force_charge_power_kw", 10.5),
+                         ceiling, floor, horizon_h=horizon_h, slot_h=strat.get("slot_hours", 0.5))
+    bar = buy.get("bar")
+    stop_margin = strat.get("charge_stop_margin", 0.02)
+
     if price is None:
         reasons.append("No price available; defaulting to SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
@@ -552,50 +612,25 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     elif band == "ludicrous":
         reasons.append(f"Price {price:.3f} LUDICROUS (paid to consume!) → force-charge to {target}%.")
         action, force_charge = "FORCE_CHARGE", True
-    elif price <= start_p and solar_covering:
-        reasons.append(f"Price {price:.3f} ≤ start {start_p:.3f}, but solar surplus {solar_surplus:.1f}kW "
-                       f"is charging the battery → no grid charge needed. SelfUse.")
+    elif price > ceiling:
+        reasons.append(f"FOUNDATION: price {price:.3f} > ceiling {ceiling:.3f} → refuse grid import. SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
-    elif price <= start_p:
-        # "unless it's forecast for much lower soon" — defer to the cheaper trough.
-        look = strat.get("defer_lookahead_h", 3)
-        delta = strat.get("defer_if_cheaper_by", 0.04)
-        future = [p.get("price") for p in fc
-                  if _parse_t(p.get("t") or "") and 0 < (_parse_t(p["t"]) - now).total_seconds() <= look * 3600
-                  and p.get("price") is not None]
-        min_future = min(future) if future else None
-        if (not currently_charging and min_future is not None
-                and (price - min_future) >= delta and soc > reserve):
-            reasons.append(f"Price {price:.3f} ≤ start {start_p:.3f}, but forecast dips to {min_future:.3f} "
-                           f"within {look}h (≥{delta:.2f} cheaper) → wait for the trough. SelfUse.")
-            action, target_mode = "SET_MODE", "SelfUse"
-        else:
-            reasons.append(f"Price {price:.3f} ≤ start {start_p:.3f} → start/continue force-charge to {target}%.")
-            action, force_charge = "FORCE_CHARGE", True
-    elif currently_charging and price < stop_p:
-        reasons.append(f"Already charging and price {price:.3f} < stop {stop_p:.3f} (hysteresis) → keep charging.")
-        action, force_charge = "FORCE_CHARGE", True
-    elif horizon_on and peak_coming and near_cheapest and not solar_covering and soc < target:
-        reasons.append(f"Forecast peak {peak_future_h:.2f} within {horizon_h}h and now {price:.3f} is near the cheapest "
-                       f"pre-peak window (min {min_future_h:.3f}+{win_margin:.2f}) → pre-charge in the cheap window now.")
-        action, force_charge = "FORCE_CHARGE", True
-    elif peak_soon and not aemo_trough_soon and solar_covering:
-        reasons.append(f"Peak within {look_h}h but solar surplus {solar_surplus:.1f}kW is charging → "
-                       f"let the sun pre-charge. SelfUse.")
+    elif solar_covering:
+        reasons.append(f"Solar surplus {solar_surplus:.1f}kW covers load/need (no projected shortfall) → "
+                       f"no grid charge. SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
-    elif peak_soon and not aemo_trough_soon:
-        reasons.append(f"Expensive peak within {look_h}h (per {peak_src}) and SoC {soc:.0f}% < {target}% → pre-charge.")
+    elif buy["should_charge"]:
+        reasons.append(f"NEED-BASED BUY: {buy['reason']} → force-charge to {target}%.")
         action, force_charge = "FORCE_CHARGE", True
-    elif band in avoid_bands or price >= exp:
-        reasons.append(f"Price {price:.3f} [band={band}] high → use battery, avoid grid import. SelfUse.")
-        action, target_mode = "SET_MODE", "SelfUse"
+    elif currently_charging and bar is not None and price <= bar + stop_margin and soc < target:
+        reasons.append(f"Continuing charge: price {price:.3f} ≤ bar {bar:.3f}+{stop_margin:.2f} (hysteresis).")
+        action, force_charge = "FORCE_CHARGE", True
     else:
-        why = "price rose above stop threshold → cancel charge" if currently_charging else f"band={band}"
-        reasons.append(f"Price {price:.3f} [{why}] → SelfUse.")
+        reasons.append(f"Hold ({buy['reason']}). SelfUse.")
         action, target_mode = "SET_MODE", "SelfUse"
 
-    # FOUNDATION guardrail: never grid-charge above the absolute price ceiling (ludicrous/negative
-    # is free money and exempt). Vetoes anything the dynamic layer or a branch above proposed.
+    # FOUNDATION guardrail (defensive double-check): never grid-charge above the absolute price ceiling
+    # (ludicrous/negative is free money and exempt).
     if force_charge and band != "ludicrous" and price is not None and price > ceiling:
         force_charge = False
         action, target_mode = "SET_MODE", "SelfUse"
@@ -613,6 +648,9 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
         "band": band,
         "min_future_h": min_future_h,
         "peak_future_h": peak_future_h,
+        "buy_bar": buy.get("bar"),
+        "buy_slots_needed": buy.get("slots_needed"),
+        "import_deficit_kwh": buy.get("deficit_kwh"),
         "reason": " ".join(reasons),
     }
     if force_charge:
@@ -2226,6 +2264,12 @@ def gather_and_decide(cfg: dict) -> dict:
         remaining_load = pred if pred is not None else max(0.0, float(typical_load) - float(consumption.get("today_so_far_kwh") or 0))
         usable_now = max(0.0, stored_kwh - cap_kwh * reserve / 100.0)
         working["energy_shortfall_kwh"] = round(remaining_load - (usable_now + (solar_remaining or 0.0)), 1)
+        # Import deficit for the NEED-BASED buy planner: forecast load to the next solar ramp (not just
+        # to midnight) minus usable battery + remaining solar today. This is what we must import to
+        # bridge the expensive overnight window — the "always look forward" the buy rule selects against.
+        pred_solar = (predict_base_load(consumption.get("hour_profile"), hrs_to_solar)
+                      if consumption.get("profile_days", 0) >= 2 else float(typical_load) * (hrs_to_solar / 24.0))
+        working["import_deficit_kwh"] = round(max(0.0, pred_solar - usable_now - (solar_remaining or 0.0)), 1)
         rec = decide(prices, soc, pv, wm.get("value"), working,
                      currently_charging=charging, load_kw=load, demand_window=demand_window)
 
@@ -3144,10 +3188,14 @@ def render(snap: dict, cfg: dict) -> str:
                     f'<small>keep ≥{dyn.get("survival_soc","?")}% overnight (survival to next free window) · '
                     f'battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · feed-in ${snap.get("feedin","?")}</small></div>')
     else:
-        dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION + DYNAMIC POLICY (Amber)</small>'
-                    f'<div>charge ≤ <b>${dyn.get("charge_start_price","?")}</b> · target <b>{dyn.get("target_soc","?")}%</b> '
-                    f'<small>(set by {dyn.get("source","static")})</small></div>'
-                    f'<small>floor ${dyn.get("charge_start_floor","?")} ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")} · '
+        _bb = rec.get("buy_bar"); _df = rec.get("import_deficit_kwh"); _ns = rec.get("buy_slots_needed")
+        _bar_txt = (f'buy in cheapest slots ≤ <b>${_bb:.3f}</b>' if isinstance(_bb, (int, float))
+                    else 'no import needed')
+        dyn_html = (f'<div class="card"><small>⚙️ FOUNDATION — NEED-BASED BUY (Amber)</small>'
+                    f'<div>{_bar_txt} · target <b>{dyn.get("target_soc","?")}%</b></div>'
+                    f'<small>need <b>{_df if _df is not None else "?"} kWh</b> to next solar → cheapest '
+                    f'{_ns if _ns is not None else "?"} forward slot(s); relative bar rises/falls with the forecast '
+                    f'(floor ${dyn.get("charge_start_floor","?")} always-OK ≤ charge ≤ ceiling ${dyn.get("price_ceiling","?")}) · '
                     f'max SoC {dyn.get("max_soc","?")}% · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh · '
                     f'feed-in ${snap.get("feedin","?")}</small></div>')
     llm = snap.get("llm")

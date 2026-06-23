@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.42.0 — Need-based, RELATIVE buying (Phase 2 foundation)
+
+- **"Cheap" is now relative to the forward forecast and sized to what you actually need.** The buy decision no longer fires on an absolute `charge_start_price`. Instead, each cycle the controller forecasts the **import deficit** to the next solar ramp (load-to-next-solar from your trend profile, minus usable battery + remaining solar), then imports **only during the cheapest forward slots that cover that deficit** (`plan_buy_slots`). The affordability "bar" rises when the forecast is dear and falls when it's cheap — but never exceeds the **ceiling** (hard veto), and at/below the **floor** we always top up. **No forward deficit → no import** (so it stops buying mediocre power "just in case").
+- This is the "always look forward, buy only what's needed at the cheapest times" the design was meant to deliver — and it's encoded as the foundation with named guardrails (floor always-OK, ceiling veto) and a full test suite (9 new tests incl. defer-to-cheaper-future, large-deficit-widens-bar, ceiling block, no-deficit-no-buy).
+- Removed the old absolute/`charge_start_price` + horizon/defer pre-charge branches that led to buying expensive power ahead of peaks. The dashboard FOUNDATION card now shows the live model: "buy in cheapest slots ≤ $bar · need N kWh to next solar → cheapest M slot(s)".
+- Note: the LLM's `charge_start_price` knob is now vestigial (target_soc still caps the charge); the strategist is reworked to nudge the relative knobs in Phase 3.
+
 ## 1.41.0 — SAFETY: stop stranding the inverter at a high min-SoC
 
 - **Root-cause fix for the "imports expensive power, sells nothing" bug.** Auto-sell was pushing the *computed survival level* onto the inverter as its grid min-SoC (`minSocOnGrid`), which lands on **66%** under normal evening math — and disabling the schedule never resets it, so in SelfUse the inverter kept importing grid power to hold 66%. foxctl now **never writes a computed or raised min-SoC**: the only value it ever sends is a constant safety floor, **`inverter_min_soc` (default 10%, new option)**, which you should set to match the FoxESS app. Survival and export-buffer are enforced **in software** (the loop stops charging/selling when the target is reached), never on the device.
