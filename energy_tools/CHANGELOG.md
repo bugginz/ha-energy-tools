@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.36.0
-- **Buy price on the SoC chart.** The dedicated SoC chart now overlays the forecast **buy price** (blue line, right \$ axis) plus the charge-start (green) and sell (pink) threshold lines — so you can see whether the shadow plan actually tracks price (charging below charge-start, selling above the sell threshold).
+- **Buy price on the SoC chart.** The dedicated SoC chart now overlays the forecast **buy price** (blue line, right $ axis) plus the charge-start (green) and sell (pink) threshold lines — so you can see whether the shadow plan actually tracks price (charging below charge-start, selling above the sell threshold).
 - **EV "no draw" detection.** If the car-charger socket is ON but pulling ~0 kW for 5+ minutes, the EV status now flags `⚠️ no draw — car full or unplugged`, so an idle socket is obvious instead of looking like it's charging.
 
 ## 1.35.0
