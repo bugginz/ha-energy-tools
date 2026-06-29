@@ -67,46 +67,52 @@ DEFAULT_CONFIG = {
         "aemo_forecast_entity": "sensor.aemo_nem_nsw1_current_30min_forecast",
     },
     "strategy": {
-        "cheap_price": 0.10,        # Amber retail $/kWh at/below which we charge from grid
-        "expensive_price": 0.35,    # Amber retail $/kWh at/above which we avoid grid import
-        "target_soc": 100,          # force-charge cap (fdSoc)
-        "spike_sell_buffer_kwh": 0.0,  # strategist lever: extra import beyond survival, for spike-sell readiness
-        # TOP-UP mode: buy (cheaply) toward target_soc to stay full for spike-sell readiness, instead of
-        # only covering the survival deficit. Still bounded by the ceiling + cheapest-slot selection.
-        "topup_to_target": True,
-        "reserve_soc": 20,          # never plan to go below this
-        "precharge_lookahead_h": 3, # if an expensive peak is within this window, pre-charge
-        # AEMO wholesale thresholds (different scale to retail) used for forward peak/trough detection
-        "aemo_expensive": 0.20,     # wholesale $/kWh that signals a coming peak
-        "aemo_cheap": 0.05,         # wholesale $/kWh that signals a coming trough
-        "charge_start_price": 0.12, # begin grid-charge at/below this (hysteresis low)
-        "charge_stop_margin": 0.05, # keep charging until price > start + this (hysteresis high)
-        "defer_lookahead_h": 3,     # look this far ahead for a cheaper trough
-        "defer_if_cheaper_by": 0.04,# …and wait if it's at least this much cheaper than now
-        "force_charge_minutes": 120,  # max window length (safety cap); loop re-evaluates & stops early
-        "force_charge_power_kw": 10.5,  # 10500 W
-        "solar_defer_kw": 0.5,      # if PV exceeds load by this much, let solar charge (skip grid)
-        "avoid_demand_window": True,  # skip grid force-charge while Amber demand window is active
-        "horizon_charge": True,       # pre-charge in the cheapest forward window before a forecast peak
-        "horizon_hours": 18,          # how far ahead to scan the price forecast
-        "horizon_window_margin": 0.03,  # "near cheapest" = within this of the forward minimum
+        # --- Tariff-driven time-of-use (the ONLY decision model) -------------------------------------
+        # The home is on a GloBird time-of-use plan with a FREE midday import window. We grid-charge the
+        # battery (and car) only in that window, run off battery through the expensive peak/shoulder, and
+        # bank only what the demand estimator says we need to coast to the next free window. Swap plans by
+        # changing `tariff_profile`; both profiles live in `tariffs`. No price forecasting.
+        "tariff_profile": "zerohero",
+        "tariffs": {
+            "zerohero": {
+                "label": "GloBird ZeroHero",
+                "supply_c": 181.5,                                  # daily supply charge (c/day)
+                "free": {"start": 11, "end": 14, "free_kwh": 50, "excess_c": 30.8},
+                "peak": {"start": 16, "end": 23, "c": 59.4},        # cover from battery, ZERO grid import
+                "shoulder_c": 51.7,                                 # everything outside free + peak
+                "fit_peak_c": 2.0, "fit_else_c": 0.0,              # feed-in tariff (export earnings)
+                "export": {"start": 18, "end": 21, "c": 10.0, "cap_kwh": 15},  # Super Export window
+            },
+            "four4free": {
+                "label": "GloBird Four4Free",
+                "supply_c": 134.2,
+                "free": {"start": 10, "end": 14, "free_kwh": 50, "excess_c": 26.4},
+                "peak": {"start": 16, "end": 23, "c": 59.95},
+                "shoulder_c": 37.51,
+                "fit_peak_c": 8.0, "fit_else_c": 0.0,
+                # $1/day credit for keeping export ≤0.03 kWh/hr in 18–21 — honoured for free (export off).
+                "export_credit": {"start": 18, "end": 21, "max_kwh_per_h": 0.03, "dollar_per_day": 1.0},
+            },
+        },
+        "target_soc": 100,          # absolute charge cap (clamped by max_soc)
+        "max_soc": 100,             # hard charge cap — never grid-charge above this
+        "reserve_soc": 20,          # software coast floor — plan never drains below this overnight
+        "battery_capacity_kwh": 41.44,  # usable pack (4 batteries)
+        "typical_daily_load_kwh": 30,   # fallback until enough consumption history is sampled
+        "force_charge_minutes": 120,    # max force-charge window length (safety cap); re-evaluated each cycle
+        "force_charge_power_kw": 13.5,  # inverter max grid charge rate (13500 W)
+        # Temperature nudge: scale the predicted coast load up in hot/cold weather (HVAC). Gentle in v1;
+        # tune per_c once temp↔load history accumulates. mild_c is the no-nudge baseline temperature.
+        "temp_mild_c": 20.0, "temp_hot_c": 28.0, "temp_cold_c": 12.0,
+        "temp_per_c_hot": 0.015, "temp_per_c_cold": 0.020, "temp_nudge_max": 0.40,
         "min_soc_on_grid": 10,
         # The ONLY min-SoC foxctl ever writes to the inverter — a constant safety floor, never a
-        # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival and
-        # export buffers are enforced in software (when to stop charging/selling), never on the device.
+        # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival is
+        # enforced in software (when to stop charging/selling), never on the device.
         "inverter_min_soc": 10,
-        # Price bands ($/kWh, retail). Ordered low->high; "upto" is the exclusive upper bound,
-        # last band (upto null) is the catch-all. charge_bands grid-charge; avoid_bands hold battery.
-        "bands": [
-            {"name": "ludicrous",     "upto": 0.0},     # negative: paid to consume
-            {"name": "extremely_low", "upto": 0.10},    # 0-10c
-            {"name": "low",           "upto": 0.20},
-            {"name": "normal",        "upto": 0.35},
-            {"name": "high",          "upto": 1.00},
-            {"name": "spike",         "upto": None}      # >= $1
-        ],
-        "charge_bands": ["ludicrous", "extremely_low"],
-        "avoid_bands": ["high", "spike"],
+        # Export (feed-in) is OFF by default — feed-in is poor on these plans. Turn on per profile's
+        # export window only if sell_enabled. Selling never drains below the coast floor.
+        "sell_enabled": False,
     },
     "control": {
         "allow_control": False,     # master switch for ANY write to the inverter
@@ -534,7 +540,9 @@ def decide(prices: dict, soc: float, pv_kw: float, work_mode: str, strat: dict,
     price = prices.get("price")
     fc = prices.get("forecast") or []
     aemo_fc = prices.get("aemo_forecast") or []
-    cheap, exp = strat["cheap_price"], strat["expensive_price"]
+    # NOTE: dead path under tariff mode — kept as the fallback when no tariff_profile resolves. The Amber
+    # price knobs were removed from DEFAULT_CONFIG (tariff-driven is the only model), so default safely.
+    cheap, exp = strat.get("cheap_price", 0.10), strat.get("expensive_price", 0.35)
     start_p = strat.get("charge_start_price", cheap)   # begin charging at/below this
     stop_p = start_p + strat.get("charge_stop_margin", 0.05)  # keep charging until price > start + margin
     aemo_exp, aemo_cheap = strat.get("aemo_expensive", 0.20), strat.get("aemo_cheap", 0.05)
@@ -1933,21 +1941,27 @@ def mqtt_publish(cfg, snap):
         print(f"mqtt publish failed: {e}", file=sys.stderr)
 
 
-def decide_zerohero(soc, work_mode, strat, survival_soc):
-    """GloBird ZeroHero time-of-use strategy (import-cost driven, no price forecasting):
-      • 11:00–14:00 FREE window  → grid-charge battery to full (first 50 kWh/day are 0c).
-      • 16:00–23:00 PEAK (44c)   → cover ALL load from battery, ZERO grid import.
-      • 14–16 & 23–11 (33c)      → run off battery, avoid grid import until the free window.
-      • Export to grid is OFF by default (poor feed-in) — gate on sell_enabled (auto_sell) if you want
-        the 18:00–21:00 export window back.
+def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
+    """GloBird time-of-use strategy (import-cost driven, no price forecasting). Reads the ACTIVE tariff
+    `profile` (the resolved tariffs[tariff_profile] dict) — free/peak/export windows + per-band cents:
+      • FREE window   → grid-charge battery to full (first free_kwh/day are 0c).
+      • PEAK window   → cover ALL load from battery, ZERO grid import.
+      • shoulder/overnight → run off battery, avoid grid import until the next free window.
+      • Export to grid is OFF by default (poor feed-in) — needs sell_enabled AND a profile export window.
     Returns a rec dict in the same shape decide() produces."""
-    z = strat.get("zerohero", {})
-    fs, fe = z.get("free_start_h", 11), z.get("free_end_h", 14)
-    es, ee = z.get("evening_start_h", 18), z.get("evening_end_h", 21)
-    ps, pe = z.get("peak_start_h", 16), z.get("peak_end_h", 23)   # full ToU peak (no import)
+    free = profile.get("free") or {}
+    peak = profile.get("peak") or {}
+    expw = profile.get("export") or {}
+    fs, fe = free.get("start", 11), free.get("end", 14)
+    es, ee = expw.get("start", 18), expw.get("end", 21)
+    ps, pe = peak.get("start", 16), peak.get("end", 23)          # full ToU peak (no import)
+    peak_c, shoulder_c = peak.get("c"), profile.get("shoulder_c")
+    pc_txt = f"{peak_c:g}c" if isinstance(peak_c, (int, float)) else "peak"
+    sh_txt = f"{shoulder_c:g}c" if isinstance(shoulder_c, (int, float)) else "shoulder"
     max_soc = strat.get("max_soc", 90)
     reserve = strat.get("reserve_soc", 20)
-    sell_on = bool(strat.get("sell_enabled", True))              # export to grid (feed-in) — off → never export
+    # export to grid (feed-in) — off by default; needs both the master toggle AND a profile export window
+    sell_on = bool(strat.get("sell_enabled", False)) and bool(expw)
     nowl = datetime.now()
     h = nowl.hour + nowl.minute / 60.0
     in_free = fs <= h < fe
@@ -1958,8 +1972,8 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
     # Force-charge from grid ONLY in the FREE window — never before 11:00 and never in the peak.
     if in_free and soc < max_soc:
         action, fc = "FORCE_CHARGE", True
-        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 (0c, first 50kWh) → grid-charge to "
-                       f"{max_soc}% — full by {fe:02d}:00.")
+        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 (0c, first {free.get('free_kwh', 50):g}kWh) → "
+                       f"grid-charge to {max_soc}% — full by {fe:02d}:00.")
     elif in_free:
         reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {max_soc}%). SelfUse.")
     elif in_eve and sell_on and soc > survival_soc + 1:
@@ -1967,12 +1981,12 @@ def decide_zerohero(soc, work_mode, strat, survival_soc):
         reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
                        f"(keeps enough to coast to 11:00).")
     elif in_peak:
-        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 (44c) → cover load from battery, ZERO grid "
+        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 ({pc_txt}) → cover load from battery, ZERO grid "
                        f"import (no force-charge, no feed-in). SelfUse.")
     elif soc <= reserve:
         reasons.append(f"ZeroHero off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
     else:
-        reasons.append(f"ZeroHero shoulder/overnight (33c) → run off battery, avoid grid import until the "
+        reasons.append(f"ZeroHero shoulder/overnight ({sh_txt}) → run off battery, avoid grid import until the "
                        f"{fs:02d}:00 free window. SelfUse.")
     rec = {"action": action, "target_mode": target_mode, "force_charge": fc, "force_discharge": fd,
            "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
@@ -2296,17 +2310,21 @@ def gather_and_decide(cfg: dict) -> dict:
         },
     }
     _LLM["last_ctx"] = plan_ctx
-    zerohero = strat.get("tariff_mode") == "zerohero"
+    # Active tariff profile: the ONLY decision model. tariff_profile names a key in `tariffs`; a missing/
+    # unknown profile falls back to the (now-dead) Amber path so a misconfig can't silently brick control.
+    profile_key = strat.get("tariff_profile")
+    profile = (strat.get("tariffs") or {}).get(profile_key) if profile_key else None
+    zerohero = profile is not None
     working, dyn_src = dict(strat), "static"
     if zerohero:
-        # GloBird ZeroHero: deterministic time-of-use schedule (no Amber price forecasting / LLM).
+        # GloBird time-of-use: deterministic schedule from the active profile (no Amber forecasting / LLM).
         nowl = datetime.now(); hh = nowl.hour + nowl.minute / 60.0
-        free_start = strat.get("zerohero", {}).get("free_start_h", 11)
+        free_start = (profile.get("free") or {}).get("start", 11)
         hrs_to_free = (free_start - hh) % 24 or 24.0          # hours until next free window
         pred = predict_base_load(consumption.get("hour_profile"), hrs_to_free) if consumption.get("profile_days", 0) >= 2 else None
         need_kwh = max(0.0, (pred if pred is not None else float(typical_load) * (hrs_to_free / 24.0)) - (solar_remaining or 0.0))
         survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
-        rec = decide_zerohero(soc, wm.get("value"), strat, survival_soc)
+        rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc)
         plan, dyn_src = None, "zerohero"
         working["target_soc"] = strat.get("max_soc", 90)
     else:
@@ -2409,7 +2427,11 @@ def gather_and_decide(cfg: dict) -> dict:
         "solar_cal": solar_cal,
         "solar_bells": solar_bells,
         "llm": plan,
-        "dynamic": {"source": dyn_src, "mode": ("zerohero" if zerohero else "amber"),
+        "dynamic": {"source": dyn_src, "mode": ("tariff" if zerohero else "amber"),
+                    "tariff_label": (profile.get("label") if zerohero else None),
+                    "tariff": ({"free": profile.get("free"), "peak": profile.get("peak"),
+                                "shoulder_c": profile.get("shoulder_c"),
+                                "export": profile.get("export")} if zerohero else None),
                     "charge_start_price": (None if zerohero else working.get("charge_start_price")),
                     "target_soc": working.get("target_soc"),
                     "price_ceiling": foundation["price_ceiling"], "max_soc": foundation["max_soc"],
@@ -2418,7 +2440,9 @@ def gather_and_decide(cfg: dict) -> dict:
                     "spike_sell_buffer_kwh": working.get("spike_sell_buffer_kwh", 0.0),
                     "buy_bar_cap": working.get("buy_bar_cap"),
                     "topup": bool(strat.get("topup_to_target", False)),
-                    "sell_enabled": (True if zerohero else bool(strat.get("sell_enabled", True)))},
+                    # export off by default — needs the master toggle AND a profile export window
+                    "sell_enabled": (bool(strat.get("sell_enabled", False)) and bool(profile.get("export"))
+                                     if zerohero else bool(strat.get("sell_enabled", True)))},
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
         "forecast_profiles": fcast,   # FoxESS-history hour-of-day load + solar (Phase 2)
@@ -3261,9 +3285,16 @@ def render(snap: dict, cfg: dict) -> str:
     head_pct = max(0, round(soc_now - surv)) if isinstance(soc_now, (int, float)) and isinstance(surv, (int, float)) else None
     head_kwh = round(cap_kwh2 * head_pct / 100.0, 1) if head_pct is not None else None
     buf_kwh = round(cap_kwh2 * surv / 100.0, 1) if isinstance(surv, (int, float)) else None
-    if dyn2.get("mode") == "zerohero":
-        sp_col, sp_icon, sp_txt = "#2ecc71", "⏰", f"ZeroHero exports in the evening window; keeps ≥{surv}% overnight buffer"
-        sp_head = f'export window 18:00–21:00'
+    _tar2 = dyn2.get("tariff") or {}
+    _exp2 = _tar2.get("export") or {}
+    _tariff_mode = dyn2.get("mode") == "tariff"
+    _tariff_sell = bool(dyn2.get("sell_enabled"))
+    if _tariff_mode and _tariff_sell and _exp2:
+        sp_col, sp_icon, sp_txt = "#2ecc71", "⏰", f"{dyn2.get('tariff_label','Tariff')} exports in the evening window; keeps ≥{surv}% overnight buffer"
+        sp_head = f'export window {_exp2.get("start", 18):02d}:00–{_exp2.get("end", 21):02d}:00'
+    elif _tariff_mode:
+        sp_col, sp_icon, sp_txt = "#3498db", "🔋", f"{dyn2.get('tariff_label','Tariff')} mode — export OFF (poor feed-in); battery covers the peak with zero grid import"
+        sp_head = "export off (tariff)"
     elif not sell_on:
         sp_col, sp_icon, sp_txt = "#e67e22", "⚠️", "auto-sell is OFF — a spike will NOT be captured (enable auto_sell / set a sell threshold)"
         sp_head = "export disabled"
@@ -3280,7 +3311,7 @@ def render(snap: dict, cfg: dict) -> str:
         sp_col, sp_icon, sp_txt = "#2ecc71", "✅", f"ready — {head_kwh}kWh ({head_pct}%) sellable above the {surv}% buffer when feed-in ≥ ${sell_p}"
         sp_head = f"export ≥ ${sell_p}"
     spike_html = (f'<div class="card" style="border-color:{sp_col}"><small>⚡ SPIKE READINESS · auto-sell '
-                  f'{"ON" if sell_on or dyn2.get("mode") == "zerohero" else "OFF"}</small>'
+                  f'{"ON" if (_tariff_sell if _tariff_mode else sell_on) else "OFF"}</small>'
                   f'<div class=big>{sp_icon} {sp_head}</div><div>{sp_txt}</div>'
                   f'<small>buffer: keeps {surv}% (~{buf_kwh}kWh) to ride out <b>extended</b> high prices without '
                   f'importing · SoC {round(soc_now) if isinstance(soc_now, (int, float)) else "?"}% · battery '
@@ -3312,15 +3343,23 @@ def render(snap: dict, cfg: dict) -> str:
                      f'<input id=bsell type=number step=0.01 value="{round(base_sell,3)}" style="width:6em"></label> '
                      f'<small>auto-sell when feed-in ≥ this</small><br>'
                      f'<button style="margin-top:.5rem" onclick="saveBaseline()">Set baseline</button></div>')
-    if dyn.get("mode") == "zerohero":
-        _exp = dyn.get("sell_enabled")
-        _exp_txt = (f'export 18:00–21:00 down to ≥{dyn.get("survival_soc","?")}%' if _exp
+    if dyn.get("mode") == "tariff":
+        _t = dyn.get("tariff") or {}
+        _free = _t.get("free") or {}; _peak = _t.get("peak") or {}; _exp = _t.get("export") or {}
+        _pc, _sh = _peak.get("c"), _t.get("shoulder_c")
+        _pc_txt = f"{_pc:g}c" if isinstance(_pc, (int, float)) else "peak"
+        _sh_txt = f"{_sh:g}c" if isinstance(_sh, (int, float)) else "shoulder"
+        _fs = _free.get("start", 11)
+        _free_txt = f'{_fs:02d}:00–{_free.get("end", 14):02d}:00'
+        _peak_txt = f'{_peak.get("start", 16):02d}:00–{_peak.get("end", 23):02d}:00'
+        _exp_txt = (f'export {_exp.get("start", 18):02d}:00–{_exp.get("end", 21):02d}:00 down to '
+                    f'≥{dyn.get("survival_soc","?")}%' if (dyn.get("sell_enabled") and _exp)
                     else 'no feed-in/export (disabled)')
-        dyn_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ ZEROHERO MODE (GloBird)</small>'
-                    f'<div>FREE-charge 11:00–14:00 (0c) → <b>{dyn.get("max_soc","?")}%</b> by 2pm · '
-                    f'<b>no import</b> 16:00–23:00 peak (44c) · {_exp_txt}</div>'
-                    f'<small>14–16 &amp; 23–11 shoulder/overnight (33c) &amp; peak: run off battery, zero grid import '
-                    f'until the 11:00 free window · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh</small></div>')
+        dyn_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ {dyn.get("tariff_label","TARIFF").upper()} MODE</small>'
+                    f'<div>FREE-charge {_free_txt} (0c) → <b>{dyn.get("max_soc","?")}%</b> · '
+                    f'<b>no import</b> {_peak_txt} peak ({_pc_txt}) · {_exp_txt}</div>'
+                    f'<small>shoulder/overnight ({_sh_txt}) &amp; peak: run off battery, zero grid import '
+                    f'until the {_fs:02d}:00 free window · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh</small></div>')
     else:
         _bb = rec.get("buy_bar"); _df = rec.get("import_deficit_kwh"); _ns = rec.get("buy_slots_needed")
         _bar_txt = (f'buy in cheapest slots ≤ <b>${_bb:.3f}</b>' if isinstance(_bb, (int, float))
