@@ -1,7 +1,7 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.49.0"
+version: "1.50.0"
 slug: energy_tools
-description: Price-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
+description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
   - aarch64
 init: false
@@ -19,17 +19,11 @@ options:
   region: "NSW1"
   mqtt_user: ""
   mqtt_pass: ""
-  charge_start_price: 0.12
-  charge_stop_margin: 0.04
-  target_soc: 80
   reserve_soc: 20
   force_charge_power_kw: 10.5
   solar_defer_kw: 0.5
-  defer_if_cheaper_by: 0.04
   poll_seconds: 300
   avoid_demand_window: false
-  price_ceiling: 0.20
-  charge_start_floor: 0.15
   max_soc: 90
   inverter_min_soc: 10
   topup_to_target: true
@@ -43,31 +37,18 @@ options:
   ev_divert_battery_priority: true
   ev_divert_min_dwell_min: 10
   ev_session_cap_kwh: 30
-  dynamic_policy: true
-  tariff_mode: amber
+  tariff_mode: zerohero
   auto_sell: true
   sell_price: 0.50
   publish_telemetry: true
-  horizon_charge: true
-  horizon_hours: 18
-  horizon_window_margin: 0.03
   allow_control: true
   auto_apply: true
   set_work_mode: true
   set_force_charge: true
-  llm_review: false
-  anthropic_api_key: ""
-  llm_model: "claude-opus-4-8"
-  llm_fallback_model: "claude-haiku-4-5"
-  llm_interval_min: 30
   notify_enabled: false
   notify_service: "notify.mobile_app_phoney"
-  notify_on_llm_disagree: true
-  notify_on_spike: true
-  notify_on_ludicrous: true
   notify_on_stale: true
   notify_on_sell: true
-  notify_on_llm_action: true
   notify_min_gap_min: 180
 schema:
   foxess_token: str
@@ -76,17 +57,11 @@ schema:
   region: str
   mqtt_user: str
   mqtt_pass: str
-  charge_start_price: float
-  charge_stop_margin: float
-  target_soc: int(0,100)
   reserve_soc: int(0,100)
   force_charge_power_kw: float
   solar_defer_kw: float
-  defer_if_cheaper_by: float
   poll_seconds: int(60,3600)
   avoid_demand_window: bool
-  price_ceiling: float
-  charge_start_floor: float
   max_soc: int(0,100)
   inverter_min_soc: int(0,100)
   topup_to_target: bool
@@ -100,29 +75,16 @@ schema:
   ev_divert_battery_priority: bool
   ev_divert_min_dwell_min: int
   ev_session_cap_kwh: float
-  dynamic_policy: bool
-  tariff_mode: list(amber|zerohero)
+  tariff_mode: list(zerohero|four4free)
   auto_sell: bool
   sell_price: float
   publish_telemetry: bool
-  horizon_charge: bool
-  horizon_hours: int(1,48)
-  horizon_window_margin: float
   allow_control: bool
   auto_apply: bool
   set_work_mode: bool
   set_force_charge: bool
-  llm_review: bool
-  anthropic_api_key: str
-  llm_model: str
-  llm_fallback_model: str
-  llm_interval_min: int(5,1440)
   notify_enabled: bool
   notify_service: str
-  notify_on_llm_disagree: bool
-  notify_on_spike: bool
-  notify_on_ludicrous: bool
   notify_on_stale: bool
   notify_on_sell: bool
-  notify_on_llm_action: bool
   notify_min_gap_min: int(15,1440)

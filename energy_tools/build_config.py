@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Assemble foxctl/nemfuel config from add-on options + baked templates.
 
-Complex/rarely-changed settings (price bands, charge/avoid bands, HA entity names)
-live in the baked template foxctl_config.json. The tunable thresholds + control
-flags are add-on OPTIONS and override the template here.
+Complex/rarely-changed settings (GloBird tariff profile, HA entity names) live in
+the baked template foxctl_config.json. The tunable thresholds + control flags are
+add-on OPTIONS and override the template here.
 """
 import json
 
@@ -35,63 +35,37 @@ fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
               "user": opt.get("mqtt_user", ""), "pass": opt.get("mqtt_pass", "")}
 
 S = fc["strategy"]
-for k in ("charge_start_price", "charge_stop_margin", "force_charge_power_kw",
-          "solar_defer_kw", "defer_if_cheaper_by", "price_ceiling", "charge_start_floor",
+for k in ("force_charge_power_kw", "solar_defer_kw",
           "battery_capacity_kwh", "typical_daily_load_kwh"):
     if k in opt:
         S[k] = float(opt[k])
-for k in ("target_soc", "reserve_soc", "max_soc", "inverter_min_soc"):
+for k in ("reserve_soc", "max_soc", "inverter_min_soc"):
     if k in opt:
         S[k] = int(opt[k])
 if "poll_seconds" in opt:
     fc["poll_seconds"] = int(opt["poll_seconds"])
 if "avoid_demand_window" in opt:
     S["avoid_demand_window"] = bool(opt["avoid_demand_window"])
-if "dynamic_policy" in opt:
-    S["dynamic_policy"] = bool(opt["dynamic_policy"])
 if "topup_to_target" in opt:
     S["topup_to_target"] = bool(opt["topup_to_target"])
-if "tariff_mode" in opt:
-    S["tariff_mode"] = str(opt["tariff_mode"])
+if opt.get("tariff_mode"):
+    S["tariff_profile"] = str(opt["tariff_mode"])
 if "sell_price" in opt:
     S["sell_price"] = float(opt["sell_price"])
 if "auto_sell" in opt:
     S["sell_enabled"] = bool(opt["auto_sell"])
-if "horizon_charge" in opt:
-    S["horizon_charge"] = bool(opt["horizon_charge"])
-if "horizon_hours" in opt:
-    S["horizon_hours"] = int(opt["horizon_hours"])
-if "horizon_window_margin" in opt:
-    S["horizon_window_margin"] = float(opt["horizon_window_margin"])
 
 C = fc["control"]
 for k in ("allow_control", "auto_apply", "set_work_mode", "set_force_charge"):
     if k in opt:
         C[k] = bool(opt[k])
 
-# ---- LLM review (advisory) ----
-L = fc.setdefault("llm", {})
-L["enabled"] = bool(opt.get("llm_review", False))
-L["api_key"] = opt.get("anthropic_api_key", "")
-# HA preserves a user's saved options across updates, so old installs still carry the pre-1.38 baked
-# default (date-suffixed Haiku). Treat that exact legacy string (or empty) as "unset" and migrate it to
-# the new thorough default — nobody deliberately chose it. A real "claude-haiku-4-5" pick is preserved.
-_legacy = {"", "claude-haiku-4-5-20251001"}
-_m = opt.get("llm_model", "")
-L["model"] = "claude-opus-4-8" if _m in _legacy else _m
-L["fallback_model"] = opt.get("llm_fallback_model", "") or "claude-haiku-4-5"
-L["interval_min"] = int(opt.get("llm_interval_min", 30))
-
 # ---- notifications ----
 N = fc.setdefault("notify", {})
 N["enabled"] = bool(opt.get("notify_enabled", False))
 N["service"] = opt.get("notify_service", "notify.mobile_app_phoney")
-N["on_llm_disagree"] = bool(opt.get("notify_on_llm_disagree", True))
-N["on_spike"] = bool(opt.get("notify_on_spike", True))
-N["on_ludicrous"] = bool(opt.get("notify_on_ludicrous", True))
 N["on_stale"] = bool(opt.get("notify_on_stale", True))
 N["on_sell"] = bool(opt.get("notify_on_sell", True))
-N["on_llm_action"] = bool(opt.get("notify_on_llm_action", True))
 N["min_gap_min"] = int(opt.get("notify_min_gap_min", 180))
 
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
@@ -107,6 +81,6 @@ with open("/data/.config/sen66/mqtt.env", "w") as f:
     f.write("MQTT_HOST=core-mosquitto\nMQTT_PORT=1883\n"
             "MQTT_USER=%s\nMQTT_PASS=%s\n" % (opt.get("mqtt_user", ""), opt.get("mqtt_pass", "")))
 
-print("[energy_tools] config written (start=%.3f stop=+%.3f target=%s%% control=%s/%s)" % (
-    S.get("charge_start_price"), S.get("charge_stop_margin"), S.get("target_soc"),
+print("[energy_tools] config written (tariff=%s max_soc=%s%% control=%s/%s)" % (
+    S.get("tariff_mode"), S.get("max_soc"),
     C.get("allow_control"), C.get("set_force_charge")))

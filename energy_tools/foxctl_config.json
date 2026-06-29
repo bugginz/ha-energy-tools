@@ -6,11 +6,7 @@
   "ha": {
     "url": "http://homeassistant.local:8123",
     "token_file": "~/.config/sen66/ha_token",
-    "amber_price_entity": "sensor.home_general_price",
-    "amber_forecast_entity": "sensor.home_general_forecast",
-    "aemo_forecast_entity": "sensor.aemo_nem_nsw1_current_30min_forecast",
-    "amber_feedin_entity": "sensor.amber_feed_in_price",
-    "amber_feedin_forecast_entity": "sensor.amber_feed_in_forecast",
+    "demand_window_entity": "binary_sensor.home_demand_window",
     "soc_entity": "sensor.foxess_bat_soc",
     "pv_entity": "sensor.foxess_pv_power",
     "load_entity": "sensor.foxess_load_power",
@@ -41,87 +37,52 @@
     "port": 1883
   },
   "strategy": {
-    "cheap_price": 0.1,
-    "expensive_price": 0.35,
-    "target_soc": 80,
-    "reserve_soc": 20,
-    "precharge_lookahead_h": 3,
-    "force_charge_power_kw": 10.5,
-    "min_soc_on_grid": 10,
-    "aemo_expensive": 0.2,
-    "aemo_cheap": 0.05,
-    "bands": [
-      {
-        "name": "ludicrous",
-        "upto": 0.0
+    "tariff_profile": "zerohero",
+    "tariffs": {
+      "zerohero": {
+        "label": "GloBird ZeroHero",
+        "supply_c": 181.5,
+        "free": {"start": 11, "end": 14, "free_kwh": 50, "excess_c": 30.8},
+        "peak": {"start": 16, "end": 23, "c": 59.4},
+        "shoulder_c": 51.7,
+        "fit_peak_c": 2.0,
+        "fit_else_c": 0.0,
+        "export": {"start": 18, "end": 21, "c": 10.0, "cap_kwh": 15}
       },
-      {
-        "name": "extremely_low",
-        "upto": 0.1
-      },
-      {
-        "name": "low",
-        "upto": 0.2
-      },
-      {
-        "name": "normal",
-        "upto": 0.35
-      },
-      {
-        "name": "high",
-        "upto": 1.0
-      },
-      {
-        "name": "spike",
-        "upto": null
+      "four4free": {
+        "label": "GloBird Four4Free",
+        "supply_c": 134.2,
+        "free": {"start": 10, "end": 14, "free_kwh": 50, "excess_c": 26.4},
+        "peak": {"start": 16, "end": 23, "c": 59.95},
+        "shoulder_c": 37.51,
+        "fit_peak_c": 8.0,
+        "fit_else_c": 0.0,
+        "export_credit": {"start": 18, "end": 21, "max_kwh_per_h": 0.03, "dollar_per_day": 1.0}
       }
-    ],
-    "charge_bands": [
-      "ludicrous",
-      "extremely_low"
-    ],
-    "avoid_bands": [
-      "high",
-      "spike"
-    ],
-    "charge_start_price": 0.12,
-    "defer_lookahead_h": 3,
-    "defer_if_cheaper_by": 0.04,
-    "force_charge_minutes": 120,
-    "charge_stop_margin": 0.04,
-    "solar_defer_kw": 0.5,
-    "price_ceiling": 0.20,
-    "charge_start_floor": 0.15,
-    "sell_price": 0.50,
-    "sell_enabled": true,
-    "tariff_mode": "amber",
-    "zerohero": {
-      "free_start_h": 11,
-      "free_end_h": 14,
-      "evening_start_h": 18,
-      "evening_end_h": 21,
-      "peak_start_h": 16,
-      "peak_end_h": 23
     },
     "max_soc": 90,
+    "reserve_soc": 20,
+    "min_soc_on_grid": 10,
     "inverter_min_soc": 10,
+    "force_charge_minutes": 120,
+    "force_charge_power_kw": 10.5,
+    "solar_defer_kw": 0.5,
+    "sell_price": 0.50,
+    "sell_enabled": false,
     "topup_to_target": true,
     "battery_capacity_kwh": 30,
     "typical_daily_load_kwh": 30,
-    "dynamic_policy": true,
     "avoid_demand_window": false
   },
   "control": {
     "allow_control": true,
     "auto_apply": true,
     "set_work_mode": true,
-    "set_force_charge": true,
-    "allow_actions": false
+    "set_force_charge": true
   },
   "poll_seconds": 300,
   "web": {
     "host": "0.0.0.0",
     "port": 8770
-  },
-  "actions": {}
+  }
 }
