@@ -1639,70 +1639,33 @@ def schedule_repoll(cfg, delays=(40, 110)):
 
 # ------------------------------------------------------------------- web -----
 
-CSS = """body{font:16px system-ui;margin:1.5rem auto;max-width:1280px;padding:0 1rem}
-h1{font-size:1.4rem} .big{font-size:2rem;font-weight:600}
-.row{display:flex;gap:1.2rem;flex-wrap:wrap;margin:1rem 0}
-.card{border:1px solid #ddd;border-radius:10px;padding:.8rem 1.1rem;min-width:130px}
-.rec{background:#f3f8ff;border-color:#9cf} .pill{color:#fff;padding:2px 9px;border-radius:20px;font-size:.8rem}
-button{font:inherit;padding:.5rem .9rem;border:1px solid #bbb;border-radius:8px;background:#fafafa;cursor:pointer;margin:.2rem}
-button:hover{background:#eee} .danger{border-color:#c0392b;color:#c0392b}
-table{border-collapse:collapse;margin-top:.5rem;font-size:.85rem;width:100%}
-td,th{border:1px solid #eee;padding:3px 7px;text-align:right} th{background:#fafafa}
-small{color:#666} #msg{margin:.5rem 0;color:#06c}
-.chartwrap{resize:both;overflow:auto;width:100%;height:360px;min-width:320px;min-height:180px;max-width:none;border:1px dashed #bbb;border-radius:8px}
-.chartwrap svg{width:100%;height:100%;display:block}
+CSS = """body{font:16px system-ui;margin:1.5rem auto;max-width:1040px;padding:0 1rem}
+h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
+.row{display:flex;gap:1rem;flex-wrap:wrap;margin:1rem 0}
+.card{border:1px solid #ddd;border-radius:12px;padding:.9rem 1.1rem;min-width:150px;flex:1}
+.card small{color:#666;display:block} .big{font-size:1.9rem;font-weight:600;margin:.15rem 0}
+.warn{background:#fff3e0;border-color:#e67e22}
+.chart{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin:1.2rem 0}
+.chart svg{width:100%;height:auto;display:block}
+.muted{color:#888;padding:1.4rem;text-align:center}
+a{color:#06c}
 @media (prefers-color-scheme: dark){
- .chartwrap{border-color:#4a505a}
  body{background:#111418;color:#e3e3e3}
- .card{background:#1e2227;border-color:#3a3f46}
- .rec{background:#15263a;border-color:#3a567a}
- button{background:#262b31;color:#e3e3e3;border-color:#4a505a}
- button:hover{background:#333a42} .danger{border-color:#e06; color:#f88}
- th{background:#262b31} td,th{border-color:#3a3f46}
- small{color:#9aa3ad} #msg{color:#6cf} a{color:#6cf}
+ .card,.chart{background:#1e2227;border-color:#3a3f46}
+ .card small,small,.muted{color:#9aa3ad}
+ .warn{background:#3a2c1a;border-color:#e67e22}
+ a{color:#6cf}
 }"""
 
 JS = """
-async function ov(p){document.getElementById('msg').textContent='…';
- const r=await fetch(p,{method:'POST'});const j=await r.json();
- document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>softRefresh(1),1200);}
-async function post(p){document.getElementById('msg').textContent='…';
- const r=await fetch(p,{method:'POST'});const j=await r.json();
- document.getElementById('msg').textContent=JSON.stringify(j);setTimeout(()=>softRefresh(1),1200);}
-async function refreshLog(){const r=await fetch('/api/log?n=40');const rows=await r.json();
- const t=document.getElementById('log');if(!t)return;
- t.innerHTML='<tr><th>time</th><th>soc</th><th>action→mode</th><th>reason</th><th>applied</th></tr>'+
- rows.reverse().map(x=>`<tr><td>${(x.ts||'').slice(11,19)}</td><td>${Math.round(x.soc||0)}%</td><td>${x.action||''}→${x.target_mode||''}${x.force_charge?' ⚡':''}${x.force_discharge?' 💰':''}</td><td style=text-align:left>${(x.reason||'').slice(0,90)}</td><td style=text-align:left>${x.applied||''}</td></tr>`).join('');}
-async function refreshEvents(){const r=await fetch('/api/events?n=30');const rows=await r.json();
- const t=document.getElementById('events');if(!t)return;
- if(!rows.length){t.innerHTML='<tr><td><small>no actions taken yet</small></td></tr>';return;}
- t.innerHTML='<tr><th>time</th><th>kind</th><th>detail</th></tr>'+
- rows.reverse().map(x=>`<tr><td>${(x.ts||'').slice(5,19).replace('T',' ')}</td><td><b>${x.kind}</b></td><td style=text-align:left>${x.detail||''}</td></tr>`).join('');}
-async function tick(){const r=await fetch('/api/state');const d=await r.json();
- const el=document.getElementById('countdown');const ae=document.getElementById('age');
- if(d.next_poll_epoch){const s=Math.max(0,Math.round(d.next_poll_epoch-Date.now()/1000));
-   if(el)el.textContent='next in '+s+'s';}
- if(d.soc_updated_epoch&&ae){ae.textContent=Math.round(Date.now()/1000-d.soc_updated_epoch);}}
-// Resize all charts together (works inside the HA iframe — buttons, no drag/localStorage needed).
-function chApply(h){document.querySelectorAll('.chartwrap').forEach(function(c){c.style.height=h+'px';});}
-function chSize(d){const c=document.querySelector('.chartwrap');if(!c)return;
- const h=Math.max(160,(parseInt(c.style.height)||320)+d);chApply(h);
- try{localStorage.setItem('foxctl_ch_h',h);}catch(e){}}
-(function(){try{const h=parseInt(localStorage.getItem('foxctl_ch_h'));if(h)chApply(h);}catch(e){}})();
-// SOFT refresh: swap only the live regions' innerHTML from a fresh render — charts keep their size
-// and scroll position is untouched. manual=1 shows a flash in the header.
-async function softRefresh(manual){
+async function softRefresh(){
  try{
   const r=await fetch(location.pathname,{cache:'no-store'});const t=await r.text();
   const doc=new DOMParser().parseFromString(t,'text/html');
-  ['fccurve','profile','dailybars'].forEach(function(id){const n=document.getElementById(id),m=doc.getElementById(id);if(n&&m)n.innerHTML=m.innerHTML;});
-  ['reccard','statusrow','cardsrow','tariffcard','ts'].forEach(function(id){const n=document.getElementById(id),m=doc.getElementById(id);if(n&&m)n.innerHTML=m.innerHTML;});
+  ['cards','chart'].forEach(function(id){const n=document.getElementById(id),m=doc.getElementById(id);if(n&&m)n.innerHTML=m.innerHTML;});
   const rf=document.getElementById('refr');if(rf)rf.textContent='updated '+new Date().toLocaleTimeString();
-  refreshLog();refreshEvents();
  }catch(e){const rf=document.getElementById('refr');if(rf)rf.textContent='refresh failed';}
 }
-setInterval(tick,1000);tick();
-refreshLog();refreshEvents();
 setInterval(softRefresh,60000);"""
 
 
@@ -1712,106 +1675,12 @@ def _hod(d, h):
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
-# Shared colour scheme for the four energy channels across every chart.
-_CH = [("load", "House usage", "#8e44ad"), ("solar", "Solar", "#f5c518"),
-       ("grid_in", "Grid import", "#c0392b"), ("grid_out", "Grid export", "#27ae60")]
-
-
-def _svg(w, h):
-    return [f'<svg viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
-            f'xmlns="http://www.w3.org/2000/svg" font-family="system-ui">']
-
-
-def _legend(out, items, pL):
-    lx = pL + 6
-    for label, col in items:
-        out.append(f'<rect x={lx} y=5 width=11 height=11 fill="{col}"/>'
-                   f'<text x={lx+15} y=15 font-size=12 fill="#888">{label}</text>')
-        lx += 26 + len(label) * 7.5
-
-
-def render_profile_svg(snap: dict) -> str:
-    """Typical-day hourly profile (0–23h) for usage / solar / grid-in / grid-out, learned from FoxESS
-    history (the forecast_profiles hour-of-day series)."""
-    fp = snap.get("forecast_profiles") or {}
-    data = {"load": [_hod(fp.get("load_profile"), h) for h in range(24)],
-            "solar": [_hod(fp.get("solar_profile"), h) for h in range(24)],
-            "grid_in": [_hod(fp.get("grid_in_profile"), h) for h in range(24)],
-            "grid_out": [_hod(fp.get("grid_out_profile"), h) for h in range(24)]}
-    if not any(any(v) for v in data.values()):
-        return ('<div style="padding:1rem"><small>No history yet — foxctl backfills one day per cycle from '
-                'FoxESS; the typical-day curve fills in over the next few hours.</small></div>')
-    ymax = (max(max(v) for v in data.values()) or 1.0) * 1.15
-    W, H, pL, pR, pT, pB = 1180, 300, 48, 14, 16, 28
-    iw, ih = W - pL - pR, H - pT - pB
-    X = lambda h: pL + iw * h / 23.0
-    Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    out = _svg(W, H)
-    for f in (0, .25, .5, .75, 1):
-        y = pT + ih * (1 - f)
-        out.append(f'<line x1={pL} y1={y:.1f} x2={W-pR} y2={y:.1f} stroke="#e2e2e2" stroke-width=1/>')
-        out.append(f'<text x={pL-6} y={y+4:.1f} font-size=11 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
-    for h in range(0, 24, 3):
-        out.append(f'<text x={X(h):.0f} y={H-8} font-size=11 fill="#999" text-anchor=middle>{h:02d}</text>')
-    for key, label, col in _CH:
-        pts = " ".join(f"{X(h):.1f},{Y(data[key][h]):.1f}" for h in range(24))
-        out.append(f'<polyline points="{pts}" fill=none stroke="{col}" stroke-width=2.2/>')
-    _legend(out, [(l, c) for _, l, c in _CH], pL)
-    out.append('</svg>')
-    return "".join(out)
-
-
-def _daily_row(series, label, col, st):
-    if not series:
-        return ''
-    W, H, pL, pR, pT, pB = 1180, 92, 12, 168, 16, 16
-    iw, ih = W - pL - pR, H - pT - pB
-    n = len(series)
-    ymax = (max(series) or 1.0) * 1.15
-    bw = max(2.0, iw / n * 0.72)
-    X = lambda i: pL + iw * (i + 0.5) / n
-    Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    out = _svg(W, H)
-    base = pT + ih
-    for i, v in enumerate(series):
-        y = Y(v)
-        out.append(f'<rect x={X(i)-bw/2:.1f} y={y:.1f} width={bw:.1f} height={base-y:.1f} '
-                   f'fill="{col}" opacity=0.85/>')
-    avg = st.get("avg")
-    if isinstance(avg, (int, float)):
-        ay = Y(avg)
-        out.append(f'<line x1={pL} y1={ay:.1f} x2={pL+iw} y2={ay:.1f} stroke="{col}" '
-                   f'stroke-width=1 stroke-dasharray="4 3"/>')
-    out.append(f'<text x={pL+2} y=16 font-size=13 fill="#888" font-weight=600>{label}</text>')
-    stat = (f'avg {st.get("avg","–")} · min {st.get("min","–")} · max {st.get("max","–")} kWh · {n}d')
-    out.append(f'<text x={W-pR+8} y={H/2+4:.0f} font-size=12 fill="#888">{stat}</text>')
-    out.append('</svg>')
-    return f'<div class=card style="padding:.4rem;margin:.3rem 0">{"".join(out)}</div>'
-
-
-def render_daily_bars_svg(snap: dict) -> str:
-    """Daily-total bars (one row per channel) over the stored history, with avg·min·max."""
-    fp = snap.get("forecast_profiles") or {}
-    daily = fp.get("daily") or {}
-    rows = []
-    for key, label, col in _CH:
-        d = daily.get(key) or {}
-        rows.append(_daily_row(d.get("series") or [], label, col, d))
-    rows = [r for r in rows if r]
-    if not rows:
-        return ('<div style="padding:1rem"><small>No completed-day totals yet — these fill in as the FoxESS '
-                'backfill accumulates (one day per cycle).</small></div>')
-    return "".join(rows)
-
-
-def render_forecast_curve_svg(snap: dict, cfg: dict | None = None) -> str:
-    """Next-24h hourly forecast: household usage (learned hour-of-day profile, phased from the current
-    hour) + solar (calibrated bells) + derived net grid (import = max(0, load−solar), export = the
-    reverse). Net grid is pre-battery demand — the tariff scheduler reshapes the actual grid draw."""
-    cons = snap.get("consumption") or {}
-    prof = cons.get("hour_profile") or {}
-    have_use = bool(prof) and (cons.get("profile_days", 0) >= 1 or cons.get("days_sampled", 0) >= 1)
+def render_solar_usage_chart(snap: dict) -> str:
+    """Next-24h expected solar generation (calibrated Solcast bells) overlaid with the learned house-usage
+    curve. The gap between them is the surplus available to charge the car — the basis for the upcoming
+    car-charging logic that factors in overnight carried-over SoC."""
     bells = snap.get("solar_bells") or []
+    prof = (snap.get("consumption") or {}).get("hour_profile") or {}
     now = datetime.now()
     h0 = now.hour + now.minute / 60.0
 
@@ -1825,195 +1694,86 @@ def render_forecast_curve_svg(snap: dict, cfg: dict | None = None) -> str:
         return max(0.0, tot)
 
     N = 24
+    sol = [bell_kw(h0 + i) for i in range(N + 1)]
     use = [_hod(prof, int(h0 + i) % 24) for i in range(N + 1)]
-    sol = [round(bell_kw(h0 + i), 3) for i in range(N + 1)]
-    imp = [max(0.0, use[i] - sol[i]) for i in range(N + 1)]
-    exp = [max(0.0, sol[i] - use[i]) for i in range(N + 1)]
-    if not have_use and not any(sol):
-        return ('<div style="padding:1rem"><small>Forecast needs a day or two of history (the learned usage '
-                'curve) plus a solar forecast — building now.</small></div>')
-    ymax = max(max(use), max(sol), 0.1) * 1.18
-    W, H, pL, pR, pT, pB = 1180, 320, 48, 14, 16, 30
+    if not any(sol) and not any(use):
+        return ('<div class=muted>No solar forecast or usage history to chart yet — '
+                'this fills in within a few hours of running.</div>')
+    W, H, pL, pR, pT, pB = 720, 260, 38, 12, 22, 26
     iw, ih = W - pL - pR, H - pT - pB
+    ymax = max(max(sol), max(use), 0.5) * 1.15
     X = lambda i: pL + iw * i / N
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    out = _svg(W, H)
-    for f in (0, .25, .5, .75, 1):
+    out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" '
+           f'xmlns="http://www.w3.org/2000/svg" font-family="system-ui">']
+    for f in (0, .5, 1):
         y = pT + ih * (1 - f)
-        out.append(f'<line x1={pL} y1={y:.1f} x2={W-pR} y2={y:.1f} stroke="#e2e2e2" stroke-width=1/>')
-        out.append(f'<text x={pL-6} y={y+4:.1f} font-size=11 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
+        out.append(f'<line x1={pL} y1={y:.1f} x2={W-pR} y2={y:.1f} stroke="#888" stroke-opacity=0.18/>')
+        out.append(f'<text x={pL-5} y={y+4:.1f} font-size=11 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
     for i in range(0, N + 1, 3):
-        out.append(f'<text x={X(i):.0f} y={H-8} font-size=11 fill="#999" '
+        out.append(f'<text x={X(i):.0f} y={H-7} font-size=11 fill="#999" '
                    f'text-anchor=middle>{int(h0+i)%24:02d}</text>')
     area = (f"{X(0):.1f},{Y(0):.1f} " + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
             + f" {X(N):.1f},{Y(0):.1f}")
-    out.append(f'<polygon points="{area}" fill="#f5c518" opacity=0.22/>')
-    out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(imp[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#c0392b" stroke-width=1.6 stroke-dasharray="5 3"/>')
-    out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(exp[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#27ae60" stroke-width=1.6 stroke-dasharray="5 3"/>')
+    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity=0.30/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#f5c518" stroke-width=2.4/>')
+               + '" fill=none stroke="#f5b800" stroke-width=2.4/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(use[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#8e44ad" stroke-width=2.4/>')
-    out.append(f'<line x1={X(0):.1f} y1={pT} x2={X(0):.1f} y2={pT+ih} stroke="#888" '
-               f'stroke-width=1 stroke-dasharray="2 2"/>')
-    _legend(out, [("House usage", "#8e44ad"), ("Solar", "#f5c518"),
-                  ("Net import", "#c0392b"), ("Net export", "#27ae60")], pL)
+               + '" fill=none stroke="#8e44ad" stroke-width=2.2/>')
+    out.append(f'<rect x={pL+4} y=4 width=11 height=11 fill="#f5b800"/>'
+               f'<text x={pL+19} y=14 font-size=12 fill="#888">Expected solar (kW)</text>')
+    out.append(f'<rect x={pL+186} y=4 width=11 height=11 fill="#8e44ad"/>'
+               f'<text x={pL+201} y=14 font-size=12 fill="#888">House usage (kW)</text>')
     out.append('</svg>')
     return "".join(out)
 
 
 def render(snap: dict, cfg: dict) -> str:
-    rec = snap.get("recommendation", {})
-    ctrl = cfg["control"]
-    dyn = snap.get("dynamic") or {}
+    wm = snap.get("work_mode")
+    wma = snap.get("work_mode_age_s")
+    wm_stale = isinstance(wma, (int, float)) and wma > 1800
     bat = snap.get("battery") or {}
-    cons = snap.get("consumption") or {}
+    soc = snap.get("soc")
     sf = snap.get("solar_forecast") or {}
-    lf = snap.get("load_forecast") or {}
-    _exp = float(snap.get("feedin_power") or 0.0)
-    _imp = float(snap.get("grid_power") or 0.0)
-    _age = snap.get("data_age_s")
-    _age_txt = f' · {_age}s ago' if isinstance(_age, (int, float)) else ''
-    if _exp > 0.1:
-        grid_html = (f'<div class=card style="background:#e8f5e9;border-color:#2ecc71"><small>Grid flow</small>'
-                     f'<div class=big>⬆ {_exp:.2f} <small>kW</small></div><small>exporting{_age_txt}</small></div>')
-    elif _imp > 0.1:
-        grid_html = (f'<div class=card><small>Grid flow</small><div class=big>⬇ {_imp:.2f} <small>kW</small></div>'
-                     f'<small>importing{_age_txt}</small></div>')
+    sc = snap.get("solar_cal") or {}
+    ev = cfg.get("ev_divert") or {}
+    ev_status = snap.get("ev_divert") or ("no charger configured" if not ev.get("switch") else "idle")
+    ev_on = (snap.get("ev_divert") or "").startswith("car charger ON")
+    cal_txt = f' · cal ×{sc.get("bias")}' if sc.get("applied") else ""
+
+    def _n(v):
+        return v if v is not None else "–"
+
+    fe = snap.get("fox_error")
+    if fe and fe.get("rate_limited"):
+        banner = (f'<div class="card warn">⛔ FoxESS API rate-limited — telemetry/control may be stale '
+                  f'(last error {fe.get("age")}s ago).</div>')
+    elif fe:
+        banner = (f'<div class="card warn">⚠️ FoxESS API errors — telemetry may be stale '
+                  f'(last error {fe.get("age")}s ago).</div>')
     else:
-        grid_html = (f'<div class=card><small>Grid flow</small><div class=big>– <small>kW</small></div>'
-                     f'<small>no grid flow{_age_txt}</small></div>')
-    # Top-of-page FoxESS API banner (rate-limited / errors → telemetry & control reads failing).
-    _fe = snap.get("fox_error")
-    if _fe and _fe.get("rate_limited"):
-        fox_banner = (f'<div style="background:#c0392b;color:#fff;padding:.6rem 1rem;border-radius:8px;'
-                      f'margin:.6rem 0;font-weight:600">⛔ FoxESS API RATE-LIMITED — reads are being rejected '
-                      f'(last error {_fe["age"]}s ago: {_fe["msg"]}). Telemetry/control may be stale.</div>')
-    elif _fe:
-        fox_banner = (f'<div style="background:#e67e22;color:#fff;padding:.6rem 1rem;border-radius:8px;'
-                      f'margin:.6rem 0;font-weight:600">⚠️ FoxESS API errors — telemetry may be stale '
-                      f'(last error {_fe["age"]}s ago: {_fe["msg"]}).</div>')
-    else:
-        fox_banner = ''
-    # Stranded-floor banner: the inverter's own min-SoC sits above our safety floor (legacy 66% bug).
-    _ims, _imf = snap.get("inverter_min_soc_read"), snap.get("inverter_min_soc_floor", 10)
-    if isinstance(_ims, (int, float)) and _ims > _imf + 1:
-        fox_banner += (f'<div style="background:#c0392b;color:#fff;padding:.6rem 1rem;border-radius:8px;'
-                       f'margin:.6rem 0;font-weight:600">⛔ Inverter min-SoC is {int(_ims)}% (should be ≤{_imf}%). '
-                       f'foxctl will reset it to {_imf}% on the next force window — or clear it now in the '
-                       f'FoxESS app (Min SoC On Grid).</div>')
-    # ---- manual override status + quick controls ----
-    ov = snap.get("override") or {}
-    mo = ov.get("manual")
-    if mo:
-        mins = max(0, int((mo.get("until", 0) - time.time()) / 60))
-        ov_status = f'⚡ MANUAL {mo.get("mode","?").upper()} active — ~{mins} min left'
-    else:
-        ov_status = "no manual override — running on the tariff schedule"
-    fcbtns = "".join(f'<button onclick="ov(\'/api/force_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
-    sellbtns = "".join(f'<button class=danger onclick="if(confirm(\'Force-discharge (SELL) to grid for {h}h?\'))ov(\'/api/sell?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 5, 6))
-    evbtns = "".join(f'<button onclick="ov(\'/api/ev_charge?h={h}\')">{h}h</button>' for h in (1, 2, 3, 4, 6))
-    ev_row = (f'<div style="margin-top:.4rem">🔌 <b>Force car charge:</b> {evbtns} '
-              f'<button onclick="ov(\'/api/ev_off\')">✖ stop → auto</button></div>'
-              if (cfg.get("ev_divert") or {}).get("switch") else "")
-    controls_html = (f'<h3>Quick controls <small>(manual overrides — auto-revert when the timer ends)</small></h3>'
-                     f'<div class=card><div><b>Status:</b> {ov_status}</div>'
-                     f'<div style="margin-top:.5rem">⚡ <b>Force-charge:</b> {fcbtns} '
-                     f'<button class=danger onclick="ov(\'/api/cancel_override\')">⏹ stop</button></div>'
-                     f'<div style="margin-top:.4rem">💰 <b>SELL (discharge to grid):</b> {sellbtns} '
-                     f'<button class=danger onclick="ov(\'/api/cancel_override\')">⏹ stop</button></div>'
-                     f'{ev_row}</div>')
-    # ---- tariff status card ----
-    _t = dyn.get("tariff") or {}
-    _free = _t.get("free") or {}; _peak = _t.get("peak") or {}; _expw = _t.get("export") or {}
-    _pc, _sh = _peak.get("c"), _t.get("shoulder_c")
-    _pc_txt = f"{_pc:g}c" if isinstance(_pc, (int, float)) else "peak"
-    _sh_txt = f"{_sh:g}c" if isinstance(_sh, (int, float)) else "shoulder"
-    _fs = _free.get("start", 11)
-    _free_txt = f'{_fs:02d}:00–{_free.get("end", 14):02d}:00'
-    _peak_txt = f'{_peak.get("start", 16):02d}:00–{_peak.get("end", 23):02d}:00'
-    _exp_txt = (f'export {_expw.get("start", 18):02d}:00–{_expw.get("end", 21):02d}:00 down to '
-                f'≥{dyn.get("survival_soc","?")}%' if (dyn.get("sell_enabled") and _expw)
-                else 'no feed-in/export (disabled)')
-    tariff_html = (f'<div class="card" style="border-color:#2ecc71"><small>⚙️ {dyn.get("tariff_label","TARIFF").upper()} MODE</small>'
-                   f'<div>FREE-charge {_free_txt} (0c) → <b>{dyn.get("max_soc","?")}%</b> · '
-                   f'<b>no import</b> {_peak_txt} peak ({_pc_txt}) · {_exp_txt}</div>'
-                   f'<small>shoulder/overnight ({_sh_txt}) &amp; peak: run off battery, zero grid import '
-                   f'until the {_fs:02d}:00 free window · battery {bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh</small></div>')
-    # ---- now-strip cards ----
-    def _c(v):
-        return v if v is not None else '–'
+        banner = ''
+
     cards = "".join([
-        f'<div class=card><small>Battery SoC</small><div class=big>{round(snap.get("soc",0))}%</div>'
-        f'<small>{bat.get("stored_kwh","?")}/{bat.get("capacity_kwh","?")}kWh</small></div>',
-        f'<div class=card><small>Solar (PV)</small><div class=big>{_c(snap.get("pv_kw"))} <small>kW</small></div></div>',
-        f'<div class=card><small>House load</small><div class=big>{_c(snap.get("load_kw"))} <small>kW</small></div></div>',
-        grid_html,
-        f'<div class=card><small>Solar forecast</small><div class=big>{_c(sf.get("today_total"))} <small>kWh today</small></div>'
-        f'<small>{_c(sf.get("remaining_today"))} left · tomorrow {_c(sf.get("tomorrow"))}<br>'
-        f'cal ×{(snap.get("solar_cal") or {}).get("bias","?")} '
-        f'{"(applied)" if (snap.get("solar_cal") or {}).get("applied") else f"({(snap.get('solar_cal') or {}).get('samples',0)}/{SOLAR_CAL_MIN}d learning)"}</small></div>',
-        f'<div class=card><small>Usage forecast</small><div class=big>{_c(lf.get("next24_kwh"))} <small>kWh next 24h</small></div>'
-        f'<small>rest of today {_c(lf.get("rest_today_kwh"))} · typical {_c(lf.get("typical_daily_kwh"))}/day</small></div>',
-        f'<div class=card><small>Usage (rolling avg)</small><div class=big>{cons.get("avg_daily_total_kwh") if cons.get("days_sampled") else "–"} <small>kWh/day</small></div>'
-        f'<small>range {_c(cons.get("min_daily_total_kwh"))}–{_c(cons.get("max_daily_total_kwh"))} kWh ({cons.get("days_sampled",0)}d)<br>'
-        f'EV {cons.get("avg_daily_ev_kwh","0")} · today {cons.get("today_so_far_kwh","0")} · '
-        f'profile: {cons.get("profile_source","self")} ({(snap.get("forecast_profiles") or {}).get("days",0)} load / {(snap.get("forecast_profiles") or {}).get("days_solar",0)} solar d)</small></div>',
-        f'<div class=card style="{"background:#fff3e0;border-color:#e67e22" if (snap.get("work_mode_age_s") or 0) > 1800 else ""}">'
-        f'<small>Work mode</small><div class=big>{snap.get("work_mode")}</div>'
-        f'<small>{("read "+str(snap.get("work_mode_age_s"))+"s ago"+(" ⚠️ stale" if (snap.get("work_mode_age_s") or 0) > 1800 else "")) if snap.get("work_mode_age_s") is not None else "no read yet"}</small></div>',
-        f'<div class=card style="{"background:#e8f5e9;border-color:#2ecc71" if (snap.get("ev_divert") or "").startswith("car charger ON") else ""}">'
-        f'<small>EV charger</small><div class=big>🔌 {_c(snap.get("ev_kw"))} <small>kW</small></div>'
-        f'<small>{snap.get("ev_divert") or ("no switch set" if not (cfg.get("ev_divert") or {}).get("switch") else "idle")}</small></div>',
-        f'<div class=card><small>Demand window</small><div class=big>{"ACTIVE" if snap.get("demand_window") else "off"}</div>'
-        f'<small>{"no demand charge (EA116)" if snap.get("demand_window") else ""}</small></div>',
-        f'<div class=card style="{"background:#fff3e0;border-color:#e67e22" if "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or "") else ""}">'
-        f'<small>Data age / source</small><div class=big><span id=age>{_c(snap.get("data_age_s"))}</span>s · <span id=countdown>–</span></div>'
-        f'<small>{"⚠️ STALE — control on hold" if ("stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or "")) else "FoxESS direct (sole poller)"}</small></div>',
-        f'<div class=card style="{"background:#fff3e0;border-color:#e67e22" if (snap.get("scheduler") or {}).get("active") and snap["scheduler"]["active"]["mode"]=="ForceCharge" else ""}">'
-        f'<small>Force-charge</small><div class=big>{("⚡ ON" if (snap.get("scheduler") or {}).get("active") and snap["scheduler"]["active"]["mode"]=="ForceCharge" else ("sched on" if (snap.get("scheduler") or {}).get("enabled") else "OFF"))}</div>'
-        f'<small>{(snap.get("scheduler") or {}).get("active",{}).get("window","") if (snap.get("scheduler") or {}).get("active") else ""}</small></div>',
+        f'<div class="card{" warn" if wm_stale else ""}"><small>Work mode</small><div class=big>{_n(wm)}</div>'
+        f'<small>{("read "+str(wma)+"s ago"+(" ⚠ stale" if wm_stale else "")) if wma is not None else "no read yet"}</small></div>',
+        f'<div class=card><small>Battery</small><div class=big>{round(soc) if isinstance(soc,(int,float)) else "–"}%</div>'
+        f'<small>{_n(bat.get("stored_kwh"))}/{_n(bat.get("capacity_kwh"))} kWh stored</small></div>',
+        f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
+        f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div><small>{ev_status}</small></div>',
+        f'<div class=card><small>Weather &amp; solar</small><div class=big>{_n(sf.get("today_total"))} <small>kWh today</small></div>'
+        f'<small>{snap.get("weather") or "—"} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
+        f'{cal_txt}</small></div>',
     ])
     return f"""<!doctype html><html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
 <title>foxctl</title><style>{CSS}</style></head><body>
-<h1>foxctl — <span id=ts>{snap.get('ts','-')}</span> <small id=refr style="color:#888"></small></h1>
-{fox_banner}
-<div id=reccard><div class="card rec"><small>RECOMMENDATION</small>
- <div class=big>{rec.get('action')} → {rec.get('target_mode')} {'⚡FORCE-CHARGE' if rec.get('force_charge') else ''}{'💰SELL' if rec.get('force_discharge') else ''}</div>
- <div>{rec.get('reason','')}</div>
- <div><small>applied: {snap.get('applied')} · control: allow={ctrl.get('allow_control')} auto_apply={ctrl.get('auto_apply')} force_charge={ctrl.get('set_force_charge')}</small></div>
- <div style="margin-top:.4rem">
-  <button onclick="post('/api/evaluate')">Evaluate now</button>
-  <button onclick="post('/api/apply')">Apply recommendation</button>
-  <button onclick="softRefresh(1)">↻ Refresh</button>
-  <button class=danger onclick="post('/api/scheduler_off')">Stop / disable scheduler</button>
- </div></div></div>
-<div id=tariffcard>{tariff_html}</div>
-<div id=controlscard>{controls_html}</div>
-<details style="margin:.3rem 0"><summary><small>More actions</small></summary>
- <button class=danger onclick="if(confirm('Grid-charge for 10 min to {cfg['strategy'].get('max_soc',90)}%?'))post('/api/force_charge_test')">⚡ Test force-charge (10 min)</button>
- <button onclick="if(confirm('Backfill 7 days of hourly load+solar into HA statistics?'))post('/api/backfill_ha?days=7')">⤓ Backfill 7d → HA stats</button>
-</details>
-<div id=msg></div>
-<h3>Charts <small>(auto-refresh keeps your size · use −/+ or drag corner ↘ to resize)</small>
- <button onclick="chSize(-80)" title="shorter">−</button><button onclick="chSize(80)" title="taller">+</button></h3>
-<h4 style="margin:.3rem 0">Next 24 hours — usage · solar · net grid</h4>
-<div class=card style="padding:.5rem"><div id=fccurve class=chartwrap style="height:340px">{render_forecast_curve_svg(snap, cfg)}</div></div>
-<h4 style="margin:.3rem 0">Typical day — learned hour-of-day profile</h4>
-<div class=card style="padding:.5rem"><div id=profile class=chartwrap style="height:300px">{render_profile_svg(snap)}</div></div>
-<h4 style="margin:.3rem 0">Daily totals — history</h4>
-<div id=dailybars>{render_daily_bars_svg(snap)}</div>
-<div class=row id=statusrow>
-{cards}
-</div>
-<div id=cardsrow></div>
-<h3>Actions taken <small>(real changes: applies, force-charge, sells, disables)</small></h3>
-<table id=events></table>
-<h3>Decision log <small>(every cycle, recommendation even when not applied)</small></h3>
-<table id=log></table>
-<p><small>auto-refresh 60s · <a href=/api/state>/api/state</a> · <a href=/api/log?n=100>/api/log</a></small></p>
+<h1>foxctl <small id=refr style="color:#888;font-weight:400"></small></h1>
+{banner}
+<div class=row id=cards>{cards}</div>
+<div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Next 24 hours — expected solar vs house usage</div>
+<div id=chart>{render_solar_usage_chart(snap)}</div></div>
+<p><small>auto-refresh 60s · <a href=/api/state>/api/state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
 
