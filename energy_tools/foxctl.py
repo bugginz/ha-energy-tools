@@ -1646,7 +1646,9 @@ h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
 .card small{color:#666;display:block} .big{font-size:1.9rem;font-weight:600;margin:.15rem 0}
 .warn{background:#fff3e0;border-color:#e67e22}
 .chart{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin:1.2rem 0}
-.chart svg{width:100%;height:auto;display:block}
+.chartbox{position:relative;width:100%;height:0;padding-bottom:41.7%}
+.chartbox svg{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
+.cap{font-size:.8rem;color:#888;margin:.45rem .3rem 0}
 .muted{color:#888;padding:1.4rem;text-align:center}
 a{color:#06c}
 @media (prefers-color-scheme: dark){
@@ -1678,54 +1680,60 @@ def _hod(d, h):
 def render_solar_usage_chart(snap: dict) -> str:
     """Next-24h expected solar generation (calibrated Solcast bells) overlaid with the learned house-usage
     curve. The gap between them is the surplus available to charge the car — the basis for the upcoming
-    car-charging logic that factors in overnight carried-over SoC."""
+    car-charging logic that factors in overnight carried-over SoC.
+
+    Bells are in HOURS-FROM-NOW coordinates (see _solar_bells), so solar is sampled at offset `i`; the
+    usage profile is keyed by CLOCK hour, so it's sampled at (current_hour + i) % 24."""
     bells = snap.get("solar_bells") or []
     prof = (snap.get("consumption") or {}).get("hour_profile") or {}
     now = datetime.now()
     h0 = now.hour + now.minute / 60.0
 
-    def bell_kw(hh):
-        hh %= 24
+    def bell_kw(off):                       # off = hours from now (matches bell s/e coordinates)
         tot = 0.0
         for b in bells:
             s, e, pm = b.get("s"), b.get("e"), b.get("pmax", 0)
-            if s is not None and e is not None and e > s and s <= hh <= e and pm:
-                tot += pm * math.sin(math.pi * (hh - s) / (e - s))
+            if s is not None and e is not None and e > s and s <= off <= e and pm:
+                tot += pm * math.sin(math.pi * (off - s) / (e - s))
         return max(0.0, tot)
 
     N = 24
-    sol = [bell_kw(h0 + i) for i in range(N + 1)]
+    sol = [bell_kw(i) for i in range(N + 1)]
     use = [_hod(prof, int(h0 + i) % 24) for i in range(N + 1)]
-    if not any(sol) and not any(use):
-        return ('<div class=muted>No solar forecast or usage history to chart yet — '
-                'this fills in within a few hours of running.</div>')
-    W, H, pL, pR, pT, pB = 720, 260, 38, 12, 22, 26
+    W, H, pL, pR, pT, pB = 720, 300, 40, 14, 22, 28
     iw, ih = W - pL - pR, H - pT - pB
-    ymax = max(max(sol), max(use), 0.5) * 1.15
+    ymax = max(max(sol), max(use), 1.0) * 1.15
     X = lambda i: pL + iw * i / N
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
     out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" '
            f'xmlns="http://www.w3.org/2000/svg" font-family="system-ui">']
-    for f in (0, .5, 1):
+    out.append(f'<rect x=0 y=0 width={W} height={H} fill="none"/>')
+    for f in (0, .25, .5, .75, 1):
         y = pT + ih * (1 - f)
         out.append(f'<line x1={pL} y1={y:.1f} x2={W-pR} y2={y:.1f} stroke="#888" stroke-opacity=0.18/>')
-        out.append(f'<text x={pL-5} y={y+4:.1f} font-size=11 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
+        out.append(f'<text x={pL-6} y={y+4:.1f} font-size=12 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
     for i in range(0, N + 1, 3):
-        out.append(f'<text x={X(i):.0f} y={H-7} font-size=11 fill="#999" '
+        out.append(f'<text x={X(i):.0f} y={H-8} font-size=12 fill="#999" '
                    f'text-anchor=middle>{int(h0+i)%24:02d}</text>')
     area = (f"{X(0):.1f},{Y(0):.1f} " + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
             + f" {X(N):.1f},{Y(0):.1f}")
-    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity=0.30/>')
+    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity=0.28/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#f5b800" stroke-width=2.4/>')
+               + '" fill="none" stroke="#f5b800" stroke-width=2.6/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(use[i]):.1f}" for i in range(N + 1))
-               + '" fill=none stroke="#8e44ad" stroke-width=2.2/>')
-    out.append(f'<rect x={pL+4} y=4 width=11 height=11 fill="#f5b800"/>'
-               f'<text x={pL+19} y=14 font-size=12 fill="#888">Expected solar (kW)</text>')
-    out.append(f'<rect x={pL+186} y=4 width=11 height=11 fill="#8e44ad"/>'
-               f'<text x={pL+201} y=14 font-size=12 fill="#888">House usage (kW)</text>')
+               + '" fill="none" stroke="#8e44ad" stroke-width=2.4/>')
+    out.append(f'<rect x={pL+4} y=4 width=12 height=12 fill="#f5b800"/>'
+               f'<text x={pL+20} y=14 font-size=13 fill="#888">Expected solar (kW)</text>')
+    out.append(f'<rect x={pL+196} y=4 width=12 height=12 fill="#8e44ad"/>'
+               f'<text x={pL+212} y=14 font-size=13 fill="#888">House usage (kW)</text>')
     out.append('</svg>')
-    return "".join(out)
+    # Diagnostic caption — peaks + data availability, so a flat/empty chart is self-explaining.
+    if not any(sol) and not any(use):
+        cap = 'no data yet — solar forecast & usage profile both empty (fills in within a few hours)'
+    else:
+        cap = (f'solar peak {max(sol):.1f} kW · usage peak {max(use):.1f} kW · '
+               f'{len(bells)} solar bell(s) · {len(prof)}h usage profile')
+    return f'<div class=chartbox>{"".join(out)}</div><div class=cap>{cap}</div>'
 
 
 def render(snap: dict, cfg: dict) -> str:
@@ -1819,18 +1827,17 @@ def build_export_csv(cfg, snap):
     now = datetime.now()
     h0 = now.hour + now.minute / 60.0
 
-    def _bell_kw(hh):
-        hh %= 24
+    def _bell_kw(off):                      # off = hours from now (matches bell s/e coordinates)
         tot = 0.0
         for b in bells:
             s, e, pm = b.get("s"), b.get("e"), b.get("pmax", 0)
-            if s is not None and e is not None and e > s and s <= hh <= e and pm:
-                tot += pm * math.sin(math.pi * (hh - s) / (e - s))
+            if s is not None and e is not None and e > s and s <= off <= e and pm:
+                tot += pm * math.sin(math.pi * (off - s) / (e - s))
         return max(0.0, tot)
 
     for i in range(24):
         use = _hod(prof, int(h0 + i) % 24)
-        sol = round(_bell_kw(h0 + i), 3)
+        sol = round(_bell_kw(i), 3)
         w.writerow([(now + timedelta(hours=i)).strftime("%Y-%m-%d %H:00"), "forecast", "", "", "", "", "",
                     round(use, 3), sol, round(max(0.0, use - sol), 3), round(max(0.0, sol - use), 3)])
     return buf.getvalue()
