@@ -1646,7 +1646,7 @@ h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
 .card small{color:#666;display:block} .big{font-size:1.9rem;font-weight:600;margin:.15rem 0}
 .warn{background:#fff3e0;border-color:#e67e22}
 .chart{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin:1.2rem 0}
-.chartbox{position:relative;width:100%;height:0;padding-bottom:41.7%}
+.chartbox{position:relative;width:100%;height:0;padding-bottom:41.7%;outline:1px dashed #bbb}
 .chartbox svg{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
 .cap{font-size:.8rem;color:#888;margin:.45rem .3rem 0}
 .muted{color:#888;padding:1.4rem;text-align:center}
@@ -1781,7 +1781,7 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=row id=cards>{cards}</div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Next 24 hours — expected solar vs house usage</div>
 <div id=chart>{render_solar_usage_chart(snap)}</div></div>
-<p><small>auto-refresh 60s · <a href=/api/state>/api/state</a></small></p>
+<p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
 
@@ -1860,6 +1860,42 @@ def make_handler(cfg):
             if self.path.startswith("/api/state"):
                 with LAST_LOCK:
                     self._send(200, json.dumps(LAST, default=str), "application/json")
+            elif self.path.startswith("/api/chart"):
+                # Debug: exactly what the chart is fed + what it produces. Isolates data-vs-render.
+                with LAST_LOCK:
+                    snap = dict(LAST)
+                bells = snap.get("solar_bells") or []
+                prof = (snap.get("consumption") or {}).get("hour_profile") or {}
+                now = datetime.now()
+                h0 = now.hour + now.minute / 60.0
+
+                def _bk(off):
+                    t = 0.0
+                    for b in bells:
+                        s, e, pm = b.get("s"), b.get("e"), b.get("pmax", 0)
+                        if s is not None and e is not None and e > s and s <= off <= e and pm:
+                            t += pm * math.sin(math.pi * (off - s) / (e - s))
+                    return round(max(0.0, t), 3)
+
+                sol = [_bk(i) for i in range(25)]
+                use = [round(_hod(prof, int(h0 + i) % 24), 3) for i in range(25)]
+                try:
+                    svg = render_solar_usage_chart(snap)
+                    err = None
+                except Exception as e:
+                    svg, err = "", f"{type(e).__name__}: {e}"
+                dbg = {
+                    "version": "1.53.0",
+                    "now": now.strftime("%Y-%m-%d %H:%M"), "h0": round(h0, 2),
+                    "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
+                    "solar_bells": bells, "n_bells": len(bells),
+                    "hour_profile_len": len(prof),
+                    "hour_profile_keys": sorted((str(k) for k in prof), key=lambda k: int(k)) if prof else [],
+                    "sol_next24": sol, "use_next24": use,
+                    "sol_peak": max(sol) if sol else 0, "use_peak": max(use) if use else 0,
+                    "render_error": err, "svg_len": len(svg), "svg_head": svg[:500],
+                }
+                self._send(200, json.dumps(dbg, default=str, indent=2), "application/json")
             elif self.path.startswith("/api/export.csv"):
                 with LAST_LOCK:
                     snap = dict(LAST)
