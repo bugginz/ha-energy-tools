@@ -1646,8 +1646,7 @@ h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
 .card small{color:#666;display:block} .big{font-size:1.9rem;font-weight:600;margin:.15rem 0}
 .warn{background:#fff3e0;border-color:#e67e22}
 .chart{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin:1.2rem 0}
-.chartbox{position:relative;width:100%;height:0;padding-bottom:41.7%;outline:1px dashed #bbb}
-.chartbox svg{position:absolute;top:0;left:0;width:100%;height:100%;display:block}
+.chartimg{width:100%;height:auto;display:block;border:1px solid #eee;border-radius:8px;background:#fff}
 .cap{font-size:.8rem;color:#888;margin:.45rem .3rem 0}
 .muted{color:#888;padding:1.4rem;text-align:center}
 a{color:#06c}
@@ -1677,13 +1676,10 @@ def _hod(d, h):
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
-def render_solar_usage_chart(snap: dict) -> str:
-    """Next-24h expected solar generation (calibrated Solcast bells) overlaid with the learned house-usage
-    curve. The gap between them is the surplus available to charge the car — the basis for the upcoming
-    car-charging logic that factors in overnight carried-over SoC.
-
-    Bells are in HOURS-FROM-NOW coordinates (see _solar_bells), so solar is sampled at offset `i`; the
-    usage profile is keyed by CLOCK hour, so it's sampled at (current_hour + i) % 24."""
+def _chart_series(snap: dict):
+    """The two next-24h curves the chart/caption share. Bells are in HOURS-FROM-NOW coordinates
+    (see _solar_bells), so solar is sampled at offset `i`; the usage profile is keyed by CLOCK
+    hour, so it's sampled at (current_hour + i) % 24. Returns (h0, sol[], use[], n_bells, n_prof)."""
     bells = snap.get("solar_bells") or []
     prof = (snap.get("consumption") or {}).get("hour_profile") or {}
     now = datetime.now()
@@ -1700,40 +1696,57 @@ def render_solar_usage_chart(snap: dict) -> str:
     N = 24
     sol = [bell_kw(i) for i in range(N + 1)]
     use = [_hod(prof, int(h0 + i) % 24) for i in range(N + 1)]
-    W, H, pL, pR, pT, pB = 720, 300, 40, 14, 22, 28
+    return h0, sol, use, len(bells), len(prof)
+
+
+def chart_svg(snap: dict) -> str:
+    """Standalone SVG (image/svg+xml) of next-24h expected solar vs learned house usage. Served via
+    <img src="api/chart.svg"> — inline SVG won't paint in the HA ingress webview, but <img> does, and
+    height:auto works on <img>. ALL attributes are quoted: image/svg+xml is parsed as strict XML.
+
+    Designed for a WHITE background (the <img> sits on a white card) so it reads under dark themes too:
+    grid #ddd, axis text #888, solar line #e0a800 + fill #f5c518@0.30, usage line #8e44ad."""
+    h0, sol, use, _, _ = _chart_series(snap)
+    N = 24
+    W, H, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
     iw, ih = W - pL - pR, H - pT - pB
     ymax = max(max(sol), max(use), 1.0) * 1.15
     X = lambda i: pL + iw * i / N
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    out = [f'<svg viewBox="0 0 {W} {H}" preserveAspectRatio="xMidYMid meet" '
-           f'xmlns="http://www.w3.org/2000/svg" font-family="system-ui">']
-    out.append(f'<rect x=0 y=0 width={W} height={H} fill="none"/>')
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
+           f'viewBox="0 0 {W} {H}" font-family="system-ui, sans-serif">',
+           f'<rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>']
     for f in (0, .25, .5, .75, 1):
         y = pT + ih * (1 - f)
-        out.append(f'<line x1={pL} y1={y:.1f} x2={W-pR} y2={y:.1f} stroke="#888" stroke-opacity=0.18/>')
-        out.append(f'<text x={pL-6} y={y+4:.1f} font-size=12 fill="#999" text-anchor=end>{ymax*f:.1f}</text>')
+        out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
+        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
+                   f'text-anchor="end">{ymax*f:.1f}</text>')
     for i in range(0, N + 1, 3):
-        out.append(f'<text x={X(i):.0f} y={H-8} font-size=12 fill="#999" '
-                   f'text-anchor=middle>{int(h0+i)%24:02d}</text>')
+        out.append(f'<text x="{X(i):.0f}" y="{H-9}" font-size="12" fill="#888888" '
+                   f'text-anchor="middle">{int(h0+i)%24:02d}</text>')
     area = (f"{X(0):.1f},{Y(0):.1f} " + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
             + f" {X(N):.1f},{Y(0):.1f}")
-    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity=0.28/>')
+    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity="0.30"/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
-               + '" fill="none" stroke="#f5b800" stroke-width=2.6/>')
+               + '" fill="none" stroke="#e0a800" stroke-width="2.6"/>')
     out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(use[i]):.1f}" for i in range(N + 1))
-               + '" fill="none" stroke="#8e44ad" stroke-width=2.4/>')
-    out.append(f'<rect x={pL+4} y=4 width=12 height=12 fill="#f5b800"/>'
-               f'<text x={pL+20} y=14 font-size=13 fill="#888">Expected solar (kW)</text>')
-    out.append(f'<rect x={pL+196} y=4 width=12 height=12 fill="#8e44ad"/>'
-               f'<text x={pL+212} y=14 font-size=13 fill="#888">House usage (kW)</text>')
+               + '" fill="none" stroke="#8e44ad" stroke-width="2.4"/>')
+    out.append(f'<rect x="{pL+4}" y="4" width="12" height="12" fill="#e0a800"/>'
+               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Expected solar (kW)</text>')
+    out.append(f'<rect x="{pL+196}" y="4" width="12" height="12" fill="#8e44ad"/>'
+               f'<text x="{pL+212}" y="14" font-size="13" fill="#666666">House usage (kW)</text>')
     out.append('</svg>')
-    # Diagnostic caption — peaks + data availability, so a flat/empty chart is self-explaining.
+    return "".join(out)
+
+
+def chart_caption(snap: dict) -> str:
+    """Diagnostic caption under the chart — peaks + data availability, so a flat/empty chart explains
+    itself instead of looking broken."""
+    _, sol, use, n_bells, n_prof = _chart_series(snap)
     if not any(sol) and not any(use):
-        cap = 'no data yet — solar forecast & usage profile both empty (fills in within a few hours)'
-    else:
-        cap = (f'solar peak {max(sol):.1f} kW · usage peak {max(use):.1f} kW · '
-               f'{len(bells)} solar bell(s) · {len(prof)}h usage profile')
-    return f'<div class=chartbox>{"".join(out)}</div><div class=cap>{cap}</div>'
+        return 'no data yet — solar forecast & usage profile both empty (fills in within a few hours)'
+    return (f'solar peak {max(sol):.1f} kW · usage peak {max(use):.1f} kW · '
+            f'{n_bells} solar bell(s) · {n_prof}h usage profile')
 
 
 def render(snap: dict, cfg: dict) -> str:
@@ -1780,7 +1793,8 @@ def render(snap: dict, cfg: dict) -> str:
 {banner}
 <div class=row id=cards>{cards}</div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Next 24 hours — expected solar vs house usage</div>
-<div id=chart>{render_solar_usage_chart(snap)}</div></div>
+<div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Next 24h expected solar vs house usage">
+<div class=cap>{chart_caption(snap)}</div></div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
@@ -1860,6 +1874,18 @@ def make_handler(cfg):
             if self.path.startswith("/api/state"):
                 with LAST_LOCK:
                     self._send(200, json.dumps(LAST, default=str), "application/json")
+            elif self.path.startswith("/api/chart.svg"):
+                # The chart itself, as a standalone SVG image (rendered via <img> — inline SVG
+                # won't paint in the HA ingress webview).
+                with LAST_LOCK:
+                    snap = dict(LAST)
+                try:
+                    svg = chart_svg(snap)
+                except Exception as e:
+                    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="60">'
+                           f'<text x="8" y="36" font-size="14" fill="#c0392b">chart error: '
+                           f'{type(e).__name__}: {e}</text></svg>')
+                self._send(200, svg, "image/svg+xml")
             elif self.path.startswith("/api/chart"):
                 # Debug: exactly what the chart is fed + what it produces. Isolates data-vs-render.
                 with LAST_LOCK:
@@ -1880,12 +1906,12 @@ def make_handler(cfg):
                 sol = [_bk(i) for i in range(25)]
                 use = [round(_hod(prof, int(h0 + i) % 24), 3) for i in range(25)]
                 try:
-                    svg = render_solar_usage_chart(snap)
+                    svg = chart_svg(snap)
                     err = None
                 except Exception as e:
                     svg, err = "", f"{type(e).__name__}: {e}"
                 dbg = {
-                    "version": "1.53.0",
+                    "version": "1.54.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "h0": round(h0, 2),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
                     "solar_bells": bells, "n_bells": len(bells),
