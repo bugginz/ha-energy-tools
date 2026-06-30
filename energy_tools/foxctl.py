@@ -523,6 +523,30 @@ FCAST_BACKFILL_DAYS = 21      # how many past days to keep / backfill
 FCAST_MIN_DAYS = 3            # prefer the FoxESS profile over self-integration once we have this many
 FCAST_FILL_GAP_S = 120        # fetch at most one backfill day per this interval (quota-friendly)
 
+# Today's actuals (partial day) for the dashboard timeline's "measured" left half. The forecast store
+# only holds COMPLETE days, so today's elapsed hours come from a separate, lightly-cached fetch.
+_TODAY = {"date": None, "ts": 0.0, "data": None}
+TODAY_REFRESH_S = 600         # re-pull today's actuals at most this often (elapsed hours don't change)
+
+
+def today_actuals(fox):
+    """Today's per-hour actuals (load/solar/grid in/out kWh, 24-arrays; future hours ~0), cached so we
+    add at most one extra report+history call every TODAY_REFRESH_S. Returns the cached value on a fetch
+    failure (or zeros if we never succeeded today)."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    fresh = _TODAY["date"] == today and _TODAY["data"] and (time.time() - _TODAY["ts"]) < TODAY_REFRESH_S
+    if not fresh:
+        try:
+            lh, sh, gi, go = fetch_forecast_day(fox, datetime.now())
+            _TODAY.update(date=today, ts=time.time(),
+                          data={"load": lh, "solar": sh, "grid_in": gi, "grid_out": go})
+        except Exception as e:
+            print(f"today actuals fetch failed: {e}", file=sys.stderr)
+            if _TODAY["date"] != today:
+                _TODAY["data"] = None
+    return _TODAY["data"] or {"load": [0.0] * 24, "solar": [0.0] * 24,
+                              "grid_in": [0.0] * 24, "grid_out": [0.0] * 24}
+
 
 def _fcast_path(cfg):
     return _state_dir(cfg) / "forecast_store.json"
@@ -1345,6 +1369,19 @@ def gather_and_decide(cfg: dict) -> dict:
     else:
         consumption.setdefault("profile_source", "self")
 
+    # Measured actuals for the dashboard timeline's left (past-24h) half: today so far (lightly cached
+    # fetch) + yesterday's completed day from the forecast store. Forecast (right half) uses bells +
+    # the hour-of-day average. Read-only; failures degrade to the averages in the chart.
+    try:
+        ta = today_actuals(fox)
+    except Exception as e:
+        ta = {"load": [0.0] * 24, "solar": [0.0] * 24}
+        print(f"today actuals failed: {e}", file=sys.stderr)
+    yk = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    ya = _FCAST["days"].get(yk) or {}
+    today_act = {"load": ta.get("load"), "solar": ta.get("solar")}
+    yest_act = {"load": ya.get("load"), "solar": ya.get("solar")}
+
     load_ov(cfg)
     strat = cfg["strategy"]
     cap_kwh = float(strat.get("battery_capacity_kwh", 30))
@@ -1408,6 +1445,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "battery": {"capacity_kwh": cap_kwh, "stored_kwh": stored_kwh},
         "consumption": consumption,
         "forecast_profiles": fcast,   # FoxESS-history hour-of-day load + solar + grid in/out
+        "today_actuals": today_act,       # measured hourly load+solar so far today (chart left half)
+        "yesterday_actuals": yest_act,    # measured hourly load+solar for yesterday (chart left half)
         "load_forecast": {"rest_today_kwh": rest_today_load, "next24_kwh": next24_load,
                           "typical_daily_kwh": round(float(typical_load), 1)},
         "grid_power": round(grid_power, 2),
@@ -1676,14 +1715,36 @@ def _hod(d, h):
     return float(v) if isinstance(v, (int, float)) else 0.0
 
 
+def _arr24(a):
+    """A value-getter over a 24-length hourly array; returns None for missing/short/non-numeric."""
+    ok = isinstance(a, list) and len(a) == 24
+    def get(h):
+        if ok and isinstance(a[h], (int, float)):
+            return float(a[h])
+        return None
+    return get
+
+
 def _chart_series(snap: dict):
-    """The two next-24h curves the chart/caption share. Bells are in HOURS-FROM-NOW coordinates
-    (see _solar_bells), so solar is sampled at offset `i`; the usage profile is keyed by CLOCK
-    hour, so it's sampled at (current_hour + i) % 24. Returns (h0, sol[], use[], n_bells, n_prof)."""
-    bells = snap.get("solar_bells") or []
-    prof = (snap.get("consumption") or {}).get("hour_profile") or {}
+    """The dashboard timeline: a continuous −24h → now → +24h hourly track. The PAST half is measured
+    actuals (today so far + yesterday from the forecast store); the FUTURE half is the average forecast
+    (solar from the calibrated bells, usage from the learned hour-of-day profile). Offsets are relative
+    to `now`; both halves share offset 0 so the lines meet at the NOW marker.
+
+    Past actuals fall back to the hour-of-day AVERAGE (solar_profile / hour_profile) for any hour we
+    don't have measured yet — so the left half is sensible before the backfill completes.
+
+    Returns a dict with H, and the four series past_solar/past_use (offset −24..0) and
+    fut_solar/fut_use (offset 0..24), each 25 points. measured=True if any real actual was used."""
     now = datetime.now()
-    h0 = now.hour + now.minute / 60.0
+    H = now.hour
+    bells = snap.get("solar_bells") or []
+    prof = (snap.get("consumption") or {}).get("hour_profile") or {}     # usage avg by clock hour
+    sol_prof = (snap.get("forecast_profiles") or {}).get("solar_profile") or {}
+    ta = snap.get("today_actuals") or {}
+    ya = snap.get("yesterday_actuals") or {}
+    today_s, today_l = _arr24(ta.get("solar")), _arr24(ta.get("load"))
+    yest_s, yest_l = _arr24(ya.get("solar")), _arr24(ya.get("load"))
 
     def bell_kw(off):                       # off = hours from now (matches bell s/e coordinates)
         tot = 0.0
@@ -1693,48 +1754,81 @@ def _chart_series(snap: dict):
                 tot += pm * math.sin(math.pi * (off - s) / (e - s))
         return max(0.0, tot)
 
-    N = 24
-    sol = [bell_kw(i) for i in range(N + 1)]
-    use = [_hod(prof, int(h0 + i) % 24) for i in range(N + 1)]
-    return h0, sol, use, len(bells), len(prof)
+    measured = False
+    past_solar, past_use = [], []
+    for o in range(-24, 1):                 # −24..0 (measured, with average fallback)
+        idx = H + o
+        ch = idx % 24
+        is_today = idx >= 0                 # idx<0 means yesterday's clock hour
+        s = (today_s if is_today else yest_s)(ch)
+        u = (today_l if is_today else yest_l)(ch)
+        if s is not None or u is not None:
+            measured = True
+        past_solar.append(s if s is not None else _hod(sol_prof, ch))
+        past_use.append(u if u is not None else _hod(prof, ch))
+    fut_solar = [bell_kw(o) for o in range(0, 25)]          # 0..24 (forecast)
+    fut_use = [_hod(prof, (H + o) % 24) for o in range(0, 25)]
+    return {"H": H, "past_solar": past_solar, "past_use": past_use,
+            "fut_solar": fut_solar, "fut_use": fut_use, "measured": measured,
+            "n_bells": len(bells), "n_prof": len(prof)}
 
 
 def chart_svg(snap: dict) -> str:
-    """Standalone SVG (image/svg+xml) of next-24h expected solar vs learned house usage. Served via
-    <img src="api/chart.svg"> — inline SVG won't paint in the HA ingress webview, but <img> does, and
-    height:auto works on <img>. ALL attributes are quoted: image/svg+xml is parsed as strict XML.
+    """Standalone SVG (image/svg+xml) of the −24h→now→+24h timeline. Served via <img src="api/chart.svg">
+    — inline SVG won't paint in the HA ingress webview, but <img> does, and height:auto works on <img>.
+    ALL attributes are quoted: image/svg+xml is parsed as strict XML.
 
-    Designed for a WHITE background (the <img> sits on a white card) so it reads under dark themes too:
-    grid #ddd, axis text #888, solar line #e0a800 + fill #f5c518@0.30, usage line #8e44ad."""
-    h0, sol, use, _, _ = _chart_series(snap)
-    N = 24
-    W, H, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
-    iw, ih = W - pL - pR, H - pT - pB
-    ymax = max(max(sol), max(use), 1.0) * 1.15
-    X = lambda i: pL + iw * i / N
+    Drawn for a WHITE card background so it reads under dark themes: grid #ddd, axis text #888, solar
+    #e0a800 (+ fill #f5c518@0.22), usage #8e44ad. PAST is solid, FUTURE is dashed, and a NOW line splits
+    the two."""
+    s = _chart_series(snap)
+    H = s["H"]
+    psol, puse, fsol, fuse = s["past_solar"], s["past_use"], s["fut_solar"], s["fut_use"]
+    sol_all = psol + fsol[1:]               # combined −24..+24, drop the duplicated offset-0 point
+    use_all = puse + fuse[1:]
+    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
+    iw, ih = W - pL - pR, Ht - pT - pB
+    ymax = max(max(sol_all), max(use_all), 1.0) * 1.15
+    X = lambda o: pL + iw * (o + 24) / 48.0     # offset −24..+24 → x
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
-           f'viewBox="0 0 {W} {H}" font-family="system-ui, sans-serif">',
-           f'<rect x="0" y="0" width="{W}" height="{H}" fill="#ffffff"/>']
-    for f in (0, .25, .5, .75, 1):
+    NOW = X(0)
+
+    def poly(vals, o0, color, dash):
+        pts = " ".join(f"{X(o0 + k):.1f},{Y(v):.1f}" for k, v in enumerate(vals))
+        da = ' stroke-dasharray="5 4"' if dash else ''
+        return f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2.4"{da}/>'
+
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Ht}" '
+           f'viewBox="0 0 {W} {Ht}" font-family="system-ui, sans-serif">',
+           f'<rect x="0" y="0" width="{W}" height="{Ht}" fill="#ffffff"/>']
+    for f in (0, .25, .5, .75, 1):          # y gridlines + labels
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
         out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
                    f'text-anchor="end">{ymax*f:.1f}</text>')
-    for i in range(0, N + 1, 3):
-        out.append(f'<text x="{X(i):.0f}" y="{H-9}" font-size="12" fill="#888888" '
-                   f'text-anchor="middle">{int(h0+i)%24:02d}</text>')
-    area = (f"{X(0):.1f},{Y(0):.1f} " + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
-            + f" {X(N):.1f},{Y(0):.1f}")
-    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity="0.30"/>')
-    out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(sol[i]):.1f}" for i in range(N + 1))
-               + '" fill="none" stroke="#e0a800" stroke-width="2.6"/>')
-    out.append('<polyline points="' + " ".join(f"{X(i):.1f},{Y(use[i]):.1f}" for i in range(N + 1))
-               + '" fill="none" stroke="#8e44ad" stroke-width="2.4"/>')
+    for o in range(-24, 25, 6):             # x labels = clock hour at that offset
+        out.append(f'<text x="{X(o):.0f}" y="{Ht-9}" font-size="12" fill="#888888" '
+                   f'text-anchor="middle">{(H+o)%24:02d}</text>')
+    # solar fill under the whole combined curve
+    area = (f"{X(-24):.1f},{Y(0):.1f} "
+            + " ".join(f"{X(-24+k):.1f},{Y(v):.1f}" for k, v in enumerate(sol_all))
+            + f" {X(24):.1f},{Y(0):.1f}")
+    out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity="0.22"/>')
+    # NOW divider
+    out.append(f'<line x1="{NOW:.1f}" y1="{pT}" x2="{NOW:.1f}" y2="{pT+ih}" '
+               f'stroke="#c0392b" stroke-width="1.5" stroke-dasharray="2 3"/>')
+    out.append(f'<text x="{NOW:.1f}" y="{pT-9}" font-size="12" fill="#c0392b" text-anchor="middle">now</text>')
+    # past (solid) then future (dashed), solar then usage
+    out.append(poly(psol, -24, "#e0a800", False))
+    out.append(poly(fsol, 0, "#e0a800", True))
+    out.append(poly(puse, -24, "#8e44ad", False))
+    out.append(poly(fuse, 0, "#8e44ad", True))
     out.append(f'<rect x="{pL+4}" y="4" width="12" height="12" fill="#e0a800"/>'
-               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Expected solar (kW)</text>')
-    out.append(f'<rect x="{pL+196}" y="4" width="12" height="12" fill="#8e44ad"/>'
-               f'<text x="{pL+212}" y="14" font-size="13" fill="#666666">House usage (kW)</text>')
+               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Solar (kW)</text>')
+    out.append(f'<rect x="{pL+118}" y="4" width="12" height="12" fill="#8e44ad"/>'
+               f'<text x="{pL+134}" y="14" font-size="13" fill="#666666">Usage (kW)</text>')
+    out.append(f'<text x="{W-pR}" y="14" font-size="12" fill="#999999" text-anchor="end">'
+               f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')
     return "".join(out)
 
@@ -1742,11 +1836,13 @@ def chart_svg(snap: dict) -> str:
 def chart_caption(snap: dict) -> str:
     """Diagnostic caption under the chart — peaks + data availability, so a flat/empty chart explains
     itself instead of looking broken."""
-    _, sol, use, n_bells, n_prof = _chart_series(snap)
-    if not any(sol) and not any(use):
-        return 'no data yet — solar forecast & usage profile both empty (fills in within a few hours)'
-    return (f'solar peak {max(sol):.1f} kW · usage peak {max(use):.1f} kW · '
-            f'{n_bells} solar bell(s) · {n_prof}h usage profile')
+    s = _chart_series(snap)
+    psol, puse, fsol, fuse = s["past_solar"], s["past_use"], s["fut_solar"], s["fut_use"]
+    if not any(psol + puse + fsol + fuse):
+        return 'no data yet — measured history & forecast both empty (fills in within a few hours)'
+    src = "measured" if s["measured"] else "typical-day estimate (no measured history yet)"
+    return (f'past 24h ({src}): solar peak {max(psol):.1f} kW · usage peak {max(puse):.1f} kW   |   '
+            f'next 24h forecast: solar peak {max(fsol):.1f} kW · usage peak {max(fuse):.1f} kW')
 
 
 def render(snap: dict, cfg: dict) -> str:
@@ -1792,8 +1888,8 @@ def render(snap: dict, cfg: dict) -> str:
 <h1>foxctl <small id=refr style="color:#888;font-weight:400"></small></h1>
 {banner}
 <div class=row id=cards>{cards}</div>
-<div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Next 24 hours — expected solar vs house usage</div>
-<div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Next 24h expected solar vs house usage">
+<div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
+<div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
 <div class=cap>{chart_caption(snap)}</div></div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
@@ -1887,38 +1983,32 @@ def make_handler(cfg):
                            f'{type(e).__name__}: {e}</text></svg>')
                 self._send(200, svg, "image/svg+xml")
             elif self.path.startswith("/api/chart"):
-                # Debug: exactly what the chart is fed + what it produces. Isolates data-vs-render.
+                # Debug: exactly what the timeline chart is fed + what it produces. Isolates data-vs-render.
                 with LAST_LOCK:
                     snap = dict(LAST)
                 bells = snap.get("solar_bells") or []
                 prof = (snap.get("consumption") or {}).get("hour_profile") or {}
+                ta, ya = snap.get("today_actuals") or {}, snap.get("yesterday_actuals") or {}
                 now = datetime.now()
-                h0 = now.hour + now.minute / 60.0
-
-                def _bk(off):
-                    t = 0.0
-                    for b in bells:
-                        s, e, pm = b.get("s"), b.get("e"), b.get("pmax", 0)
-                        if s is not None and e is not None and e > s and s <= off <= e and pm:
-                            t += pm * math.sin(math.pi * (off - s) / (e - s))
-                    return round(max(0.0, t), 3)
-
-                sol = [_bk(i) for i in range(25)]
-                use = [round(_hod(prof, int(h0 + i) % 24), 3) for i in range(25)]
                 try:
+                    s = _chart_series(snap)
                     svg = chart_svg(snap)
                     err = None
                 except Exception as e:
-                    svg, err = "", f"{type(e).__name__}: {e}"
+                    s, svg, err = {}, "", f"{type(e).__name__}: {e}"
+                rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.54.0",
-                    "now": now.strftime("%Y-%m-%d %H:%M"), "h0": round(h0, 2),
+                    "version": "1.55.0",
+                    "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
-                    "solar_bells": bells, "n_bells": len(bells),
-                    "hour_profile_len": len(prof),
-                    "hour_profile_keys": sorted((str(k) for k in prof), key=lambda k: int(k)) if prof else [],
-                    "sol_next24": sol, "use_next24": use,
-                    "sol_peak": max(sol) if sol else 0, "use_peak": max(use) if use else 0,
+                    "n_bells": len(bells), "hour_profile_len": len(prof),
+                    "today_actuals_present": {"solar": isinstance(ta.get("solar"), list),
+                                              "load": isinstance(ta.get("load"), list)},
+                    "yesterday_actuals_present": {"solar": isinstance(ya.get("solar"), list),
+                                                  "load": isinstance(ya.get("load"), list)},
+                    "measured": s.get("measured"),
+                    "past_solar": rnd(s.get("past_solar") or []), "past_use": rnd(s.get("past_use") or []),
+                    "fut_solar": rnd(s.get("fut_solar") or []), "fut_use": rnd(s.get("fut_use") or []),
                     "render_error": err, "svg_len": len(svg), "svg_head": svg[:500],
                 }
                 self._send(200, json.dumps(dbg, default=str, indent=2), "application/json")
