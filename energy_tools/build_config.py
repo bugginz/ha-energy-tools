@@ -36,7 +36,8 @@ fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
 
 S = fc["strategy"]
 for k in ("force_charge_power_kw", "solar_defer_kw",
-          "battery_capacity_kwh", "typical_daily_load_kwh"):
+          "battery_capacity_kwh", "typical_daily_load_kwh",
+          "ev_charge_kw", "ev_expected_kwh"):
     if k in opt:
         S[k] = float(opt[k])
 for k in ("reserve_soc", "max_soc", "inverter_min_soc"):

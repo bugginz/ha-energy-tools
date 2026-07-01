@@ -93,6 +93,8 @@ DEFAULT_CONFIG = {
         "typical_daily_load_kwh": 30,   # fallback until enough consumption history is sampled
         "force_charge_minutes": 120,    # max force-charge window length (safety cap); re-evaluated each cycle
         "force_charge_power_kw": 13.5,  # inverter max grid charge rate (13500 W)
+        "ev_charge_kw": 7.0,            # assumed EV charger draw — dashboard free-window car overlay only
+        "ev_expected_kwh": 0.0,         # expected daily car charge (0 = derive from ev_charge_kw × free window)
         # Temperature nudge: scale the predicted coast load up in hot/cold weather (HVAC). Gentle in v1;
         # tune per_c once temp↔load history accumulates. mild_c is the no-nudge baseline temperature.
         "temp_mild_c": 20.0, "temp_hot_c": 28.0, "temp_cold_c": 12.0,
@@ -1449,6 +1451,8 @@ def gather_and_decide(cfg: dict) -> dict:
         "yesterday_actuals": yest_act,    # measured hourly load+solar for yesterday (chart left half)
         "load_forecast": {"rest_today_kwh": rest_today_load, "next24_kwh": next24_load,
                           "typical_daily_kwh": round(float(typical_load), 1)},
+        "car": {"charge_kw": float(strat.get("ev_charge_kw", 7.0) or 0.0),
+                "expected_kwh": float(strat.get("ev_expected_kwh", 0.0) or 0.0)},
         "grid_power": round(grid_power, 2),
         "feedin_power": round(feedin_power, 2),
         "battery_power": round(battery_power, 2),
@@ -1786,9 +1790,22 @@ def chart_svg(snap: dict) -> str:
     psol, puse, fsol, fuse = s["past_solar"], s["past_use"], s["fut_solar"], s["fut_use"]
     sol_all = psol + fsol[1:]               # combined −24..+24, drop the duplicated offset-0 point
     use_all = puse + fuse[1:]
+    # Car charging as a scheduled free-window load (shown separately, NOT folded into the usage line).
+    free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+    car = snap.get("car") or {}
+    fs, fe = free.get("start"), free.get("end")
+    car_kw, car_windows = 0.0, []
+    if isinstance(fs, (int, float)) and isinstance(fe, (int, float)):
+        dur = (fe - fs) % 24 or 24
+        car_kw = (car.get("expected_kwh") or 0.0) / dur if car.get("expected_kwh") else (car.get("charge_kw") or 0.0)
+        fo = (fs - H) % 24                  # offset of the next free-window start
+        for a in (fo - 24, fo):             # the past and the upcoming occurrence within ±24h
+            b = a + dur
+            if b > -24 and a < 24 and car_kw > 0:
+                car_windows.append((max(a, -24), min(b, 24)))
     W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
     iw, ih = W - pL - pR, Ht - pT - pB
-    ymax = max(max(sol_all), max(use_all), 1.0) * 1.15
+    ymax = max(max(sol_all), max(use_all), car_kw, 1.0) * 1.15
     X = lambda o: pL + iw * (o + 24) / 48.0     # offset −24..+24 → x
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
     NOW = X(0)
@@ -1814,6 +1831,13 @@ def chart_svg(snap: dict) -> str:
             + " ".join(f"{X(-24+k):.1f},{Y(v):.1f}" for k, v in enumerate(sol_all))
             + f" {X(24):.1f},{Y(0):.1f}")
     out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity="0.22"/>')
+    # car charging — faint green blocks over the free-tariff window(s), with a dashed top edge
+    cy = Y(car_kw)
+    for a, b in car_windows:
+        out.append(f'<rect x="{X(a):.1f}" y="{cy:.1f}" width="{X(b)-X(a):.1f}" height="{pT+ih-cy:.1f}" '
+                   f'fill="#2e9e5b" fill-opacity="0.14"/>')
+        out.append(f'<line x1="{X(a):.1f}" y1="{cy:.1f}" x2="{X(b):.1f}" y2="{cy:.1f}" '
+                   f'stroke="#2e9e5b" stroke-width="1.6" stroke-dasharray="4 3"/>')
     # NOW divider
     out.append(f'<line x1="{NOW:.1f}" y1="{pT}" x2="{NOW:.1f}" y2="{pT+ih}" '
                f'stroke="#c0392b" stroke-width="1.5" stroke-dasharray="2 3"/>')
@@ -1824,9 +1848,12 @@ def chart_svg(snap: dict) -> str:
     out.append(poly(puse, -24, "#8e44ad", False))
     out.append(poly(fuse, 0, "#8e44ad", True))
     out.append(f'<rect x="{pL+4}" y="4" width="12" height="12" fill="#e0a800"/>'
-               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Solar (kW)</text>')
-    out.append(f'<rect x="{pL+118}" y="4" width="12" height="12" fill="#8e44ad"/>'
-               f'<text x="{pL+134}" y="14" font-size="13" fill="#666666">Usage (kW)</text>')
+               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Solar</text>')
+    out.append(f'<rect x="{pL+80}" y="4" width="12" height="12" fill="#8e44ad"/>'
+               f'<text x="{pL+96}" y="14" font-size="13" fill="#666666">Usage</text>')
+    if car_windows:
+        out.append(f'<rect x="{pL+160}" y="4" width="12" height="12" fill="#2e9e5b" fill-opacity="0.5"/>'
+                   f'<text x="{pL+176}" y="14" font-size="13" fill="#666666">Car (free window)</text>')
     out.append(f'<text x="{W-pR}" y="14" font-size="12" fill="#999999" text-anchor="end">'
                f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')
@@ -1843,6 +1870,66 @@ def chart_caption(snap: dict) -> str:
     src = "measured" if s["measured"] else "typical-day estimate (no measured history yet)"
     return (f'past 24h ({src}): solar peak {max(psol):.1f} kW · usage peak {max(puse):.1f} kW   |   '
             f'next 24h forecast: solar peak {max(fsol):.1f} kW · usage peak {max(fuse):.1f} kW')
+
+
+def chart_stats_html(snap: dict) -> str:
+    """The 'what is this forecast built from' panel under the chart: data provenance + day counts +
+    headline totals for usage, solar and the car free-window charge. Answers the obvious questions
+    (how many days, what's the basis) directly on the dashboard."""
+    cons = snap.get("consumption") or {}
+    fp = snap.get("forecast_profiles") or {}
+    lf = snap.get("load_forecast") or {}
+    sf = snap.get("solar_forecast") or {}
+    sc = snap.get("solar_cal") or {}
+    free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+    car = snap.get("car") or {}
+
+    def kwh(v):
+        return f"{v:.1f} kWh" if isinstance(v, (int, float)) else "—"
+
+    prof_days = cons.get("profile_days") or 0          # self-integrated hourly profile
+    fc_days = fp.get("days") or 0                       # FoxESS backfilled days (load)
+    fc_solar = fp.get("days_solar") or 0
+    usage_days = max(prof_days, fc_days)
+    bias, samples = sc.get("bias"), sc.get("samples") or 0
+    bias_txt = f"×{bias:g}" if sc.get("applied") and isinstance(bias, (int, float)) else "uncalibrated"
+
+    fs, fe = free.get("start"), free.get("end")
+    car_txt = "—"
+    if isinstance(fs, (int, float)) and isinstance(fe, (int, float)):
+        dur = (fe - fs) % 24 or 24
+        ekwh = car.get("expected_kwh") or 0.0
+        ckw = (ekwh / dur) if ekwh else (car.get("charge_kw") or 0.0)
+        tot = ekwh if ekwh else ckw * dur
+        basis = "set" if ekwh else f"assumed {ckw:g} kW"
+        car_txt = f"{int(fs):02d}:00–{int(fe):02d}:00 free · ≈{tot:.0f} kWh ({basis})"
+
+    def card(title, lines):
+        body = "".join(f'<div>{l}</div>' for l in lines)
+        return (f'<div style="flex:1;min-width:170px;padding:.4rem .6rem;border:1px solid #eee;'
+                f'border-radius:8px"><div style="font-weight:600;color:#555;margin-bottom:.15rem">'
+                f'{title}</div><div style="color:#777;font-size:.82rem;line-height:1.5">{body}</div></div>')
+
+    usage = card("Usage forecast", [
+        "basis: hour-of-day average",
+        f"history: {usage_days} day(s)" + (f" · {prof_days} self / {fc_days} FoxESS" if prof_days or fc_days else ""),
+        f"rest of today: {kwh(lf.get('rest_today_kwh'))}",
+        f"next 24 h: {kwh(lf.get('next24_kwh'))} · avg {kwh(cons.get('avg_daily_total_kwh'))}/day",
+    ])
+    solar = card("Solar forecast", [
+        f"basis: Solcast {bias_txt}",
+        f"calibration: {samples} day(s) · {fc_solar} day(s) actuals",
+        f"remaining today: {kwh(sf.get('remaining_today'))}",
+        f"tomorrow: {kwh(sf.get('tomorrow'))}",
+    ])
+    carc = card("Car (free window)", [
+        car_txt,
+        "shown separately —",
+        "not folded into base usage",
+        "tune via ev_charge_kw / ev_expected_kwh",
+    ])
+    return (f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem .1rem 0">'
+            f'{usage}{solar}{carc}</div>')
 
 
 def render(snap: dict, cfg: dict) -> str:
@@ -1890,7 +1977,7 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=row id=cards>{cards}</div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
-<div class=cap>{chart_caption(snap)}</div></div></div>
+<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}</div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
@@ -1998,8 +2085,10 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.55.0",
+                    "version": "1.56.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
+                    "car": snap.get("car"),
+                    "free_window": ((snap.get("dynamic") or {}).get("tariff") or {}).get("free"),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
                     "n_bells": len(bells), "hour_profile_len": len(prof),
                     "today_actuals_present": {"solar": isinstance(ta.get("solar"), list),
