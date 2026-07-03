@@ -353,6 +353,81 @@ class HAClient:
             return None
 
 
+# EV charger power source, resolved once then cached (avoid re-probing HA every cycle).
+# {"resolved": bool, "kind": "entity"|"switch_attr"|None, "ref": entity_or_attr, "src": human_str}
+_EVP = {"resolved": False, "kind": None, "ref": None, "src": "none"}
+
+# Companion power-sensor suffixes a Tuya/HA smart plug commonly exposes, and switch-state
+# attributes that carry live watts. Probed in order; first that reads numeric wins.
+_EV_SENSOR_SUFFIXES = ("power", "current_power", "active_power", "apparent_power",
+                       "electric_power", "power_w", "current_consumption")
+_EV_ATTR_KEYS = ("current_power_w", "power_w", "active_power", "load_power",
+                 "current_consumption", "power")
+
+
+def _watts_to_kw(w):
+    """Normalise a plug reading to kW. Values > 100 are treated as watts."""
+    if w is None:
+        return None
+    try:
+        w = float(w)
+    except Exception:
+        return None
+    return w / 1000.0 if w > 100 else w
+
+
+def resolve_ev_power(ha, cfg):
+    """Return (ev_kw, source_str): live EV charger draw in kW, or (None, src) if unknown.
+
+    Priority: an explicit ha.ev_power_entity, else auto-discover from the ev_divert charger
+    switch — probe its companion power sensors (sensor.<obj>_power etc.) and its own live-watt
+    attributes. The resolved source is cached in _EVP so we only probe HA once."""
+    explicit = cfg.get("ha", {}).get("ev_power_entity")
+    if explicit:
+        return _watts_to_kw(ha.get_num(explicit)), f"entity {explicit}"
+
+    sw = (cfg.get("ev_divert") or {}).get("switch") or ""
+    if not sw:
+        return None, "none (no ev_power_entity / ev_divert.switch)"
+
+    # Fast path: we already know where the number lives.
+    if _EVP["resolved"]:
+        if _EVP["kind"] == "entity":
+            return _watts_to_kw(ha.get_num(_EVP["ref"])), _EVP["src"]
+        if _EVP["kind"] == "switch_attr":
+            try:
+                attrs = ha._state(sw).get("attributes", {})
+                return _watts_to_kw(attrs.get(_EVP["ref"])), _EVP["src"]
+            except Exception:
+                return None, _EVP["src"]
+        return None, _EVP["src"]
+
+    obj = sw.split(".", 1)[1] if "." in sw else sw  # object_id without the domain
+
+    # 1) companion power sensors named after the switch object_id
+    for suf in _EV_SENSOR_SUFFIXES:
+        ent = f"sensor.{obj}_{suf}"
+        v = ha.get_num(ent)
+        if v is not None:
+            _EVP.update(resolved=True, kind="entity", ref=ent, src=f"sensor {ent}")
+            return _watts_to_kw(v), _EVP["src"]
+
+    # 2) live-watt attributes carried on the switch entity itself
+    try:
+        attrs = ha._state(sw).get("attributes", {})
+    except Exception:
+        attrs = {}
+    for k in _EV_ATTR_KEYS:
+        if k in attrs and attrs[k] is not None:
+            _EVP.update(resolved=True, kind="switch_attr", ref=k, src=f"{sw} attr[{k}]")
+            return _watts_to_kw(attrs[k]), _EVP["src"]
+
+    # Nothing found — mark resolved so we don't hammer HA; report so the dashboard shows it.
+    _EVP.update(resolved=True, kind=None, ref=None,
+                src=f"unresolved (no power sensor/attr for {sw})")
+    return None, _EVP["src"]
+
+
 # ---------------------------------------------------------------- engine -----
 
 def _parse_t(s):
@@ -1297,10 +1372,10 @@ def gather_and_decide(cfg: dict) -> dict:
     bat_discharge_power = float(real.get("batDischargePower") or 0)
     battery_power = round(bat_charge_power - bat_discharge_power, 3)
     pv_strings = {f"pv{i}_power": float(real.get(f"pv{i}Power") or 0) for i in range(1, 7)}
-    # EV charger power (Tuya plug reports W; convert to kW) — read here so it feeds the energy counters too.
-    ev_kw = ha.get_num(cfg["ha"].get("ev_power_entity")) if cfg["ha"].get("ev_power_entity") else None
-    if ev_kw is not None and ev_kw > 100:
-        ev_kw = ev_kw / 1000.0
+    # EV charger power (kW). Prefer an explicit ev_power_entity; else auto-discover it from the
+    # charger switch (companion power sensor / live-watt attribute). Read here so it feeds the
+    # energy counters and lets base-load usage be measured minus the car.
+    ev_kw, ev_power_source = resolve_ev_power(ha, cfg)
     # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
@@ -1472,7 +1547,9 @@ def gather_and_decide(cfg: dict) -> dict:
         "load_forecast": {"rest_today_kwh": rest_today_load, "next24_kwh": next24_load,
                           "typical_daily_kwh": round(float(typical_load), 1)},
         "car": {"charge_kw": float(strat.get("ev_charge_kw", 7.0) or 0.0),
-                "expected_kwh": float(strat.get("ev_expected_kwh", 0.0) or 0.0)},
+                "expected_kwh": float(strat.get("ev_expected_kwh", 0.0) or 0.0),
+                "measured_kwh": consumption.get("avg_daily_ev_kwh"),
+                "power_source": ev_power_source},
         "grid_power": round(grid_power, 2),
         "feedin_power": round(feedin_power, 2),
         "battery_power": round(battery_power, 2),
@@ -1488,6 +1565,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "data_age_s": int(now_epoch - soc_ts) if soc_ts else None,
         "load_kw": round(load, 2),
         "ev_kw": round(ev_kw, 2) if isinstance(ev_kw, (int, float)) else ev_kw,
+        "ev_power_source": ev_power_source,
         "solar_surplus_kw": round(pv - load, 2),
         "telemetry_source": tsrc,
         "fox_error": fox_error_status(),
@@ -1817,7 +1895,10 @@ def chart_svg(snap: dict) -> str:
     car_kw, car_windows = 0.0, []
     if isinstance(fs, (int, float)) and isinstance(fe, (int, float)):
         dur = (fe - fs) % 24 or 24
-        car_kw = (car.get("expected_kwh") or 0.0) / dur if car.get("expected_kwh") else (car.get("charge_kw") or 0.0)
+        # Prefer the measured daily EV kWh (from the plug meter) once it has accrued; fall back to the expected default.
+        meas = car.get("measured_kwh")
+        car_daily = meas if isinstance(meas, (int, float)) and meas > 0.1 else (car.get("expected_kwh") or 0.0)
+        car_kw = car_daily / dur if car_daily else (car.get("charge_kw") or 0.0)
         fo = (fs - H) % 24                  # offset of the next free-window start
         for a in (fo - 24, fo):             # the past and the upcoming occurrence within ±24h
             b = a + dur
@@ -1916,12 +1997,18 @@ def chart_stats_html(snap: dict) -> str:
 
     fs, fe = free.get("start"), free.get("end")
     car_txt = "—"
+    meas = car.get("measured_kwh")
+    meas_ok = isinstance(meas, (int, float)) and meas > 0.1
     if isinstance(fs, (int, float)) and isinstance(fe, (int, float)):
         dur = (fe - fs) % 24 or 24
         ekwh = car.get("expected_kwh") or 0.0
-        ckw = (ekwh / dur) if ekwh else (car.get("charge_kw") or 0.0)
-        tot = ekwh if ekwh else ckw * dur
-        basis = "set" if ekwh else f"assumed {ckw:g} kW"
+        if meas_ok:
+            tot, basis = meas, "measured"
+        elif ekwh:
+            tot, basis = ekwh, "set"
+        else:
+            ckw = car.get("charge_kw") or 0.0
+            tot, basis = ckw * dur, f"assumed {ckw:g} kW"
         car_txt = f"{int(fs):02d}:00–{int(fe):02d}:00 free · ≈{tot:.0f} kWh ({basis})"
 
     def card(title, lines):
@@ -1942,11 +2029,12 @@ def chart_stats_html(snap: dict) -> str:
         f"remaining today: {kwh(sf.get('remaining_today'))}",
         f"tomorrow: {kwh(sf.get('tomorrow'))}",
     ])
+    src = car.get("power_source") or "—"
     carc = card("Car (free window)", [
         car_txt,
-        "shown separately —",
-        "not folded into base usage",
-        "tune via ev_charge_kw / ev_expected_kwh",
+        ("measured live from plug meter" if meas_ok else "shown separately, not in base usage"),
+        f"meter: {src}",
+        ("auto-excluded from usage" if meas_ok else "tune via ev_charge_kw / ev_expected_kwh"),
     ])
     return (f'<div style="display:flex;gap:.5rem;flex-wrap:wrap;margin:.5rem .1rem 0">'
             f'{usage}{solar}{carc}</div>')
@@ -2038,7 +2126,8 @@ def render(snap: dict, cfg: dict) -> str:
         f'<div class=card><small>Battery</small><div class=big>{round(soc) if isinstance(soc,(int,float)) else "–"}%</div>'
         f'<small>{_n(bat.get("stored_kwh"))}/{_n(bat.get("capacity_kwh"))} kWh stored</small></div>',
         f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
-        f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div><small>{ev_status}</small></div>',
+        f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div>'
+        f'<small>{ev_status}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>',
         f'<div class=card><small>Weather &amp; solar</small><div class=big>{_n(sf.get("today_total"))} <small>kWh today</small></div>'
         f'<small>{snap.get("weather") or "—"} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
         f'{cal_txt}</small></div>',
@@ -2172,9 +2261,10 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.56.0",
+                    "version": "1.58.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
+                    "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
                     "free_window": ((snap.get("dynamic") or {}).get("tariff") or {}).get("free"),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
                     "n_bells": len(bells), "hour_profile_len": len(prof),
