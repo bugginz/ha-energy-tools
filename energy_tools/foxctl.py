@@ -58,6 +58,10 @@ DEFAULT_CONFIG = {
         "soc_entity": "sensor.foxess_bat_soc",
         "pv_entity": "sensor.foxess_pv_power",
         "load_entity": "sensor.foxess_load_power",
+        # EV charger draw. ev_power_entity may be a power (W/kW) OR a current (A) sensor — a current
+        # sensor is converted to kW with ev_voltage (AU nominal ~230–240V).
+        "ev_power_entity": "",
+        "ev_voltage": 240,
     },
     "strategy": {
         # --- Tariff-driven time-of-use (the ONLY decision model) -------------------------------------
@@ -355,18 +359,22 @@ class HAClient:
 
 # EV charger power source, resolved once then cached (avoid re-probing HA every cycle).
 # {"resolved": bool, "kind": "entity"|"switch_attr"|None, "ref": entity_or_attr, "src": human_str}
-_EVP = {"resolved": False, "kind": None, "ref": None, "src": "none"}
+_EVP = {"resolved": False, "kind": None, "ref": None, "amps": False, "src": "none"}
 
 # Companion power-sensor suffixes a Tuya/HA smart plug commonly exposes, and switch-state
 # attributes that carry live watts. Probed in order; first that reads numeric wins.
 _EV_SENSOR_SUFFIXES = ("power", "current_power", "active_power", "apparent_power",
-                       "electric_power", "power_w", "current_consumption")
+                       "electric_power", "power_w", "current_consumption", "current")
 _EV_ATTR_KEYS = ("current_power_w", "power_w", "active_power", "load_power",
-                 "current_consumption", "power")
+                 "current_consumption", "power", "current")
+# Socket/outlet words that (with an optional trailing number) sit below the parent device in an
+# entity object_id. Stripping them lets us find device-root companion sensors — e.g. the switch
+# `…_series_2_socket_2` shares a device with `sensor.…_series_2_current`.
+_EV_SOCKET_WORDS = ("socket", "outlet", "plug", "port", "relay", "switch", "channel", "ch")
 
 
 def _watts_to_kw(w):
-    """Normalise a plug reading to kW. Values > 100 are treated as watts."""
+    """Normalise a plug power reading to kW. Values > 100 are treated as watts."""
     if w is None:
         return None
     try:
@@ -376,15 +384,65 @@ def _watts_to_kw(w):
     return w / 1000.0 if w > 100 else w
 
 
+def _read_power_kw(ha, entity, voltage):
+    """Read an EV-draw sensor as kW. Handles power sensors (W/kW) AND current sensors (A/mA),
+    converting amps → kW via `voltage`. Returns (kw, unit_label) or (None, None)."""
+    try:
+        st = ha._state(entity)
+        val = float(st["state"])
+    except Exception:
+        return None, None
+    unit = str((st.get("attributes") or {}).get("unit_of_measurement") or "").strip()
+    u = unit.lower()
+    if u in ("a", "amp", "amps") or (not u and entity.endswith("_current")):
+        return round(val * float(voltage) / 1000.0, 4), (unit or "A")
+    if u == "ma":
+        return round(val / 1000.0 * float(voltage) / 1000.0, 5), unit
+    if u == "kw":
+        return round(val, 4), unit
+    if u == "w":
+        return round(val / 1000.0, 4), unit
+    return _watts_to_kw(val), (unit or "?")
+
+
+def _strip_socket_tail(obj):
+    """Parent-device root of a switch object_id: `…_socket_2` → `…`, `…_relay` → `…`."""
+    parts = obj.split("_")
+    if len(parts) >= 3 and parts[-1].isdigit() and parts[-2] in _EV_SOCKET_WORDS:
+        return ["_".join(parts[:-2])]
+    if len(parts) >= 2 and parts[-1] in _EV_SOCKET_WORDS:
+        return ["_".join(parts[:-1])]
+    if len(parts) >= 2 and parts[-1].isdigit():
+        return ["_".join(parts[:-1])]
+    return []
+
+
+def _ev_object_roots(obj):
+    """The switch object_id plus its parent-device root(s), de-duplicated in probe order."""
+    roots = []
+    for cand in (obj, *_strip_socket_tail(obj)):
+        if cand and cand not in roots:
+            roots.append(cand)
+    return roots
+
+
+def _amps_unit(unit):
+    return (unit or "").lower() in ("a", "amp", "amps", "ma")
+
+
 def resolve_ev_power(ha, cfg):
     """Return (ev_kw, source_str): live EV charger draw in kW, or (None, src) if unknown.
 
-    Priority: an explicit ha.ev_power_entity, else auto-discover from the ev_divert charger
-    switch — probe its companion power sensors (sensor.<obj>_power etc.) and its own live-watt
-    attributes. The resolved source is cached in _EVP so we only probe HA once."""
-    explicit = cfg.get("ha", {}).get("ev_power_entity")
+    Priority: an explicit ha.ev_power_entity (may be a POWER or a CURRENT sensor), else
+    auto-discover from the ev_divert charger switch — probe companion power/current sensors on
+    the switch object_id AND its parent-device root, then the switch's own live-watt attributes.
+    Current (amps) sources are converted with ha.ev_voltage. Resolved source cached in _EVP."""
+    volts = (cfg.get("ha") or {}).get("ev_voltage") or 240
+    explicit = (cfg.get("ha") or {}).get("ev_power_entity")
     if explicit:
-        return _watts_to_kw(ha.get_num(explicit)), f"entity {explicit}"
+        kw, unit = _read_power_kw(ha, explicit, volts)
+        tag = f" ({unit}→kW @{volts:g}V)" if _amps_unit(unit) else ""
+        return kw, f"entity {explicit}{tag}"
 
     sw = (cfg.get("ev_divert") or {}).get("switch") or ""
     if not sw:
@@ -393,39 +451,139 @@ def resolve_ev_power(ha, cfg):
     # Fast path: we already know where the number lives.
     if _EVP["resolved"]:
         if _EVP["kind"] == "entity":
-            return _watts_to_kw(ha.get_num(_EVP["ref"])), _EVP["src"]
+            return _read_power_kw(ha, _EVP["ref"], volts)[0], _EVP["src"]
         if _EVP["kind"] == "switch_attr":
             try:
-                attrs = ha._state(sw).get("attributes", {})
-                return _watts_to_kw(attrs.get(_EVP["ref"])), _EVP["src"]
+                v = ha._state(sw).get("attributes", {}).get(_EVP["ref"])
+                if v is None:
+                    return None, _EVP["src"]
+                return (float(v) * volts / 1000.0 if _EVP.get("amps") else _watts_to_kw(v)), _EVP["src"]
             except Exception:
                 return None, _EVP["src"]
         return None, _EVP["src"]
 
     obj = sw.split(".", 1)[1] if "." in sw else sw  # object_id without the domain
 
-    # 1) companion power sensors named after the switch object_id
-    for suf in _EV_SENSOR_SUFFIXES:
-        ent = f"sensor.{obj}_{suf}"
-        v = ha.get_num(ent)
-        if v is not None:
-            _EVP.update(resolved=True, kind="entity", ref=ent, src=f"sensor {ent}")
-            return _watts_to_kw(v), _EVP["src"]
+    # 1) companion power/current sensors on the switch object_id AND its parent-device root
+    for root in _ev_object_roots(obj):
+        for suf in _EV_SENSOR_SUFFIXES:
+            ent = f"sensor.{root}_{suf}"
+            kw, unit = _read_power_kw(ha, ent, volts)
+            if kw is not None:
+                tag = f" ({unit}→kW @{volts:g}V)" if (suf == "current" or _amps_unit(unit)) else ""
+                _EVP.update(resolved=True, kind="entity", ref=ent, amps=False, src=f"sensor {ent}{tag}")
+                return kw, _EVP["src"]
 
-    # 2) live-watt attributes carried on the switch entity itself
+    # 2) live-watt (or current) attributes carried on the switch entity itself
     try:
         attrs = ha._state(sw).get("attributes", {})
     except Exception:
         attrs = {}
     for k in _EV_ATTR_KEYS:
         if k in attrs and attrs[k] is not None:
-            _EVP.update(resolved=True, kind="switch_attr", ref=k, src=f"{sw} attr[{k}]")
-            return _watts_to_kw(attrs[k]), _EVP["src"]
+            amps = (k == "current")
+            tag = f" (A→kW @{volts:g}V)" if amps else ""
+            _EVP.update(resolved=True, kind="switch_attr", ref=k, amps=amps, src=f"{sw} attr[{k}]{tag}")
+            v = attrs[k]
+            return (float(v) * volts / 1000.0 if amps else _watts_to_kw(v)), _EVP["src"]
 
     # Nothing found — mark resolved so we don't hammer HA; report so the dashboard shows it.
-    _EVP.update(resolved=True, kind=None, ref=None,
-                src=f"unresolved (no power sensor/attr for {sw})")
+    _EVP.update(resolved=True, kind=None, ref=None, amps=False,
+                src=f"unresolved (no power/current sensor/attr for {sw})")
     return None, _EVP["src"]
+
+
+# Actual car-charge session log: detect when the charger is really drawing power, accumulate the
+# energy delivered, and keep the recent sessions so the dashboard can show WHEN we charged and HOW
+# MUCH. Energy prefers the cumulative EV kWh counter (accurate); falls back to integrating kW.
+_CSESS = {"loaded": False, "path": None, "open": None, "sessions": [], "last_ts": 0.0}
+_CS_ON_KW = 0.3        # draw at/above this ⇒ charging (starts / sustains a session)
+_CS_OFF_KW = 0.1       # draw below this…
+_CS_OFF_GRACE = 240    # …held for this many seconds ⇒ session ended
+_CS_KEEP = 12          # recent closed sessions retained
+
+
+def _csess_path(cfg):
+    return _state_dir(cfg) / "charge_sessions.json"
+
+
+def _persist_csess(cfg):
+    try:
+        p = _CSESS["path"] or _csess_path(cfg)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"open": _CSESS["open"], "sessions": _CSESS["sessions"]}))
+    except Exception as e:
+        print(f"charge session persist failed: {e}", file=sys.stderr)
+
+
+def _close_session(op):
+    """Move an open session to the closed list, dropping trivial noise (near-zero, very short)."""
+    for k in ("low_since", "start_cum"):
+        op.pop(k, None)
+    if op.get("kwh", 0.0) >= 0.05 or (op["end"] - op["start"]) >= 120:
+        _CSESS["sessions"].append({k: op[k] for k in ("start", "end", "kwh", "peak_kw")})
+        _CSESS["sessions"] = _CSESS["sessions"][-_CS_KEEP:]
+    _CSESS["open"] = None
+
+
+def _csess_summary(kw):
+    op = _CSESS["open"]
+    mid = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    out = [{**s, "ongoing": False} for s in _CSESS["sessions"]]
+    if op is not None:
+        out.append({"start": op["start"], "end": op["end"], "kwh": round(op.get("kwh", 0.0), 2),
+                    "peak_kw": op.get("peak_kw", 0.0), "ongoing": True})
+    out.sort(key=lambda s: s["start"], reverse=True)
+    active = op is not None and isinstance(kw, (int, float)) and kw >= _CS_ON_KW
+    return {"active": active, "now_kw": round(kw, 2) if isinstance(kw, (int, float)) else None,
+            "today_kwh": round(sum(s["kwh"] for s in out if s["end"] >= mid), 2),
+            "sessions": out[:_CS_KEEP]}
+
+
+def track_charge_session(cfg, ev_kw, ev_cum_kwh, now=None):
+    """Maintain the actual-charging session log from the live EV draw. Idempotent per cycle.
+    Returns {active, now_kw, today_kwh, sessions:[{start,end,kwh,peak_kw,ongoing}]}."""
+    now = now or time.time()
+    if not _CSESS["loaded"]:
+        _CSESS["path"] = _csess_path(cfg)
+        try:
+            d = json.loads(_CSESS["path"].read_text())
+            _CSESS["open"], _CSESS["sessions"] = d.get("open"), d.get("sessions", [])
+        except Exception:
+            pass
+        _CSESS["loaded"] = True
+
+    kw = ev_kw if isinstance(ev_kw, (int, float)) else None
+    cum = float(ev_cum_kwh) if isinstance(ev_cum_kwh, (int, float)) else None
+    op = _CSESS["open"]
+
+    # accrue energy into an open session (prefer the monotonic cumulative counter, else integrate kW)
+    if op is not None:
+        if cum is not None and op.get("start_cum") is not None:
+            op["kwh"] = round(max(0.0, cum - op["start_cum"]), 3)
+        elif kw is not None and _CSESS["last_ts"]:
+            dt_h = (now - _CSESS["last_ts"]) / 3600.0
+            if 0 < dt_h <= 1.0:
+                op["kwh"] = round(op.get("kwh", 0.0) + max(0.0, kw) * dt_h, 3)
+        if kw is not None:
+            op["peak_kw"] = round(max(op.get("peak_kw", 0.0), kw), 3)
+
+    if kw is not None and kw >= _CS_ON_KW:            # charging
+        if op is None:
+            op = {"start": now, "end": now, "kwh": 0.0, "peak_kw": round(kw, 3),
+                  "start_cum": cum, "low_since": None}
+            _CSESS["open"] = op
+        else:
+            op["end"], op["low_since"] = now, None     # keep end at the last active moment
+    elif op is not None and kw is not None and kw < _CS_OFF_KW:
+        op["low_since"] = op.get("low_since") or now
+        if now - op["low_since"] >= _CS_OFF_GRACE:      # sustained low draw ⇒ close the session
+            _close_session(op)
+    # a middling draw (OFF ≤ kw < ON) just holds the session open
+
+    _CSESS["last_ts"] = now
+    _persist_csess(cfg)
+    return _csess_summary(kw)
 
 
 # ---------------------------------------------------------------- engine -----
@@ -1398,6 +1556,8 @@ def gather_and_decide(cfg: dict) -> dict:
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
                                  "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
+    # Actual car-charge session log (when + how much), from the live EV draw + cumulative EV kWh.
+    car_sessions = track_charge_session(cfg, ev_kw, (energy or {}).get("ev"))
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -1568,7 +1728,10 @@ def gather_and_decide(cfg: dict) -> dict:
         "car": {"charge_kw": float(strat.get("ev_charge_kw", 7.0) or 0.0),
                 "expected_kwh": float(strat.get("ev_expected_kwh", 0.0) or 0.0),
                 "measured_kwh": consumption.get("avg_daily_ev_kwh"),
-                "power_source": ev_power_source},
+                "power_source": ev_power_source,
+                "today_kwh": car_sessions.get("today_kwh"),
+                "charging": car_sessions.get("active"),
+                "sessions": car_sessions.get("sessions")},
         "grid_power": round(grid_power, 2),
         "feedin_power": round(feedin_power, 2),
         "battery_power": round(battery_power, 2),
@@ -1894,6 +2057,48 @@ def _chart_series(snap: dict):
             "n_bells": len(bells), "n_prof": len(prof)}
 
 
+def _snap_now_epoch(snap):
+    """Epoch seconds for the snapshot's 'now' (its ISO ts), so charge-session timestamps map onto the
+    timeline's offset-from-now x-axis. Falls back to wall-clock if the ts is missing/unparseable."""
+    try:
+        return datetime.fromisoformat(snap["ts"]).timestamp()
+    except Exception:
+        return time.time()
+
+
+def _fmt_session_time(s):
+    """'Thu 03 Jul 01:12–05:40' (or spanning midnight: '… 23:40 → 04 Jul 02:10')."""
+    st, en = datetime.fromtimestamp(s.get("start", 0)), datetime.fromtimestamp(s.get("end", 0))
+    if st.date() == en.date():
+        return f"{st:%a %d %b %H:%M}–{en:%H:%M}"
+    return f"{st:%a %d %b %H:%M} → {en:%d %b %H:%M}"
+
+
+def charge_log_html(snap: dict) -> str:
+    """Recent ACTUAL car-charge sessions — when we charged and how much — from the plug meter."""
+    car = snap.get("car") or {}
+    sess = car.get("sessions") or []
+    if not sess:
+        return ""
+    today = car.get("today_kwh")
+    rows = []
+    for s in sess[:8]:
+        dur = max(0.0, (s.get("end", 0) - s.get("start", 0)))
+        hh, mm = int(dur // 3600), int((dur % 3600) // 60)
+        durs = f"{hh}h{mm:02d}" if hh else f"{mm}m"
+        live = ' <span style="color:#2e9e5b">● charging</span>' if s.get("ongoing") else ""
+        rows.append(f'<div style="display:flex;justify-content:space-between;gap:1rem;padding:.18rem 0;'
+                    f'border-top:1px solid #f2f2f2"><span style="color:#666">{_fmt_session_time(s)}'
+                    f' <span style="color:#aaa">· {durs}</span>{live}</span>'
+                    f'<span style="font-weight:600;color:#555;white-space:nowrap">{s.get("kwh",0):.1f} kWh'
+                    f' <span style="color:#aaa;font-weight:400">· peak {s.get("peak_kw",0):.1f} kW</span></span></div>')
+    head = ('<div style="font-weight:600;color:#555;margin-bottom:.1rem">Recent car charges'
+            + (f' <span style="color:#2e9e5b;font-weight:400">· {today:.1f} kWh today</span>'
+               if isinstance(today, (int, float)) else "") + '</div>')
+    return (f'<div style="margin:.6rem .1rem 0;padding:.45rem .6rem;border:1px solid #eee;border-radius:8px;'
+            f'font-size:.82rem">{head}{"".join(rows)}</div>')
+
+
 def chart_svg(snap: dict) -> str:
     """Standalone SVG (image/svg+xml) of the −24h→now→+24h timeline. Served via <img src="api/chart.svg">
     — inline SVG won't paint in the HA ingress webview, but <img> does, and height:auto works on <img>.
@@ -1918,14 +2123,26 @@ def chart_svg(snap: dict) -> str:
         meas = car.get("measured_kwh")
         car_daily = meas if isinstance(meas, (int, float)) and meas > 0.1 else (car.get("expected_kwh") or 0.0)
         car_kw = car_daily / dur if car_daily else (car.get("charge_kw") or 0.0)
-        fo = (fs - H) % 24                  # offset of the next free-window start
-        for a in (fo - 24, fo):             # the past and the upcoming occurrence within ±24h
+        fo = (fs - H) % 24                  # offset of the upcoming free-window start
+        for a in (fo - 24, fo):             # planned window — draw only the FUTURE part (the past shows actuals)
             b = a + dur
-            if b > -24 and a < 24 and car_kw > 0:
-                car_windows.append((max(a, -24), min(b, 24)))
+            if b > 0 and a < 24 and car_kw > 0:
+                car_windows.append((max(a, 0), min(b, 24)))
+    # Actual measured charge sessions in the past 24h — solid blocks, height = the session's average kW.
+    now_ep = _snap_now_epoch(snap)
+    act_blocks = []
+    for ss in (car.get("sessions") or []):
+        a = (ss.get("start", 0) - now_ep) / 3600.0
+        b = (ss.get("end", 0) - now_ep) / 3600.0
+        if b < -24 or a > 0.1:
+            continue
+        dh = (ss.get("end", 0) - ss.get("start", 0)) / 3600.0
+        akw = (ss.get("kwh", 0.0) / dh) if dh > 0.02 else (ss.get("peak_kw") or 0.0)
+        act_blocks.append((max(a, -24.0), min(b, 0.0), akw))
     W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
     iw, ih = W - pL - pR, Ht - pT - pB
-    ymax = max(max(sol_all), max(use_all), car_kw, 1.0) * 1.15
+    peak_act = max([k for *_, k in act_blocks], default=0.0)
+    ymax = max(max(sol_all), max(use_all), car_kw, peak_act, 1.0) * 1.15
     X = lambda o: pL + iw * (o + 24) / 48.0     # offset −24..+24 → x
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
     NOW = X(0)
@@ -1951,11 +2168,16 @@ def chart_svg(snap: dict) -> str:
             + " ".join(f"{X(-24+k):.1f},{Y(v):.1f}" for k, v in enumerate(sol_all))
             + f" {X(24):.1f},{Y(0):.1f}")
     out.append(f'<polygon points="{area}" fill="#f5c518" fill-opacity="0.22"/>')
-    # car charging — faint green blocks over the free-tariff window(s), with a dashed top edge
+    # actual measured charge sessions (past) — SOLID green blocks at each session's average kW
+    for a, b, akw in act_blocks:
+        ay = Y(akw)
+        out.append(f'<rect x="{X(a):.1f}" y="{ay:.1f}" width="{max(X(b)-X(a),1.0):.1f}" height="{pT+ih-ay:.1f}" '
+                   f'fill="#2e9e5b" fill-opacity="0.30"/>')
+    # planned car charging (future) — faint green block over the free-tariff window, with a dashed top edge
     cy = Y(car_kw)
     for a, b in car_windows:
         out.append(f'<rect x="{X(a):.1f}" y="{cy:.1f}" width="{X(b)-X(a):.1f}" height="{pT+ih-cy:.1f}" '
-                   f'fill="#2e9e5b" fill-opacity="0.14"/>')
+                   f'fill="#2e9e5b" fill-opacity="0.12"/>')
         out.append(f'<line x1="{X(a):.1f}" y1="{cy:.1f}" x2="{X(b):.1f}" y2="{cy:.1f}" '
                    f'stroke="#2e9e5b" stroke-width="1.6" stroke-dasharray="4 3"/>')
     # NOW divider
@@ -1971,9 +2193,10 @@ def chart_svg(snap: dict) -> str:
                f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Solar</text>')
     out.append(f'<rect x="{pL+80}" y="4" width="12" height="12" fill="#8e44ad"/>'
                f'<text x="{pL+96}" y="14" font-size="13" fill="#666666">Usage</text>')
-    if car_windows:
+    if car_windows or act_blocks:
+        lbl = "Car (solid = charged · dashed = planned)" if act_blocks else "Car (planned free window)"
         out.append(f'<rect x="{pL+160}" y="4" width="12" height="12" fill="#2e9e5b" fill-opacity="0.5"/>'
-                   f'<text x="{pL+176}" y="14" font-size="13" fill="#666666">Car (free window)</text>')
+                   f'<text x="{pL+176}" y="14" font-size="13" fill="#666666">{lbl}</text>')
     out.append(f'<text x="{W-pR}" y="14" font-size="12" fill="#999999" text-anchor="end">'
                f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')
@@ -2049,9 +2272,16 @@ def chart_stats_html(snap: dict) -> str:
         f"tomorrow: {kwh(sf.get('tomorrow'))}",
     ])
     src = car.get("power_source") or "—"
+    today_kwh, charging = car.get("today_kwh"), car.get("charging")
+    if charging:
+        live_line = f'<span style="color:#2e9e5b">● charging now</span> · {kwh(today_kwh)} today'
+    elif isinstance(today_kwh, (int, float)) and today_kwh > 0.05:
+        live_line = f"charged {kwh(today_kwh)} today"
+    else:
+        live_line = "no charge yet today"
     carc = card("Car (free window)", [
         car_txt,
-        ("measured live from plug meter" if meas_ok else "shown separately, not in base usage"),
+        live_line,
         f"meter: {src}",
         ("auto-excluded from usage" if meas_ok else "tune via ev_charge_kw / ev_expected_kwh"),
     ])
@@ -2063,11 +2293,29 @@ def chart_stats_html(snap: dict) -> str:
 _OVERLAY_METRICS = [("load", "#8e44ad", "Usage"), ("solar", "#e0a800", "Solar")]
 
 
+def _pctl(sorted_vals, q):
+    """Linear-interpolated q-quantile (0..1) of an already-sorted list."""
+    if not sorted_vals:
+        return 0.0
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    pos = q * (len(sorted_vals) - 1)
+    i = int(pos)
+    frac = pos - i
+    return sorted_vals[i] + (sorted_vals[i + 1] - sorted_vals[i]) * frac if i + 1 < len(sorted_vals) else sorted_vals[i]
+
+
+def _smooth3(a):
+    """Centred 3-point moving average — takes the jaggedness out of a per-hour curve."""
+    n = len(a)
+    return [(a[max(0, i - 1)] + a[i] + a[min(n - 1, i + 1)]) / 3.0 for i in range(n)]
+
+
 def daily_svg(snap: dict) -> str:
-    """Day-by-day overlay: each day's full 24-hour shape (usage + solar, kWh/hour) drawn faint on top of
-    every other day, with a bold hour-of-day average line per metric. Lets you see the spread of daily
-    shapes at a glance. Standalone SVG served via <img src="api/daily.svg"> for the same webview-rendering
-    reasons as the timeline. All attributes quoted (strict XML), white bg."""
+    """Day-by-day spread: per metric (usage + solar), a smoothed hour-of-day AVERAGE line inside a
+    shaded BAND showing the day-to-day range (10th–90th percentile, or full min–max when only a few
+    days). Cleaner than overlaying every day as a faint line. Standalone SVG served via
+    <img src="api/daily.svg"> for the same webview-rendering reasons as the timeline. Strict XML, white bg."""
     days = snap.get("daily_hourly") or []
     W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 30, 34
     iw, ih = W - pL - pR, Ht - pT - pB
@@ -2092,7 +2340,12 @@ def daily_svg(snap: dict) -> str:
         out.append(f'<text x="{X(h):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
                    f'text-anchor="middle">{h:02d}</text>')
 
-    def poly(arr, colour, width, opacity):
+    def band(arr_lo, arr_hi, colour):
+        top = " ".join(f"{X(h):.1f},{Y(arr_hi[h]):.1f}" for h in range(24))
+        bot = " ".join(f"{X(h):.1f},{Y(arr_lo[h]):.1f}" for h in range(23, -1, -1))
+        return f'<polygon points="{top} {bot}" fill="{colour}" fill-opacity="0.15" stroke="none"/>'
+
+    def line(arr, colour, width, opacity):
         pts = " ".join(f"{X(h):.1f},{Y(arr[h]):.1f}" for h in range(24))
         return (f'<polyline points="{pts}" fill="none" stroke="{colour}" '
                 f'stroke-width="{width}" stroke-opacity="{opacity}"/>')
@@ -2103,15 +2356,24 @@ def daily_svg(snap: dict) -> str:
         if not series:
             continue
         ndays = max(ndays, len(series))
-        for arr in series:                              # one faint line per day
-            out.append(poly(arr, colour, 1.0, 0.16))
-        avg = [sum(a[h] for a in series) / len(series) for h in range(24)]
-        out.append(poly(avg, colour, 2.4, 0.95))        # bold hour-of-day average
+        avg, lo, hi = [], [], []
+        for h in range(24):
+            col = sorted(a[h] for a in series)
+            avg.append(sum(col) / len(col))
+            if len(col) <= 3:                           # too few days for percentiles → full min/max
+                lo.append(col[0]); hi.append(col[-1])
+            else:
+                lo.append(_pctl(col, 0.10)); hi.append(_pctl(col, 0.90))
+        avg, lo, hi = _smooth3(avg), _smooth3(lo), _smooth3(hi)
+        if len(series) > 1:
+            out.append(band(lo, hi, colour))            # smoothed day-to-day spread band
+        out.append(line(avg, colour, 2.6, 0.95))        # bold hour-of-day average
         out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
                    f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{label} ⌀{sum(avg):.0f} kWh/day</text>')
         lx += 34 + (len(label) + 12) * 7.0
+    tail = "band = spread across days" if ndays > 1 else "single day"
     out.append(f'<text x="{W-pR}" y="15" font-size="12" fill="#999999" text-anchor="end">'
-               f'{ndays} day(s) overlaid · bold = average</text>')
+               f'{ndays} day(s) · {tail}</text>')
     out.append('</svg>')
     return "".join(out)
 
@@ -2162,8 +2424,8 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=row id=cards>{cards}</div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
-<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}</div>
-<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — each day's 24-hour shape overlaid (bold = average)</div>
+<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}{charge_log_html(snap)}</div>
+<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — usage &amp; solar spread (band = day-to-day range, bold = average)</div>
 <img class=chartimg src="api/daily.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Each day's 24-hour usage and solar profile overlaid, with the average"></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
@@ -2283,7 +2545,7 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.59.0",
+                    "version": "1.60.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),

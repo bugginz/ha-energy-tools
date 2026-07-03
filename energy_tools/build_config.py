@@ -18,6 +18,8 @@ fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 fc["state_dir"] = "/data/.config/foxctl"   # persistent across restarts/updates (rolling consumption)
 if opt.get("ev_power_entity"):
     fc["ha"]["ev_power_entity"] = opt["ev_power_entity"]
+if opt.get("ev_voltage"):
+    fc["ha"]["ev_voltage"] = float(opt["ev_voltage"])
 # Solar diversion to a car-charger power point (needs allow_control). switch="" disables.
 fc["ev_divert"] = {
     "switch": opt.get("ev_charger_switch", ""),

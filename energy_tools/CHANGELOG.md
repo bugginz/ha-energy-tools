@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.60.0 — real EV metering via the current sensor + charge log + spread band
+
+- **EV charger draw now read from `sensor.6294ha_series_2_current`.** `resolve_ev_power` is now unit-aware: it handles power sensors (W/kW) **and current sensors (A/mA)**, converting amps → kW via a configurable `ev_voltage` (default 240 V, AU nominal). Auto-discovery also strips a trailing `_socket_N`/`_outlet_N`/… off the switch object_id so it reaches device-root companion sensors (e.g. the `…_series_2_socket_2` switch shares a device with `sensor.…_series_2_current`). The dashboard "meter:" line shows the unit conversion (`(A→kW @240V)`) so it's clear where the number comes from.
+- **Actual car-charge session log — "where we charged and how much".** A new tracker watches the live EV draw and records each real charging session (start/end, kWh delivered, peak kW), preferring the monotonic cumulative EV counter for energy. The dashboard gets a **"Recent car charges"** panel (per-session time range, duration, kWh, peak) plus a "● charging now · X kWh today" line on the Car card. The timeline chart now draws **solid green blocks for sessions that actually happened** (past) and keeps the dashed block for the **planned** free-window (future only).
+- **Day-by-day usage chart is less wispy.** The spaghetti of one faint line per day is replaced by a smoothed hour-of-day **average line inside a shaded spread band** (10th–90th percentile across days, or full min–max when only a couple of days). Much easier to read the typical shape and the day-to-day range at a glance.
+- Config: new `ev_power_entity` default + `ev_voltage` option (wired through config.yaml → build_config.py → foxctl_config.json).
+
 ## 1.48.0 — ZeroHero: real tariff, export off by default
 
 - **Matches the actual GloBird ZeroHero charges** and the "feed-in is bad, don't export" call. ZeroHero export to grid is now **gated on `sell_enabled` (auto_sell)** — with it off (set `auto_sell: false`), the 18:00–21:00 window simply behaves like the rest of the peak: cover load from battery, **zero grid import, no feed-in**. The schedule is now purely import-cost driven: FREE-charge 11:00–14:00 (first 50 kWh @ 0c) → full by 2pm; **never import** in the 16:00–23:00 peak (44c); run off battery through the 14–16 & 23–11 shoulder/overnight (33c) until the next free window.
