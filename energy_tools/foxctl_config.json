@@ -102,7 +102,7 @@
   "typical_daily_load_kwh": 30,
   "avoid_demand_window": false,
   "ev_charge_kw": 7.0,
-  "ev_expected_kwh": 0.0
+  "ev_expected_kwh": 7.5
  },
  "control": {
   "allow_control": true,

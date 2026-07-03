@@ -94,7 +94,7 @@ DEFAULT_CONFIG = {
         "force_charge_minutes": 120,    # max force-charge window length (safety cap); re-evaluated each cycle
         "force_charge_power_kw": 13.5,  # inverter max grid charge rate (13500 W)
         "ev_charge_kw": 7.0,            # assumed EV charger draw — dashboard free-window car overlay only
-        "ev_expected_kwh": 0.0,         # expected daily car charge (0 = derive from ev_charge_kw × free window)
+        "ev_expected_kwh": 7.5,         # expected daily car top-up (typical 5–10 kWh); 0 = derive from ev_charge_kw × free window
         # Temperature nudge: scale the predicted coast load up in hot/cold weather (HVAC). Gentle in v1;
         # tune per_c once temp↔load history accumulates. mild_c is the no-nudge baseline temperature.
         "temp_mild_c": 20.0, "temp_hot_c": 28.0, "temp_cold_c": 12.0,
@@ -657,6 +657,25 @@ def forecast_profiles():
             "daily": {"load": daily_totals("load"), "solar": daily_totals("solar"),
                       "grid_in": daily_totals("grid_in"), "grid_out": daily_totals("grid_out")},
             "daily_total": daily_totals("load")}
+
+
+def daily_history():
+    """Per-day totals, date-aligned across metrics and sorted chronologically — for the day-by-day
+    scatter. Each entry: {date, load, solar, grid_in, grid_out} in kWh. A day is included if ANY metric
+    has real data that day (a metric that's ~0 for a day is left as None so it doesn't plot as a zero)."""
+    def tot(arr):
+        if isinstance(arr, list) and len(arr) == 24:
+            s = sum(x for x in arr if isinstance(x, (int, float)))
+            return round(s, 1) if s > 0.05 else None
+        return None
+    out = []
+    for date in sorted(_FCAST["days"]):
+        d = _FCAST["days"][date]
+        row = {"date": date, "load": tot(d.get("load")), "solar": tot(d.get("solar")),
+               "grid_in": tot(d.get("grid_in")), "grid_out": tot(d.get("grid_out"))}
+        if any(row[k] is not None for k in ("load", "solar", "grid_in", "grid_out")):
+            out.append(row)
+    return out
 
 
 def update_forecast_store(cfg, fox):
@@ -1449,6 +1468,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "forecast_profiles": fcast,   # FoxESS-history hour-of-day load + solar + grid in/out
         "today_actuals": today_act,       # measured hourly load+solar so far today (chart left half)
         "yesterday_actuals": yest_act,    # measured hourly load+solar for yesterday (chart left half)
+        "daily_history": daily_history(),  # date-aligned per-day totals for the day-by-day scatter
         "load_forecast": {"rest_today_kwh": rest_today_load, "next24_kwh": next24_load,
                           "typical_daily_kwh": round(float(typical_load), 1)},
         "car": {"charge_kw": float(strat.get("ev_charge_kw", 7.0) or 0.0),
@@ -1932,6 +1952,60 @@ def chart_stats_html(snap: dict) -> str:
             f'{usage}{solar}{carc}</div>')
 
 
+# Day-by-day scatter metrics: (key, colour, label, x-jitter as fraction of a day slot)
+_DAILY_METRICS = [("load", "#8e44ad", "Usage", -0.24),
+                  ("solar", "#e0a800", "Solar", 0.0),
+                  ("grid_in", "#c0392b", "Grid import", 0.24)]
+
+
+def daily_svg(snap: dict) -> str:
+    """Day-by-day scatter of daily totals (usage / solar / grid-import kWh), one dot per day per metric,
+    with a dashed average line per metric. Standalone SVG served via <img src="api/daily.svg"> for the
+    same webview-rendering reasons as the timeline. All attributes quoted (strict XML), white bg."""
+    days = snap.get("daily_history") or []
+    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 30, 34
+    iw, ih = W - pL - pR, Ht - pT - pB
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Ht}" '
+           f'viewBox="0 0 {W} {Ht}" font-family="system-ui, sans-serif">',
+           f'<rect x="0" y="0" width="{W}" height="{Ht}" fill="#ffffff"/>']
+    vals = [v for d in days for k, _, _, _ in _DAILY_METRICS for v in [d.get(k)] if isinstance(v, (int, float))]
+    if not days or not vals:
+        out.append(f'<text x="{W/2}" y="{Ht/2}" font-size="14" fill="#999999" text-anchor="middle">'
+                   f'no daily history yet — fills in as the forecast store backfills</text></svg>')
+        return "".join(out)
+    N = len(days)
+    ymax = max(vals) * 1.15
+    X = lambda i: pL + iw * (i + 0.5) / N
+    Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
+    for f in (0, .25, .5, .75, 1):                      # y grid + labels
+        y = pT + ih * (1 - f)
+        out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
+        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
+                   f'text-anchor="end">{ymax*f:.0f}</text>')
+    step = max(1, N // 8)                               # x date labels (thinned)
+    for i in range(0, N, step):
+        out.append(f'<text x="{X(i):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
+                   f'text-anchor="middle">{days[i]["date"][5:]}</text>')
+    lx = pL + 4
+    for key, colour, label, jit in _DAILY_METRICS:
+        pts = [(X(i) + jit * iw / N, d.get(key)) for i, d in enumerate(days)]
+        pts = [(x, v) for x, v in pts if isinstance(v, (int, float))]
+        if not pts:
+            continue
+        avg = sum(v for _, v in pts) / len(pts)
+        out.append(f'<line x1="{pL}" y1="{Y(avg):.1f}" x2="{W-pR}" y2="{Y(avg):.1f}" stroke="{colour}" '
+                   f'stroke-width="1.4" stroke-dasharray="6 4" stroke-opacity="0.7"/>')
+        for x, v in pts:
+            out.append(f'<circle cx="{x:.1f}" cy="{Y(v):.1f}" r="3.2" fill="{colour}" fill-opacity="0.75"/>')
+        out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
+                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{label} ⌀{avg:.1f}</text>')
+        lx += 34 + (len(label) + 6) * 7.0
+    out.append(f'<text x="{W-pR}" y="15" font-size="12" fill="#999999" text-anchor="end">'
+               f'{N} day(s) · dashed = average</text>')
+    out.append('</svg>')
+    return "".join(out)
+
+
 def render(snap: dict, cfg: dict) -> str:
     wm = snap.get("work_mode")
     wma = snap.get("work_mode_age_s")
@@ -1977,7 +2051,9 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=row id=cards>{cards}</div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
-<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}</div></div>
+<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}</div>
+<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — daily totals (dots) vs average (dashed)</div>
+<img class=chartimg src="api/daily.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Day-by-day scatter of daily usage, solar and grid-import totals"></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
@@ -2067,6 +2143,17 @@ def make_handler(cfg):
                 except Exception as e:
                     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="60">'
                            f'<text x="8" y="36" font-size="14" fill="#c0392b">chart error: '
+                           f'{type(e).__name__}: {e}</text></svg>')
+                self._send(200, svg, "image/svg+xml")
+            elif self.path.startswith("/api/daily.svg"):
+                # Day-by-day scatter of daily totals (usage/solar/grid), as a standalone SVG image.
+                with LAST_LOCK:
+                    snap = dict(LAST)
+                try:
+                    svg = daily_svg(snap)
+                except Exception as e:
+                    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="60">'
+                           f'<text x="8" y="36" font-size="14" fill="#c0392b">daily chart error: '
                            f'{type(e).__name__}: {e}</text></svg>')
                 self._send(200, svg, "image/svg+xml")
             elif self.path.startswith("/api/chart"):
