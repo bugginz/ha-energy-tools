@@ -753,6 +753,24 @@ def daily_history():
     return out
 
 
+def daily_hourly():
+    """Per-day 24h hourly arrays (kWh) for the overlay chart — each day's shape drawn on top of the
+    others. Each entry: {date, load:[24], solar:[24]}; a metric with no real data that day is None so
+    it isn't drawn as a flat zero line."""
+    def arr(a):
+        if (isinstance(a, list) and len(a) == 24
+                and sum(x for x in a if isinstance(x, (int, float))) > 0.05):
+            return [float(x) if isinstance(x, (int, float)) else 0.0 for x in a]
+        return None
+    out = []
+    for date in sorted(_FCAST["days"]):
+        d = _FCAST["days"][date]
+        row = {"date": date, "load": arr(d.get("load")), "solar": arr(d.get("solar"))}
+        if row["load"] or row["solar"]:
+            out.append(row)
+    return out
+
+
 def update_forecast_store(cfg, fox):
     """Ensure the last FCAST_BACKFILL_DAYS complete days are stored. Fetches at most ONE missing day
     per call AND no more than one per FCAST_FILL_GAP_S — so a backfill spreads over many cycles and
@@ -1544,6 +1562,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "today_actuals": today_act,       # measured hourly load+solar so far today (chart left half)
         "yesterday_actuals": yest_act,    # measured hourly load+solar for yesterday (chart left half)
         "daily_history": daily_history(),  # date-aligned per-day totals for the day-by-day scatter
+        "daily_hourly": daily_hourly(),   # per-day 24h profiles overlaid on the day-by-day chart
         "load_forecast": {"rest_today_kwh": rest_today_load, "next24_kwh": next24_load,
                           "typical_daily_kwh": round(float(typical_load), 1)},
         "car": {"charge_kw": float(strat.get("ev_charge_kw", 7.0) or 0.0),
@@ -2040,56 +2059,59 @@ def chart_stats_html(snap: dict) -> str:
             f'{usage}{solar}{carc}</div>')
 
 
-# Day-by-day scatter metrics: (key, colour, label, x-jitter as fraction of a day slot)
-_DAILY_METRICS = [("load", "#8e44ad", "Usage", -0.24),
-                  ("solar", "#e0a800", "Solar", 0.0),
-                  ("grid_in", "#c0392b", "Grid import", 0.24)]
+# Day-by-day overlay metrics: (key, colour, label)
+_OVERLAY_METRICS = [("load", "#8e44ad", "Usage"), ("solar", "#e0a800", "Solar")]
 
 
 def daily_svg(snap: dict) -> str:
-    """Day-by-day scatter of daily totals (usage / solar / grid-import kWh), one dot per day per metric,
-    with a dashed average line per metric. Standalone SVG served via <img src="api/daily.svg"> for the
-    same webview-rendering reasons as the timeline. All attributes quoted (strict XML), white bg."""
-    days = snap.get("daily_history") or []
+    """Day-by-day overlay: each day's full 24-hour shape (usage + solar, kWh/hour) drawn faint on top of
+    every other day, with a bold hour-of-day average line per metric. Lets you see the spread of daily
+    shapes at a glance. Standalone SVG served via <img src="api/daily.svg"> for the same webview-rendering
+    reasons as the timeline. All attributes quoted (strict XML), white bg."""
+    days = snap.get("daily_hourly") or []
     W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 30, 34
     iw, ih = W - pL - pR, Ht - pT - pB
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Ht}" '
            f'viewBox="0 0 {W} {Ht}" font-family="system-ui, sans-serif">',
            f'<rect x="0" y="0" width="{W}" height="{Ht}" fill="#ffffff"/>']
-    vals = [v for d in days for k, _, _, _ in _DAILY_METRICS for v in [d.get(k)] if isinstance(v, (int, float))]
-    if not days or not vals:
+    allvals = [v for d in days for key, _, _ in _OVERLAY_METRICS
+               for a in [d.get(key)] if a for v in a]
+    if not days or not allvals:
         out.append(f'<text x="{W/2}" y="{Ht/2}" font-size="14" fill="#999999" text-anchor="middle">'
                    f'no daily history yet — fills in as the forecast store backfills</text></svg>')
         return "".join(out)
-    N = len(days)
-    ymax = max(vals) * 1.15
-    X = lambda i: pL + iw * (i + 0.5) / N
+    ymax = max(allvals) * 1.12
+    X = lambda h: pL + iw * h / 23.0
     Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    for f in (0, .25, .5, .75, 1):                      # y grid + labels
+    for f in (0, .25, .5, .75, 1):                      # y grid + kWh labels
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
         out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
-                   f'text-anchor="end">{ymax*f:.0f}</text>')
-    step = max(1, N // 8)                               # x date labels (thinned)
-    for i in range(0, N, step):
-        out.append(f'<text x="{X(i):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
-                   f'text-anchor="middle">{days[i]["date"][5:]}</text>')
-    lx = pL + 4
-    for key, colour, label, jit in _DAILY_METRICS:
-        pts = [(X(i) + jit * iw / N, d.get(key)) for i, d in enumerate(days)]
-        pts = [(x, v) for x, v in pts if isinstance(v, (int, float))]
-        if not pts:
+                   f'text-anchor="end">{ymax*f:.1f}</text>')
+    for h in range(0, 24, 3):                           # x hour-of-day labels
+        out.append(f'<text x="{X(h):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
+                   f'text-anchor="middle">{h:02d}</text>')
+
+    def poly(arr, colour, width, opacity):
+        pts = " ".join(f"{X(h):.1f},{Y(arr[h]):.1f}" for h in range(24))
+        return (f'<polyline points="{pts}" fill="none" stroke="{colour}" '
+                f'stroke-width="{width}" stroke-opacity="{opacity}"/>')
+
+    lx, ndays = pL + 4, 0
+    for key, colour, label in _OVERLAY_METRICS:
+        series = [d[key] for d in days if d.get(key)]
+        if not series:
             continue
-        avg = sum(v for _, v in pts) / len(pts)
-        out.append(f'<line x1="{pL}" y1="{Y(avg):.1f}" x2="{W-pR}" y2="{Y(avg):.1f}" stroke="{colour}" '
-                   f'stroke-width="1.4" stroke-dasharray="6 4" stroke-opacity="0.7"/>')
-        for x, v in pts:
-            out.append(f'<circle cx="{x:.1f}" cy="{Y(v):.1f}" r="3.2" fill="{colour}" fill-opacity="0.75"/>')
+        ndays = max(ndays, len(series))
+        for arr in series:                              # one faint line per day
+            out.append(poly(arr, colour, 1.0, 0.16))
+        avg = [sum(a[h] for a in series) / len(series) for h in range(24)]
+        out.append(poly(avg, colour, 2.4, 0.95))        # bold hour-of-day average
         out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
-                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{label} ⌀{avg:.1f}</text>')
-        lx += 34 + (len(label) + 6) * 7.0
+                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{label} ⌀{sum(avg):.0f} kWh/day</text>')
+        lx += 34 + (len(label) + 12) * 7.0
     out.append(f'<text x="{W-pR}" y="15" font-size="12" fill="#999999" text-anchor="end">'
-               f'{N} day(s) · dashed = average</text>')
+               f'{ndays} day(s) overlaid · bold = average</text>')
     out.append('</svg>')
     return "".join(out)
 
@@ -2141,8 +2163,8 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
 <div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}</div>
-<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — daily totals (dots) vs average (dashed)</div>
-<img class=chartimg src="api/daily.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Day-by-day scatter of daily usage, solar and grid-import totals"></div>
+<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — each day's 24-hour shape overlaid (bold = average)</div>
+<img class=chartimg src="api/daily.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Each day's 24-hour usage and solar profile overlaid, with the average"></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <script>{JS}</script>
 </body></html>"""
@@ -2261,7 +2283,7 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.58.0",
+                    "version": "1.59.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
