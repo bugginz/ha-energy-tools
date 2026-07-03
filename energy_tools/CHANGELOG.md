@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.61.0 — resizable charts (iOS HA app) + battery SoC on the day-by-day chart
+
+- **Charts are now resizable and readable on a phone.** They were fixed 720×300 SVGs shown at
+  `width:100%`, so on a ~390px phone they rendered ~150px tall with ~6px text — full width but tiny.
+  Two fixes: (1) **tap any chart to enlarge** it to a fullscreen overlay — on a portrait phone the wide
+  chart rotates 90° to fill the screen (landscape); tap again / Esc to close. (2) A **"Chart size" −/＋/fit
+  stepper** (persisted in localStorage) scales the inline charts up to 4×, with horizontal scroll. Both
+  work in the iOS HA app's WKWebView and survive the 60s soft-refresh (CSS var on `<body>` + event
+  delegation).
+- **Battery SoC on the day-by-day chart.** The bottom chart now overlays average battery **State of
+  Charge %** on a secondary right-hand axis (0–100%), as a dashed blue line inside its own day-to-day
+  spread band — alongside usage & solar (kWh) on the left axis. New per-day hourly SoC is fetched from
+  FoxESS history (`SoC` variable, hour-averaged) and stored with each day; the axis only appears once SoC
+  data has accrued. Verified in-browser (dual-axis layout, stepper, and lightbox).
+
 ## 1.60.0 — real EV metering via the current sensor + charge log + spread band
 
 - **EV charger draw now read from `sensor.6294ha_series_2_current`.** `resolve_ev_power` is now unit-aware: it handles power sensors (W/kW) **and current sensors (A/mA)**, converting amps → kW via a configurable `ev_voltage` (default 240 V, AU nominal). Auto-discovery also strips a trailing `_socket_N`/`_outlet_N`/… off the switch object_id so it reaches device-root companion sensors (e.g. the `…_series_2_socket_2` switch shares a device with `sensor.…_series_2_current`). The dashboard "meter:" line shows the unit conversion (`(A→kW @240V)`) so it's clear where the number comes from.

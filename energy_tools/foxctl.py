@@ -772,9 +772,9 @@ def today_actuals(fox):
     fresh = _TODAY["date"] == today and _TODAY["data"] and (time.time() - _TODAY["ts"]) < TODAY_REFRESH_S
     if not fresh:
         try:
-            lh, sh, gi, go = fetch_forecast_day(fox, datetime.now())
+            lh, sh, gi, go, sc = fetch_forecast_day(fox, datetime.now())
             _TODAY.update(date=today, ts=time.time(),
-                          data={"load": lh, "solar": sh, "grid_in": gi, "grid_out": go})
+                          data={"load": lh, "solar": sh, "grid_in": gi, "grid_out": go, "soc": sc})
         except Exception as e:
             print(f"today actuals fetch failed: {e}", file=sys.stderr)
             if _TODAY["date"] != today:
@@ -831,9 +831,24 @@ def _integrate_hourly(points):
     return [round(x, 3) for x in hourly]
 
 
+def _average_hourly(points):
+    """Level samples (e.g. battery SoC %) → 24-element hourly mean. A level isn't integrated — each
+    hour is the average of its samples; an hour with no sample stays 0.0 (skipped by the chart)."""
+    sums, cnts = [0.0] * 24, [0] * 24
+    for p in points:
+        t = _hist_time(p.get("time") or "")
+        v = p.get("value")
+        if t is None or not isinstance(v, (int, float)):
+            continue
+        sums[t.hour] += float(v)
+        cnts[t.hour] += 1
+    return [round(sums[h] / cnts[h], 1) if cnts[h] else 0.0 for h in range(24)]
+
+
 def fetch_forecast_day(fox, day):
-    """One past day → hourly kWh arrays (24 each) for load, grid import, grid export (one report call
-    covering the `loads`/`gridConsumption`/`feedin` stats) and solar (integrated pvPower history)."""
+    """One past day → hourly arrays (24 each): load/grid-import/grid-export kWh (one `loads`/
+    `gridConsumption`/`feedin` report call), solar kWh (integrated pvPower history) and battery SoC %
+    (hour-averaged SoC history). Returns (load, solar, grid_in, grid_out, soc)."""
     def _vals(it):
         v = (list(it.get("values") or []) + [0.0] * 24)[:24]
         return [round(float(x), 3) if isinstance(x, (int, float)) else 0.0 for x in v]
@@ -844,12 +859,14 @@ def fetch_forecast_day(fox, day):
     grid_in_hours = by.get("gridConsumption", [0.0] * 24)   # grid import
     grid_out_hours = by.get("feedin", [0.0] * 24)           # grid export
     begin = int(datetime(day.year, day.month, day.day).timestamp() * 1000)
-    solar_hours = [0.0] * 24
-    res = fox.history(["pvPower"], begin, begin + 24 * 3600 * 1000)
+    solar_hours, soc_hours = [0.0] * 24, [0.0] * 24
+    res = fox.history(["pvPower", "SoC"], begin, begin + 24 * 3600 * 1000)
     for ds in ((res[0].get("datas") if res else None) or []):
         if ds.get("variable") == "pvPower":
             solar_hours = _integrate_hourly(ds.get("data") or [])
-    return load_hours, solar_hours, grid_in_hours, grid_out_hours
+        elif ds.get("variable") == "SoC":
+            soc_hours = _average_hourly(ds.get("data") or [])
+    return load_hours, solar_hours, grid_in_hours, grid_out_hours, soc_hours
 
 
 def forecast_profiles():
@@ -912,9 +929,9 @@ def daily_history():
 
 
 def daily_hourly():
-    """Per-day 24h hourly arrays (kWh) for the overlay chart — each day's shape drawn on top of the
-    others. Each entry: {date, load:[24], solar:[24]}; a metric with no real data that day is None so
-    it isn't drawn as a flat zero line."""
+    """Per-day 24h hourly arrays for the overlay chart — each day's shape drawn on top of the others.
+    Each entry: {date, load:[24] kWh, solar:[24] kWh, soc:[24] %}; a metric with no real data that day
+    is None so it isn't drawn as a flat zero line."""
     def arr(a):
         if (isinstance(a, list) and len(a) == 24
                 and sum(x for x in a if isinstance(x, (int, float))) > 0.05):
@@ -923,8 +940,9 @@ def daily_hourly():
     out = []
     for date in sorted(_FCAST["days"]):
         d = _FCAST["days"][date]
-        row = {"date": date, "load": arr(d.get("load")), "solar": arr(d.get("solar"))}
-        if row["load"] or row["solar"]:
+        row = {"date": date, "load": arr(d.get("load")), "solar": arr(d.get("solar")),
+               "soc": arr(d.get("soc"))}
+        if row["load"] or row["solar"] or row["soc"]:
             out.append(row)
     return out
 
@@ -942,8 +960,8 @@ def update_forecast_store(cfg, fox):
         _FCAST["last_fill_ts"] = time.time()
         d = missing[0]
         try:
-            lh, sh, gi, go = fetch_forecast_day(fox, datetime.strptime(d, "%Y-%m-%d"))
-            _FCAST["days"][d] = {"load": lh, "solar": sh, "grid_in": gi, "grid_out": go}
+            lh, sh, gi, go, sc = fetch_forecast_day(fox, datetime.strptime(d, "%Y-%m-%d"))
+            _FCAST["days"][d] = {"load": lh, "solar": sh, "grid_in": gi, "grid_out": go, "soc": sc}
             save_fcast(cfg)
             log_event("forecast", f"backfilled {d}: load={round(sum(lh),1)}kWh solar={round(sum(sh),1)}kWh "
                                   f"grid_in={round(sum(gi),1)} grid_out={round(sum(go),1)}kWh "
@@ -1104,8 +1122,8 @@ def backfill_ha_statistics(cfg, days=7):
         day = datetime.now() - timedelta(days=d)
         dk = day.strftime("%Y-%m-%d")
         if dk not in _FCAST["days"]:
-            lh, sh, gi, go = fetch_forecast_day(fox, day)
-            _FCAST["days"][dk] = {"load": lh, "solar": sh, "grid_in": gi, "grid_out": go}
+            lh, sh, gi, go, sc = fetch_forecast_day(fox, day)
+            _FCAST["days"][dk] = {"load": lh, "solar": sh, "grid_in": gi, "grid_out": go, "soc": sc}
     save_fcast(cfg)
     series = build_stat_series(days)
     if not series:
@@ -1969,15 +1987,27 @@ h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
 .card small{color:#666;display:block} .big{font-size:1.9rem;font-weight:600;margin:.15rem 0}
 .warn{background:#fff3e0;border-color:#e67e22}
 .chart{border:1px solid #eee;border-radius:12px;padding:.6rem .7rem;margin:1.2rem 0}
-.chartimg{width:100%;height:auto;display:block;border:1px solid #eee;border-radius:8px;background:#fff}
+.chartwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:8px}
+.chartimg{width:calc(100% * var(--cz,1));min-width:100%;height:auto;display:block;border:1px solid #eee;border-radius:8px;background:#fff;cursor:zoom-in}
 .cap{font-size:.8rem;color:#888;margin:.45rem .3rem 0}
 .muted{color:#888;padding:1.4rem;text-align:center}
+.ctrls{display:flex;align-items:center;gap:.35rem;font-size:.8rem;color:#888;margin:.4rem .2rem -.4rem}
+.ctrls button{font:inherit;color:inherit;background:transparent;border:1px solid #ccc;border-radius:6px;padding:.05rem .55rem;cursor:pointer;line-height:1.7}
+.ctrls button:active{background:rgba(0,0,0,.06)}
+.ctrls .cz{min-width:2.6rem;text-align:center;font-variant-numeric:tabular-nums}
 a{color:#06c}
+#lb{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center;z-index:1000}
+#lb.open{display:flex}
+#lb img{background:#fff;border-radius:8px;box-shadow:0 6px 30px rgba(0,0,0,.55)}
+#lb .hint{position:fixed;top:.7rem;left:0;right:0;text-align:center;color:rgba(255,255,255,.65);font:13px system-ui}
+@media(orientation:portrait){#lb img{transform:rotate(90deg);width:94vh;height:auto}}
+@media(orientation:landscape){#lb img{width:95vw;height:auto;max-height:92vh}}
 @media (prefers-color-scheme: dark){
  body{background:#111418;color:#e3e3e3}
  .card,.chart{background:#1e2227;border-color:#3a3f46}
  .card small,small,.muted{color:#9aa3ad}
  .warn{background:#3a2c1a;border-color:#e67e22}
+ .ctrls button{border-color:#4a4f57}
  a{color:#6cf}
 }"""
 
@@ -1990,7 +2020,21 @@ async function softRefresh(){
   const rf=document.getElementById('refr');if(rf)rf.textContent='updated '+new Date().toLocaleTimeString();
  }catch(e){const rf=document.getElementById('refr');if(rf)rf.textContent='refresh failed';}
 }
-setInterval(softRefresh,60000);"""
+setInterval(softRefresh,60000);
+(function(){
+ var KEY='foxctl_cz';
+ function apply(z){document.body.style.setProperty('--cz',z);var l=document.getElementById('czl');if(l)l.textContent=Math.round(z*100)+'%';}
+ var z=parseFloat(localStorage.getItem(KEY));if(!(z>=1&&z<=4))z=1;apply(z);
+ document.addEventListener('click',function(e){
+  var b=e.target.closest('[data-cz]');
+  if(b){var d=b.getAttribute('data-cz');z=(d==='0')?1:Math.min(4,Math.max(1,Math.round((z+parseFloat(d))*100)/100));localStorage.setItem(KEY,z);apply(z);e.preventDefault();return;}
+  var lb=document.getElementById('lb');
+  if(e.target.closest('#lb')){lb.classList.remove('open');return;}
+  var img=e.target.closest('.chartimg');
+  if(img&&lb){document.getElementById('lbimg').src=img.currentSrc||img.src;lb.classList.add('open');}
+ });
+ document.addEventListener('keydown',function(e){if(e.key==='Escape'){var lb=document.getElementById('lb');if(lb)lb.classList.remove('open');}});
+})();"""
 
 
 def _hod(d, h):
@@ -2311,13 +2355,31 @@ def _smooth3(a):
     return [(a[max(0, i - 1)] + a[i] + a[min(n - 1, i + 1)]) / 3.0 for i in range(n)]
 
 
+_SOC_COLOUR = "#2b8fb3"   # battery SoC series (drawn on the secondary right-hand % axis)
+
+
+def _spread(series):
+    """Smoothed (avg, lo, hi) per-hour across a list of 24-arrays: lo/hi = 10th–90th pct, or full
+    min–max when only a few days."""
+    avg, lo, hi = [], [], []
+    for h in range(24):
+        col = sorted(a[h] for a in series)
+        avg.append(sum(col) / len(col))
+        if len(col) <= 3:
+            lo.append(col[0]); hi.append(col[-1])
+        else:
+            lo.append(_pctl(col, 0.10)); hi.append(_pctl(col, 0.90))
+    return _smooth3(avg), _smooth3(lo), _smooth3(hi)
+
+
 def daily_svg(snap: dict) -> str:
-    """Day-by-day spread: per metric (usage + solar), a smoothed hour-of-day AVERAGE line inside a
-    shaded BAND showing the day-to-day range (10th–90th percentile, or full min–max when only a few
-    days). Cleaner than overlaying every day as a faint line. Standalone SVG served via
-    <img src="api/daily.svg"> for the same webview-rendering reasons as the timeline. Strict XML, white bg."""
+    """Day-by-day spread: per metric (usage + solar in kWh, battery SoC in % on a secondary right axis),
+    a smoothed hour-of-day AVERAGE line inside a shaded BAND showing the day-to-day range (10th–90th
+    percentile, or full min–max when only a few days). Standalone SVG served via <img src="api/daily.svg">
+    for the same webview-rendering reasons as the timeline. Strict XML, white bg."""
     days = snap.get("daily_hourly") or []
-    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 30, 34
+    has_soc = any(d.get("soc") for d in days)
+    W, Ht, pL, pR, pT, pB = 720, 300, 44, (46 if has_soc else 16), 30, 34
     iw, ih = W - pL - pR, Ht - pT - pB
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Ht}" '
            f'viewBox="0 0 {W} {Ht}" font-family="system-ui, sans-serif">',
@@ -2330,47 +2392,56 @@ def daily_svg(snap: dict) -> str:
         return "".join(out)
     ymax = max(allvals) * 1.12
     X = lambda h: pL + iw * h / 23.0
-    Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)
-    for f in (0, .25, .5, .75, 1):                      # y grid + kWh labels
+    Y = lambda v: pT + ih * (1 - min(v, ymax) / ymax)                    # left axis: kWh/hour
+    Ysoc = lambda v: pT + ih * (1 - min(max(v, 0.0), 100.0) / 100.0)     # right axis: SoC %
+    for f in (0, .25, .5, .75, 1):                      # y grid + left kWh labels (+ right % labels)
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
         out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
                    f'text-anchor="end">{ymax*f:.1f}</text>')
+        if has_soc:
+            out.append(f'<text x="{W-pR+7}" y="{y+4:.1f}" font-size="12" fill="{_SOC_COLOUR}" '
+                       f'text-anchor="start">{100*f:.0f}%</text>')
     for h in range(0, 24, 3):                           # x hour-of-day labels
         out.append(f'<text x="{X(h):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
                    f'text-anchor="middle">{h:02d}</text>')
 
-    def band(arr_lo, arr_hi, colour):
-        top = " ".join(f"{X(h):.1f},{Y(arr_hi[h]):.1f}" for h in range(24))
-        bot = " ".join(f"{X(h):.1f},{Y(arr_lo[h]):.1f}" for h in range(23, -1, -1))
+    def band(lo, hi, colour, yfn):
+        top = " ".join(f"{X(h):.1f},{yfn(hi[h]):.1f}" for h in range(24))
+        bot = " ".join(f"{X(h):.1f},{yfn(lo[h]):.1f}" for h in range(23, -1, -1))
         return f'<polygon points="{top} {bot}" fill="{colour}" fill-opacity="0.15" stroke="none"/>'
 
-    def line(arr, colour, width, opacity):
-        pts = " ".join(f"{X(h):.1f},{Y(arr[h]):.1f}" for h in range(24))
-        return (f'<polyline points="{pts}" fill="none" stroke="{colour}" '
-                f'stroke-width="{width}" stroke-opacity="{opacity}"/>')
+    def line(arr, colour, width, yfn, dash=""):
+        pts = " ".join(f"{X(h):.1f},{yfn(arr[h]):.1f}" for h in range(24))
+        da = f' stroke-dasharray="{dash}"' if dash else ""
+        return f'<polyline points="{pts}" fill="none" stroke="{colour}" stroke-width="{width}"{da}/>'
 
     lx, ndays = pL + 4, 0
-    for key, colour, label in _OVERLAY_METRICS:
+
+    def legend(colour, text):
+        nonlocal lx
+        out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
+                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{text}</text>')
+        lx += 34 + (len(text) - 4) * 7.0
+
+    for key, colour, label in _OVERLAY_METRICS:                 # kWh metrics on the left axis
         series = [d[key] for d in days if d.get(key)]
         if not series:
             continue
         ndays = max(ndays, len(series))
-        avg, lo, hi = [], [], []
-        for h in range(24):
-            col = sorted(a[h] for a in series)
-            avg.append(sum(col) / len(col))
-            if len(col) <= 3:                           # too few days for percentiles → full min/max
-                lo.append(col[0]); hi.append(col[-1])
-            else:
-                lo.append(_pctl(col, 0.10)); hi.append(_pctl(col, 0.90))
-        avg, lo, hi = _smooth3(avg), _smooth3(lo), _smooth3(hi)
+        avg, lo, hi = _spread(series)
         if len(series) > 1:
-            out.append(band(lo, hi, colour))            # smoothed day-to-day spread band
-        out.append(line(avg, colour, 2.6, 0.95))        # bold hour-of-day average
-        out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
-                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{label} ⌀{sum(avg):.0f} kWh/day</text>')
-        lx += 34 + (len(label) + 12) * 7.0
+            out.append(band(lo, hi, colour, Y))
+        out.append(line(avg, colour, 2.6, Y))
+        legend(colour, f"{label} ⌀{sum(avg):.0f} kWh/day")
+    if has_soc:                                                 # battery SoC on the right axis
+        sseries = [d["soc"] for d in days if d.get("soc")]
+        ndays = max(ndays, len(sseries))
+        savg, slo, shi = _spread(sseries)
+        if len(sseries) > 1:
+            out.append(band(slo, shi, _SOC_COLOUR, Ysoc))
+        out.append(line(savg, _SOC_COLOUR, 2.6, Ysoc, dash="5 3"))
+        legend(_SOC_COLOUR, f"SoC ⌀{sum(savg)/24:.0f}%")
     tail = "band = spread across days" if ndays > 1 else "single day"
     out.append(f'<text x="{W-pR}" y="15" font-size="12" fill="#999999" text-anchor="end">'
                f'{ndays} day(s) · {tail}</text>')
@@ -2416,18 +2487,21 @@ def render(snap: dict, cfg: dict) -> str:
         f'<small>{snap.get("weather") or "—"} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
         f'{cal_txt}</small></div>',
     ])
+    tb = "".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>foxctl</title><style>{CSS}</style></head><body>
 <h1>foxctl <small id=refr style="color:#888;font-weight:400"></small></h1>
 {banner}
 <div class=row id=cards>{cards}</div>
+<div class=ctrls>Chart size <button data-cz="-0.25" aria-label="smaller">−</button><span class=cz id=czl>100%</span><button data-cz="0.25" aria-label="bigger">+</button><button data-cz="0">fit</button><span style="opacity:.7">· tap a chart to enlarge</span></div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
-<div id=chart><img class=chartimg src="api/chart.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Past 24h measured and next 24h forecast — solar vs house usage">
+<div id=chart><div class=chartwrap><img class=chartimg src="api/chart.svg?t={tb}" alt="Past 24h measured and next 24h forecast — solar vs house usage"></div>
 <div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}{charge_log_html(snap)}</div>
-<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — usage &amp; solar spread (band = day-to-day range, bold = average)</div>
-<img class=chartimg src="api/daily.svg?t={"".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"}" alt="Each day's 24-hour usage and solar profile overlaid, with the average"></div>
+<div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — usage, solar &amp; battery SoC spread (band = day-to-day range, bold = average)</div>
+<div class=chartwrap><img class=chartimg src="api/daily.svg?t={tb}" alt="Each day's 24-hour usage, solar and battery SoC profile, with the day-to-day spread band"></div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
+<div id=lb><div class=hint>tap anywhere to close</div><img id=lbimg alt="enlarged chart"></div>
 <script>{JS}</script>
 </body></html>"""
 
@@ -2545,7 +2619,7 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.60.0",
+                    "version": "1.61.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
