@@ -34,7 +34,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dtime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
@@ -62,6 +62,12 @@ DEFAULT_CONFIG = {
         # sensor is converted to kW with ev_voltage (AU nominal ~230–240V).
         "ev_power_entity": "",
         "ev_voltage": 240,
+        "weather_entity": "weather.forecast_home",
+        # AC (Faikin/Daikin) — no watt sensor, so compressor Hz is the draw proxy + a real local outdoor temp.
+        "ac_climate_entity": "climate.living_room_ac_mqtt_hvac",
+        "ac_comp_entity": "sensor.living_room_ac_comp",
+        "ac_fan_entity": "sensor.living_room_ac_fanfreq",
+        "ac_outside_entity": "sensor.living_room_ac_outside",
     },
     "strategy": {
         # --- Tariff-driven time-of-use (the ONLY decision model) -------------------------------------
@@ -103,6 +109,7 @@ DEFAULT_CONFIG = {
         # tune per_c once temp↔load history accumulates. mild_c is the no-nudge baseline temperature.
         "temp_mild_c": 20.0, "temp_hot_c": 28.0, "temp_cold_c": 12.0,
         "temp_per_c_hot": 0.015, "temp_per_c_cold": 0.020, "temp_nudge_max": 0.40,
+        "ac_kw_per_hz": 0.02,       # AC draw ≈ compressor Hz × this (self-calibrates from load over time)
         "min_soc_on_grid": 10,
         # The ONLY min-SoC foxctl ever writes to the inverter — a constant safety floor, never a
         # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival is
@@ -356,6 +363,33 @@ class HAClient:
             return self._state(entity)["state"]
         except Exception:
             return None
+
+    def get_attrs(self, entity: str) -> dict:
+        """HA state attributes dict ({} on failure)."""
+        if not entity:
+            return {}
+        try:
+            return self._state(entity).get("attributes") or {}
+        except Exception:
+            return {}
+
+    def get_forecasts(self, entity: str, kind: str = "daily"):
+        """Call weather.get_forecasts and return the forecast list (or []). Modern HA weather entities
+        no longer expose a `forecast` attribute, so this service call is the only way to get it."""
+        if not entity:
+            return []
+        body = json.dumps({"entity_id": entity, "type": kind}).encode()
+        req = urllib.request.Request(
+            f"{self.url}/api/services/weather/get_forecasts?return_response",
+            data=body, method="POST",
+            headers={"Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as r:
+                resp = json.loads(r.read().decode())
+            return (((resp.get("service_response") or {}).get(entity) or {}).get("forecast")) or []
+        except Exception as e:
+            print(f"get_forecasts({entity},{kind}) failed: {e}", file=sys.stderr)
+            return []
 
 
 # EV charger power source, resolved once then cached (avoid re-probing HA every cycle).
@@ -1628,34 +1662,73 @@ def track_money(cfg, profile, load_kw, grid_import_kw, grid_export_kw, now=None)
 
 # ------------------------------------------------------------ weather nudge ---
 
-def weather_temps(ha, entity):
-    """(current_c, today_min_c, today_max_c, evening_c) from a HA weather entity's attributes/forecast.
-    Any piece that's unavailable comes back None. Evening ≈ the 18:00-ish forecast temp for today."""
-    cur = tmin = tmax = eve = None
+def _fnum(x):
     try:
-        st = ha._state(entity)
+        return float(x)
     except Exception:
-        return (None, None, None, None)
-    attrs = st.get("attributes") or {}
-    cur = attrs.get("temperature")
-    fc = attrs.get("forecast") or []
-    today = datetime.now().strftime("%Y-%m-%d")
-    for f in fc:
-        dt = str(f.get("datetime") or "")
-        if dt[:10] == today:
-            if f.get("templow") is not None:
-                tmin = f["templow"]
-            if f.get("temperature") is not None:
-                tmax = f["temperature"]
-        # hourly forecasts: grab the ~evening slot for today
-        if dt[:10] == today and dt[11:13] in ("17", "18", "19"):
-            eve = f.get("temperature")
-    def _f(x):
-        try:
-            return float(x)
-        except Exception:
-            return None
-    return (_f(cur), _f(tmin), _f(tmax), _f(eve))
+        return None
+
+
+def _parse_local(s):
+    """ISO datetime string (usually UTC, '…+00:00') → naive LOCAL datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+        return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return None
+
+
+_FC_CACHE = {"ts": 0.0, "data": None}
+_FC_TTL = 1800  # 30 min
+
+
+def forecast_periods(ha, cfg, now=None):
+    """Upcoming temperature picture from weather.get_forecasts (daily + hourly), plus the current
+    outdoor temp (preferring the Faikin local outdoor sensor over the weather entity). Cached 30 min.
+    Returns temps for: now / tonight-low / tomorrow-max / tomorrow-evening, with conditions."""
+    now = now or datetime.now()
+    if _FC_CACHE["data"] is not None and (time.time() - _FC_CACHE["ts"]) < _FC_TTL:
+        d = dict(_FC_CACHE["data"])
+    else:
+        entity = cfg["ha"].get("weather_entity", "weather.forecast_home")
+        daily = ha.get_forecasts(entity, "daily")
+        hourly = ha.get_forecasts(entity, "hourly")
+        wx_cur = _fnum((ha.get_attrs(entity)).get("temperature"))
+        today = now.date()
+        tomorrow = today + timedelta(days=1)
+        by_day = {}
+        for f in daily:
+            dt = _parse_local(f.get("datetime"))
+            if dt:
+                by_day[dt.date()] = f
+        td, tm = by_day.get(today, {}), by_day.get(tomorrow, {})
+        # tonight low: min hourly temp from now until 07:00 tomorrow (fallback: today/ tomorrow templow)
+        tonight_end = datetime.combine(tomorrow, dtime(7, 0))
+        tonight_temps, eve_tomorrow = [], None
+        for f in hourly:
+            dt = _parse_local(f.get("datetime"))
+            t = _fnum(f.get("temperature"))
+            if dt is None or t is None:
+                continue
+            if now <= dt <= tonight_end:
+                tonight_temps.append(t)
+            if dt.date() == tomorrow and dt.hour in (17, 18, 19):
+                eve_tomorrow = t if eve_tomorrow is None else eve_tomorrow
+        d = {
+            "cur_c": wx_cur, "cur_src": "weather",
+            "today_max_c": _fnum(td.get("temperature")), "today_low_c": _fnum(td.get("templow")),
+            "tonight_low_c": (min(tonight_temps) if tonight_temps else _fnum(td.get("templow"))),
+            "tomorrow_max_c": _fnum(tm.get("temperature")), "tomorrow_low_c": _fnum(tm.get("templow")),
+            "tomorrow_eve_c": (eve_tomorrow if eve_tomorrow is not None else _fnum(tm.get("temperature"))),
+            "today_cond": td.get("condition"), "tomorrow_cond": tm.get("condition"),
+        }
+        _FC_CACHE.update(ts=time.time(), data=dict(d))
+    # current outdoor temp: prefer the Faikin local sensor (updates every cycle, not cached)
+    out_e = cfg["ha"].get("ac_outside_entity")
+    fk = _fnum(ha.get_num(out_e)) if out_e else None
+    if fk is not None:
+        d["cur_c"], d["cur_src"] = fk, "faikin"
+    return d
 
 
 def temp_load_factor(strat, temp_c):
@@ -1673,6 +1746,156 @@ def temp_load_factor(strat, temp_c):
         f = min(cap, (mild - temp_c) * strat.get("temp_per_c_cold", 0.020))
         return 1.0 + f, f"cold {temp_c:.0f}°C → +{f*100:.0f}% HVAC load"
     return 1.0, f"mild {temp_c:.0f}°C"
+
+
+# --------------------------------------------------------------- AC (Faikin) --
+# The Faikin (local Daikin control) exposes no watt sensor — compressor frequency (Hz) is the proxy for
+# how hard the unit is working. Estimate kW ≈ comp_hz × k (+ a small fan term). k self-calibrates by
+# least-squares regression of measured base load on compressor Hz over time (persisted, O(1) memory).
+
+_ACLEARN = {"loaded": False, "path": None, "n": 0.0,
+            "sx": 0.0, "sy": 0.0, "sxy": 0.0, "sxx": 0.0, "k": None}
+
+
+def _aclearn_k():
+    """Learned kW-per-Hz slope, or None until we have enough spread to trust it."""
+    a = _ACLEARN
+    if a["n"] < 200:
+        return None
+    denom = a["n"] * a["sxx"] - a["sx"] * a["sx"]
+    if denom <= 1e-6:
+        return None
+    slope = (a["n"] * a["sxy"] - a["sx"] * a["sy"]) / denom
+    return slope if 0.004 <= slope <= 0.06 else None
+
+
+def track_ac_learn(cfg, comp_hz, base_load_kw):
+    """Feed one (compressor Hz, base-load kW) sample into the running regression for k. Persisted."""
+    a = _ACLEARN
+    if not a["loaded"]:
+        a["path"] = _state_dir(cfg) / "ac_learn.json"
+        try:
+            a.update({k: v for k, v in json.loads(a["path"].read_text()).items() if k in a})
+        except Exception:
+            pass
+        a["loaded"] = True
+    if isinstance(comp_hz, (int, float)) and isinstance(base_load_kw, (int, float)) and comp_hz >= 0:
+        x, y = float(comp_hz), float(base_load_kw)
+        a["n"] += 1; a["sx"] += x; a["sy"] += y; a["sxy"] += x * y; a["sxx"] += x * x
+        a["k"] = _aclearn_k()
+        try:
+            a["path"].parent.mkdir(parents=True, exist_ok=True)
+            a["path"].write_text(json.dumps({k: a[k] for k in ("n", "sx", "sy", "sxy", "sxx", "k")}))
+        except Exception as e:
+            print(f"ac_learn persist failed: {e}", file=sys.stderr)
+    return {"k": a["k"], "n": int(a["n"])}
+
+
+def read_ac(ha, cfg):
+    """Live AC state from the Faikin device: mode/action, compressor & fan Hz, indoor/target/outdoor
+    temps, and an estimated kW draw (learned k when available, else the configured default)."""
+    hac = cfg.get("ha") or {}
+    climate = hac.get("ac_climate_entity")
+    comp_e = hac.get("ac_comp_entity")
+    if not (climate or comp_e):
+        return {"present": False}
+    attrs = ha.get_attrs(climate)
+    comp = ha.get_num(comp_e) or 0.0
+    fan = ha.get_num(hac.get("ac_fan_entity")) if hac.get("ac_fan_entity") else None
+    mode = ha.get_state(climate)
+    action = attrs.get("hvac_action")
+    k = _ACLEARN.get("k") or cfg.get("strategy", {}).get("ac_kw_per_hz", 0.02)
+    kw = round(comp * k, 2) if comp else 0.0
+    on = comp > 1 and (mode not in (None, "off"))
+    return {"present": True, "mode": mode, "action": action or ("running" if on else "idle"),
+            "comp_hz": round(comp, 1), "fan_hz": round(fan, 1) if isinstance(fan, (int, float)) else None,
+            "indoor_c": _fnum(attrs.get("current_temperature")), "target_c": _fnum(attrs.get("temperature")),
+            "outdoor_c": _fnum(ha.get_num(hac.get("ac_outside_entity"))) if hac.get("ac_outside_entity") else None,
+            "kw_est": kw, "on": on, "k": round(k, 4), "k_learned": _ACLEARN.get("k") is not None}
+
+
+# ------------------------------------------------------------ forecast view --
+
+def profile_sum(hour_profile, start_h, end_h):
+    """Sum the hour-of-day load profile (kWh) over clock hours [start_h, end_h), wrapping past midnight.
+    Accepts int- or str-keyed profiles."""
+    if not hour_profile:
+        return None
+    span = (end_h - start_h) % 24 or 24
+    tot = 0.0
+    for i in range(span):
+        h = (start_h + i) % 24
+        v = hour_profile.get(h, hour_profile.get(str(h)))
+        tot += float(v) if isinstance(v, (int, float)) else 0.0
+    return round(tot, 2)
+
+
+def forecast_rows(fc, hour_profile, strat, solar_fc, soc, cap_kwh, reserve_soc, ac, load_now, now=None):
+    """Build the dashboard's forward-look table: Now / Tonight / Tomorrow day / Tomorrow evening, each
+    with temperature, predicted usage (profile × temperature nudge), solar, and a battery/grid note.
+    Plus a plain-English takeaway. Pure — all inputs passed in."""
+    now = now or datetime.now()
+    h = now.hour
+    stored = (soc / 100.0 * cap_kwh) if isinstance(soc, (int, float)) else None
+    usable = max(0.0, (soc - reserve_soc) / 100.0 * cap_kwh) if isinstance(soc, (int, float)) else None
+
+    def usage(start_h, end_h, temp):
+        base = profile_sum(hour_profile, start_h, end_h)
+        if base is None:
+            return None, 1.0
+        fac, _ = temp_load_factor(strat, temp)
+        return round(base * fac, 1), fac
+
+    rows = []
+    # Now
+    ac_bit = ""
+    if ac and ac.get("present") and ac.get("on"):
+        ac_bit = f" · AC {ac.get('action','')} {ac.get('comp_hz','')}Hz≈{ac.get('kw_est',0):.1f}kW"
+    rows.append({"label": "Now", "temp": fc.get("cur_c"),
+                 "usage": (round(load_now, 1) if isinstance(load_now, (int, float)) else None), "usage_unit": "kW",
+                 "solar": None, "note": f"{round(soc) if isinstance(soc,(int,float)) else '–'}%{ac_bit}"})
+    # Tonight (now → 07:00)
+    tl = fc.get("tonight_low_c")
+    tu, tfac = usage(h, 7, tl)
+    if tu is not None and usable is not None:
+        if usable >= tu:
+            left_pct = round(max(0.0, (usable - tu)) / cap_kwh * 100 + reserve_soc)
+            note = f"covers · ~{left_pct}% by 7am"
+        else:
+            note = f"~{tu - usable:.1f}kWh grid/free short"
+    else:
+        note = "—"
+    rows.append({"label": "Tonight→7am", "temp": tl, "usage": tu, "usage_unit": "kWh",
+                 "solar": None, "note": note, "warm": (tfac > 1.05)})
+    # Tomorrow day (07:00 → 17:00)
+    tmax = fc.get("tomorrow_max_c")
+    du, dfac = usage(7, 17, tmax)
+    dsolar = solar_fc.get("tomorrow")
+    if isinstance(dsolar, (int, float)) and isinstance(du, (int, float)):
+        dnote = f"solar {dsolar:.0f}kWh {'covers +surplus' if dsolar >= du else 'partial'}"
+    else:
+        dnote = "—"
+    rows.append({"label": "Tomorrow day", "temp": tmax, "usage": du, "usage_unit": "kWh",
+                 "solar": dsolar, "note": dnote, "warm": (dfac > 1.05)})
+    # Tomorrow evening (17:00 → 23:00, peak)
+    te = fc.get("tomorrow_eve_c")
+    eu, efac = usage(17, 23, te)
+    rows.append({"label": "Tomorrow eve", "temp": te, "usage": eu, "usage_unit": "kWh",
+                 "solar": None, "note": "peak → run off battery", "warm": (efac > 1.05)})
+
+    # Takeaway — lead with whatever's most notable (cold night / hot day), then coverage.
+    bits = []
+    if tfac > 1.05 and tl is not None:
+        cov = "battery covers it" if (usable is not None and tu is not None and usable >= tu) else "may need grid/free top-up"
+        bits.append(f"Cold night (→{tl:.0f}°C) lifts usage ~{(tfac-1)*100:.0f}% (heating) — {cov}.")
+    elif dfac > 1.05 and tmax is not None:
+        s = "solar should cover it" if (isinstance(dsolar,(int,float)) and isinstance(du,(int,float)) and dsolar>=du) else "watch battery"
+        bits.append(f"Hot tomorrow (→{tmax:.0f}°C) — cooling load up ~{(dfac-1)*100:.0f}%; {s}.")
+    else:
+        bits.append("Mild ahead — usage near typical.")
+    if ac and ac.get("present") and ac.get("on"):
+        bits.append(f"AC {ac.get('action','')} to {ac.get('target_c','?')}°C now (~{ac.get('kw_est',0):.1f}kW).")
+    return {"rows": rows, "takeaway": " ".join(bits)}
 
 
 # ------------------------------------------------------------ charge advisor --
@@ -1847,9 +2070,11 @@ def gather_and_decide(cfg: dict) -> dict:
     demand_window = (ha.get_state(cfg["ha"].get("demand_window_entity")) == "on")
     weather_entity = cfg["ha"].get("weather_entity", "weather.forecast_home")
     weather = ha.get_state(weather_entity)
-    # Temperature → HVAC load nudge: a hot or cold evening lifts predicted base (coast) consumption.
-    # (raw temps read here; the factor is computed below once `strat` is in scope.)
-    temp_cur, temp_min, temp_max, temp_eve = weather_temps(ha, weather_entity)
+    # Forward temperature picture (weather.get_forecasts + Faikin local outdoor sensor) and live AC state.
+    fc_periods = forecast_periods(ha, cfg)
+    ac = read_ac(ha, cfg)
+    temp_cur = fc_periods.get("cur_c")
+    temp_eve = fc_periods.get("tonight_low_c")   # coast is overnight → drive the nudge off tonight's low
 
     # Forecast.Solar: sum the per-plane sensors into a single forward solar view (kWh).
     def _sum_ents(ids):
@@ -2034,9 +2259,19 @@ def gather_and_decide(cfg: dict) -> dict:
     # and the free-window headroom the charge advisor + auto plug rely on.
     snap["money"] = track_money(cfg, profile, load, grid_power, feedin_power)
     snap["temp_nudge"] = {"factor": round(temp_factor, 3), "note": temp_note,
-                          "cur_c": temp_cur, "min_c": temp_min, "max_c": temp_max, "eve_c": temp_eve}
+                          "cur_c": temp_cur, "min_c": fc_periods.get("today_low_c"),
+                          "max_c": fc_periods.get("today_max_c"), "eve_c": temp_eve}
     snap["ev_min_export_kw"] = float((cfg.get("ev_divert") or {}).get("min_export_kw", 1.0) or 1.0)
     snap["charge_advisor"] = charge_advisor(snap, profile, strat)
+    # Live AC state + self-calibrating kW-per-Hz learning, and the forward-look forecast table.
+    snap["ac"] = ac
+    snap["ac_learn"] = track_ac_learn(cfg, ac.get("comp_hz"), max(0.0, load - (ev_kw or 0.0))) if ac.get("present") else None
+    solar_fc = {"tomorrow": solar_tomorrow, "remaining_today": solar_remaining}
+    snap["forecast"] = forecast_rows(fc_periods, consumption.get("hour_profile"), strat, solar_fc,
+                                     soc, cap_kwh, reserve, ac, load)
+    snap["forecast"].update({k: fc_periods.get(k) for k in
+                             ("cur_c", "cur_src", "tonight_low_c", "tomorrow_max_c", "tomorrow_eve_c",
+                              "today_max_c", "today_cond", "tomorrow_cond")})
     return snap
 
 
@@ -2374,6 +2609,45 @@ def _fmt_session_time(s):
     if st.date() == en.date():
         return f"{st:%a %d %b %H:%M}–{en:%H:%M}"
     return f"{st:%a %d %b %H:%M} → {en:%d %b %H:%M}"
+
+
+def forecast_table_html(snap: dict) -> str:
+    """Forward-look table: Now / Tonight / Tomorrow day / Tomorrow evening — temperature, predicted
+    usage, solar, and battery/grid implication, with a plain-English takeaway."""
+    fc = snap.get("forecast") or {}
+    rows = fc.get("rows") or []
+    if not rows:
+        return ""
+
+    def c(v):
+        return f"{v:.0f}°" if isinstance(v, (int, float)) else "—"
+
+    def u(r):
+        return f'{r["usage"]:g} {r.get("usage_unit","kWh")}' if isinstance(r.get("usage"), (int, float)) else "—"
+
+    def s(v):
+        return f"{v:.0f} kWh" if isinstance(v, (int, float)) else "—"
+    trs = []
+    for r in rows:
+        warm = ' style="color:#c0392b"' if r.get("warm") else ""
+        trs.append(
+            f'<tr><td style="padding:.2rem .5rem;color:#888">{r["label"]}</td>'
+            f'<td style="padding:.2rem .5rem;text-align:right"{warm}>{c(r.get("temp"))}</td>'
+            f'<td style="padding:.2rem .5rem;text-align:right;font-weight:600">{u(r)}</td>'
+            f'<td style="padding:.2rem .5rem;text-align:right;color:#e0a800">{s(r.get("solar"))}</td>'
+            f'<td style="padding:.2rem .5rem;color:#666">{r.get("note","")}</td></tr>')
+    take = fc.get("takeaway") or ""
+    return (
+        '<div style="margin:.6rem .1rem 0;padding:.5rem .6rem;border:1px solid #eee;border-radius:8px;font-size:.82rem">'
+        '<div style="font-weight:600;color:#555;margin-bottom:.25rem">🔮 Forecast — what\'s coming &amp; why</div>'
+        '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:.82rem">'
+        '<tr style="color:#999;font-size:.75rem"><td style="padding:.15rem .5rem"></td>'
+        '<td style="padding:.15rem .5rem;text-align:right">temp</td>'
+        '<td style="padding:.15rem .5rem;text-align:right">usage</td>'
+        '<td style="padding:.15rem .5rem;text-align:right">solar</td>'
+        '<td style="padding:.15rem .5rem">battery / grid</td></tr>'
+        f'{"".join(trs)}</table></div>'
+        f'<div style="color:#555;margin-top:.35rem;line-height:1.4">{take}</div></div>')
 
 
 def charge_log_html(snap: dict) -> str:
@@ -2801,7 +3075,7 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=ctrls>Chart size <button data-cz="-0.25" aria-label="smaller">−</button><span class=cz id=czl>100%</span><button data-cz="0.25" aria-label="bigger">+</button><button data-cz="0">fit</button><span style="opacity:.7">· tap a chart to enlarge</span></div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><div class=chartwrap><img class=chartimg src="api/chart.svg?t={tb}" alt="Past 24h measured and next 24h forecast — solar vs house usage"></div>
-<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}{charge_log_html(snap)}</div>
+<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}{forecast_table_html(snap)}{charge_log_html(snap)}</div>
 <div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — usage, solar &amp; battery SoC spread (band = day-to-day range, bold = average)</div>
 <div class=chartwrap><img class=chartimg src="api/daily.svg?t={tb}" alt="Each day's 24-hour usage, solar and battery SoC profile, with the day-to-day spread band"></div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
@@ -2923,12 +3197,13 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.62.1",
+                    "version": "1.63.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
                     "money": snap.get("money"), "charge_advisor": snap.get("charge_advisor"),
-                    "temp_nudge": snap.get("temp_nudge"),
+                    "temp_nudge": snap.get("temp_nudge"), "ac": snap.get("ac"),
+                    "ac_learn": snap.get("ac_learn"), "forecast": snap.get("forecast"),
                     "free_window": ((snap.get("dynamic") or {}).get("tariff") or {}).get("free"),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
                     "n_bells": len(bells), "hour_profile_len": len(prof),

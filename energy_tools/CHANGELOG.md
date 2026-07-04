@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.63.0 — forecast "what's coming & why" table + Faikin AC awareness
+
+Turns temperature + AC into a forward-looking plan you can read at a glance.
+
+- **Forecast table** on the dashboard: **Now / Tonight / Tomorrow day / Tomorrow evening**, each with
+  the forecast **temperature**, **predicted usage** (hour-of-day profile × temperature nudge), **solar**,
+  and a **battery/grid implication** — plus a plain-English takeaway, e.g. *"Cold night (→9°C) lifts usage
+  ~22% (heating) — battery covers it."* Cold/hot periods are flagged in red.
+- **Real forecast temps.** The weather entity dropped its `forecast` attribute, so the temp nudge in
+  v1.62 only ever saw *current* temp. Now foxctl calls the `weather.get_forecasts` service (daily + hourly)
+  to get tonight's low and tomorrow's temps — the nudge and the table use the actual forecast.
+- **Faikin AC awareness.** Your Daikin (via Faikin) has no watt sensor, so foxctl reads **compressor
+  frequency** as the load proxy and estimates AC draw as `comp_Hz × k`. It shows live AC state
+  (heating/cooling, compressor Hz, indoor/target/outdoor temps, est. kW), and uses the Faikin's **local
+  outdoor sensor** as the current temperature (more accurate than the weather entity). `k` **self-calibrates**
+  over time via a running least-squares regression of measured base load on compressor Hz (persisted).
+- New options: `weather_entity`, `ac_climate_entity`, `ac_comp_entity`, `ac_fan_entity`,
+  `ac_outside_entity`, `ac_kw_per_hz` (auto-defaulted to the discovered Faikin entities).
+
 ## 1.62.0 — money awareness + "good time to charge" advisor + free-window auto-charge
 
 Turns the telemetry into dollars and decisions.

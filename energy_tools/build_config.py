@@ -20,6 +20,12 @@ if opt.get("ev_power_entity"):
     fc["ha"]["ev_power_entity"] = opt["ev_power_entity"]
 if opt.get("ev_voltage"):
     fc["ha"]["ev_voltage"] = float(opt["ev_voltage"])
+# Weather + AC (Faikin) entities → ha config
+for k in ("weather_entity", "ac_climate_entity", "ac_comp_entity", "ac_fan_entity", "ac_outside_entity"):
+    if opt.get(k):
+        fc["ha"][k] = opt[k]
+if opt.get("ac_kw_per_hz"):
+    fc["strategy"]["ac_kw_per_hz"] = float(opt["ac_kw_per_hz"])
 # Solar diversion to a car-charger power point (needs allow_control). switch="" disables.
 fc["ev_divert"] = {
     "switch": opt.get("ev_charger_switch", ""),
