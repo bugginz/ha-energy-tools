@@ -99,7 +99,7 @@
   "sell_price": 0.5,
   "sell_enabled": false,
   "topup_to_target": true,
-  "battery_capacity_kwh": 30,
+  "battery_capacity_kwh": 41.44,
   "typical_daily_load_kwh": 30,
   "avoid_demand_window": false,
   "ev_charge_kw": 7.0,

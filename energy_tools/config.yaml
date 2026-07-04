@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.62.0"
+version: "1.62.1"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -27,7 +27,7 @@ options:
   max_soc: 90
   inverter_min_soc: 10
   topup_to_target: true
-  battery_capacity_kwh: 30
+  battery_capacity_kwh: 41.44
   typical_daily_load_kwh: 30
   ev_power_entity: "sensor.6294ha_series_2_current"
   ev_voltage: 240

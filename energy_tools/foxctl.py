@@ -2923,7 +2923,7 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.62.0",
+                    "version": "1.62.1",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
