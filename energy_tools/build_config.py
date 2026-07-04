@@ -25,6 +25,7 @@ fc["ev_divert"] = {
     "switch": opt.get("ev_charger_switch", ""),
     "feedin_max": float(opt.get("ev_divert_feedin_max", 0.10)),
     "allow_grid": bool(opt.get("ev_divert_allow_grid", True)),
+    "free_window_charge": bool(opt.get("ev_free_window_charge", True)),
     "min_export_kw": float(opt.get("ev_divert_min_export_kw", 1.0)),
     "min_soc": int(opt.get("ev_divert_min_soc", 0)),
     "battery_priority": bool(opt.get("ev_divert_battery_priority", True)),

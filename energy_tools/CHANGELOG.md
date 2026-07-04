@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.62.0 — money awareness + "good time to charge" advisor + free-window auto-charge
+
+Turns the telemetry into dollars and decisions.
+
+- **Money, baked in.** New live money tracker prices every grid kWh at the current tariff band and
+  accumulates today's real spend, export credit, and — the headline — **$ saved vs buying everything
+  from the grid** (no-solar-no-battery baseline). Dashboard **"Money today"** card: `$X saved`, spend,
+  by-band breakdown (peak / shoulder / free kWh used vs the 50 kWh cap), and a rolling week total.
+  Rates come from the existing tariff profiles; helpers `import_rate_c` / `export_rate_c` / `current_band`.
+  Persisted per calendar day (matches the bill + free cap) in `money.json`.
+- **"Good time to charge?" advisor.** A colour-coded good / ok / avoid card that answers whether now is a
+  good moment to put the car on, with a one-line reason (free-window headroom, spare solar, peak avoidance,
+  shoulder cost, or a hot/cold-evening caution).
+- **Free-window auto-charge.** `ev_divert` now has a second way to switch the car socket ON: during the
+  free tariff window, **once the house battery is full**, it soaks up remaining FREE grid energy (0c),
+  capped by the daily 50 kWh free headroom — so if there's spare free capacity it gets used, and if there
+  isn't, it doesn't. Battery still fills first; peak/shoulder still hold the socket off (unless spare solar).
+  New `ev_free_window_charge` option (default on).
+- **Tariff-band shading on the timeline.** The −24h→+24h chart is now shaded by band — green **free**,
+  red **peak** — so *why* the plan charges midday and coasts through the evening peak is self-evident.
+- **Weather-aware base load.** The existing (previously unused) `temp_*` config is now wired in: a hot or
+  cold evening lifts the predicted coast/base load (HVAC), which raises the battery survival reserve. Read
+  from the weather entity's temperature + today's forecast; surfaced as `temp_nudge` and on the weather card.
+- Battery capacity fallback corrected to 41.44 kWh (4-battery pack).
+- **Tariff transition note:** GloBird shoulder → **four4free** (free 10:00–14:00, 50 kWh/day) is already a
+  built-in profile — flip `tariff_profile: zerohero → four4free` when it lands. Until then zerohero (free
+  11:00–14:00) stays active.
+
 ## 1.61.0 — resizable charts (iOS HA app) + battery SoC on the day-by-day chart
 
 - **Charts are now resizable and readable on a phone.** They were fixed 720×300 SVGs shown at

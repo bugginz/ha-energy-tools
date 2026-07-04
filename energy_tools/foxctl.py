@@ -123,6 +123,7 @@ DEFAULT_CONFIG = {
     # Solar diversion: turn a car-charger power point ON when export is too cheap to bother to sell,
     # OFF otherwise. Needs control.allow_control. switch="" disables. Tracked via ev_power_entity.
     "ev_divert": {"switch": "", "feedin_max": 0.10, "allow_grid": True,
+                  "free_window_charge": True,   # in the free tariff window, top the car once the battery is full
                   "min_export_kw": 1.0, "min_dwell_min": 10,
                   "battery_priority": True, "min_soc": 0,
                   # Interim daily car cap (until a real car-SoC sensor exists): auto-divert charges up to
@@ -1182,9 +1183,11 @@ def ha_call_service(cfg, domain, service, entity_id):
 
 
 def ev_divert_decision(snap, ev):
-    """Pure policy: should the car charger be ON this cycle? Diverts spare SOLAR (export ≥ min_export_kw)
-    into the car. Yields to the house battery until it reaches the survival floor (battery fills first),
-    and never steals power while the inverter is selling or force-charging. (want, why)."""
+    """Pure policy: should the car charger be ON this cycle? Two ways to say yes:
+      1. FREE window — once the house battery is full, soak remaining FREE grid energy into the car
+         (cap-aware, 0c) so spare free capacity is used rather than wasted.
+      2. Spare SOLAR — divert export ≥ min_export_kw into the car (battery fills to survival first).
+    Never steals power while the inverter is selling or force-charging. (want, why)."""
     feedin_power = snap.get("feedin_power") or 0.0
     soc = snap.get("soc")
     # SAFETY: never divert to the car while the inverter is actively SELLING (export→grid) or
@@ -1198,6 +1201,22 @@ def ev_divert_decision(snap, ev):
     if (rec.get("force_charge") or active.get("mode") == "ForceCharge") and isinstance(soc, (int, float)) \
             and isinstance(target, (int, float)) and soc < target - 5:
         return False, f"battery force-charging to {target}% (now {soc:.0f}%) — car held off"
+    # 1) FREE window: once the battery is full, put the car on to soak remaining free grid energy (0c),
+    #    capped by the daily free_kwh headroom. This is what makes spare free capacity actually get used.
+    dyn = snap.get("dynamic") or {}
+    free = (dyn.get("tariff") or {}).get("free") or {}
+    max_soc = dyn.get("max_soc")
+    if free and ev.get("free_window_charge", True) and ev.get("allow_grid", True):
+        now = datetime.now(); h = now.hour + now.minute / 60.0
+        if _in_window(free, h):
+            free_left = (snap.get("money") or {}).get("free_left_kwh")
+            if isinstance(max_soc, (int, float)) and isinstance(soc, (int, float)) and soc < max_soc - 2:
+                return False, f"free window — battery filling to {max_soc:.0f}% first (now {soc:.0f}%)"
+            if isinstance(free_left, (int, float)) and free_left <= 1:
+                return False, f"free {free.get('free_kwh', 50):g}kWh/day cap used up — car would pay {free.get('excess_c', '')}c"
+            fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
+            return True, f"free window · battery full · {fl} → car (0c)"
+    # 2) Spare solar
     if feedin_power < ev.get("min_export_kw", 1.0):
         return False, "no spare solar export"
     # Battery priority: give the spare solar to the battery until it reaches the survival floor before
@@ -1478,6 +1497,230 @@ def mqtt_publish(cfg, snap):
         print(f"mqtt publish failed: {e}", file=sys.stderr)
 
 
+# ---------------------------------------------------------------- money ------
+# Turn the tariff profile into live dollars: what each grid kWh costs right now, what today has
+# actually cost, and what it WOULD have cost with no solar/battery (buy every kWh of load from grid).
+# Rates are c/kWh; internal accumulators are in cents, divided by 100 only for display.
+
+def _in_window(win, hour):
+    """True if hour (float 0–24) falls in a {start,end} window. Windows here don't wrap midnight."""
+    if not win or win.get("start") is None or win.get("end") is None:
+        return False
+    return win["start"] <= hour < win["end"]
+
+
+def import_rate_c(profile, hour, free_used_kwh=0.0):
+    """Grid IMPORT price (c/kWh) at `hour`: 0c inside the free window until free_kwh/day is used
+    (then excess_c), peak `c` in the peak window, else shoulder_c."""
+    free = profile.get("free") or {}
+    if _in_window(free, hour):
+        return 0.0 if free_used_kwh < free.get("free_kwh", 50) else \
+            float(free.get("excess_c", profile.get("shoulder_c", 0.0)) or 0.0)
+    peak = profile.get("peak") or {}
+    if _in_window(peak, hour):
+        return float(peak.get("c", profile.get("shoulder_c", 0.0)) or 0.0)
+    return float(profile.get("shoulder_c", 0.0) or 0.0)
+
+
+def export_rate_c(profile, hour):
+    """Grid EXPORT earnings (c/kWh) at `hour`: the Super-Export window rate if in it, else the peak
+    feed-in rate during peak, else the base feed-in rate (usually 0)."""
+    expw = profile.get("export") or {}
+    if _in_window(expw, hour):
+        return float(expw.get("c", profile.get("fit_peak_c", 0.0)) or 0.0)
+    if _in_window(profile.get("peak") or {}, hour):
+        return float(profile.get("fit_peak_c", 0.0) or 0.0)
+    return float(profile.get("fit_else_c", 0.0) or 0.0)
+
+
+def current_band(profile, hour):
+    """(name, rate_c) for the band at `hour`: 'free' / 'peak' / 'shoulder' with its nominal import rate."""
+    if _in_window(profile.get("free") or {}, hour):
+        return "free", 0.0
+    if _in_window(profile.get("peak") or {}, hour):
+        return "peak", float((profile.get("peak") or {}).get("c", 0.0) or 0.0)
+    return "shoulder", float(profile.get("shoulder_c", 0.0) or 0.0)
+
+
+# Daily money accumulators (persisted). Calendar-day reset to match the electricity bill + free cap.
+_MONEY = {"loaded": False, "path": None, "day": None, "last_ts": 0.0,
+          "spend_c": 0.0, "export_c": 0.0, "baseline_c": 0.0,
+          "free_kwh": 0.0, "base_free_kwh": 0.0,
+          "import_kwh": 0.0, "export_kwh": 0.0, "load_kwh": 0.0,
+          "band_c": {"free": 0.0, "shoulder": 0.0, "peak": 0.0}, "days": {}}
+_MONEY_KEEP = 45
+
+
+def _money_snapshot(profile):
+    m = _MONEY
+    supply = float(profile.get("supply_c", 0.0) or 0.0) / 100.0
+    spend = m["spend_c"] / 100.0
+    export = m["export_c"] / 100.0
+    baseline = m["baseline_c"] / 100.0
+    saved = baseline - (spend - export)               # supply charge cancels (paid either way)
+    cap = float((profile.get("free") or {}).get("free_kwh", 50) or 0)
+    wk = sum(d.get("saved", 0.0) for d in list(_MONEY["days"].values())[-6:]) + saved
+    return {
+        "spent": round(spend, 2), "export_credit": round(export, 2),
+        "baseline": round(baseline, 2), "saved": round(saved, 2),
+        "supply": round(supply, 2), "net_today": round(spend - export + supply, 2),
+        "by_band": {k: round(v / 100.0, 2) for k, v in m["band_c"].items()},
+        "free_used_kwh": round(m["free_kwh"], 1), "free_cap_kwh": cap,
+        "free_left_kwh": round(max(0.0, cap - m["free_kwh"]), 1),
+        "import_kwh": round(m["import_kwh"], 1), "export_kwh": round(m["export_kwh"], 2),
+        "week_saved": round(wk, 2),
+    }
+
+
+def track_money(cfg, profile, load_kw, grid_import_kw, grid_export_kw, now=None):
+    """Accumulate today's real electricity money from the live powers, at the current band rate.
+    Returns the money snapshot (see _money_snapshot). Calendar-day reset; skips gaps > 1h."""
+    now = now or time.time()
+    if not _MONEY["loaded"]:
+        _MONEY["path"] = _state_dir(cfg) / "money.json"
+        try:
+            d = json.loads(_MONEY["path"].read_text())
+            _MONEY.update({k: d[k] for k in d if k in _MONEY})
+        except Exception:
+            pass
+        _MONEY["loaded"] = True
+    today = datetime.now().strftime("%Y-%m-%d")
+    if _MONEY["day"] != today:
+        if _MONEY["day"] is not None:                 # roll yesterday into the history ring
+            _MONEY["days"][_MONEY["day"]] = _money_snapshot(profile)
+            _MONEY["days"] = dict(list(_MONEY["days"].items())[-_MONEY_KEEP:])
+        for k in ("spend_c", "export_c", "baseline_c", "free_kwh", "base_free_kwh",
+                  "import_kwh", "export_kwh", "load_kwh"):
+            _MONEY[k] = 0.0
+        _MONEY["band_c"] = {"free": 0.0, "shoulder": 0.0, "peak": 0.0}
+        _MONEY["day"] = today
+    dt_h = (now - _MONEY["last_ts"]) / 3600.0 if _MONEY["last_ts"] else 0.0
+    _MONEY["last_ts"] = now
+    if 0 < dt_h <= 1.0:
+        hour = datetime.now().hour + datetime.now().minute / 60.0
+        imp = max(0.0, (grid_import_kw or 0.0)) * dt_h
+        exp = max(0.0, (grid_export_kw or 0.0)) * dt_h
+        ld = max(0.0, (load_kw or 0.0)) * dt_h
+        in_free = _in_window(profile.get("free") or {}, hour)
+        rate = import_rate_c(profile, hour, _MONEY["free_kwh"])
+        band, _ = current_band(profile, hour)
+        _MONEY["spend_c"] += imp * rate
+        _MONEY["band_c"][band] = _MONEY["band_c"].get(band, 0.0) + imp * rate
+        _MONEY["export_c"] += exp * export_rate_c(profile, hour)
+        # baseline: buy ALL house load from grid (no solar/battery), same tariff incl. free window
+        brate = import_rate_c(profile, hour, _MONEY["base_free_kwh"])
+        _MONEY["baseline_c"] += ld * brate
+        if in_free:
+            _MONEY["free_kwh"] += imp
+            _MONEY["base_free_kwh"] += ld
+        _MONEY["import_kwh"] += imp
+        _MONEY["export_kwh"] += exp
+        _MONEY["load_kwh"] += ld
+    try:
+        _MONEY["path"].parent.mkdir(parents=True, exist_ok=True)
+        _MONEY["path"].write_text(json.dumps({k: _MONEY[k] for k in (
+            "day", "spend_c", "export_c", "baseline_c", "free_kwh", "base_free_kwh",
+            "import_kwh", "export_kwh", "load_kwh", "band_c", "days")}))
+    except Exception as e:
+        print(f"money persist failed: {e}", file=sys.stderr)
+    return _money_snapshot(profile)
+
+
+# ------------------------------------------------------------ weather nudge ---
+
+def weather_temps(ha, entity):
+    """(current_c, today_min_c, today_max_c, evening_c) from a HA weather entity's attributes/forecast.
+    Any piece that's unavailable comes back None. Evening ≈ the 18:00-ish forecast temp for today."""
+    cur = tmin = tmax = eve = None
+    try:
+        st = ha._state(entity)
+    except Exception:
+        return (None, None, None, None)
+    attrs = st.get("attributes") or {}
+    cur = attrs.get("temperature")
+    fc = attrs.get("forecast") or []
+    today = datetime.now().strftime("%Y-%m-%d")
+    for f in fc:
+        dt = str(f.get("datetime") or "")
+        if dt[:10] == today:
+            if f.get("templow") is not None:
+                tmin = f["templow"]
+            if f.get("temperature") is not None:
+                tmax = f["temperature"]
+        # hourly forecasts: grab the ~evening slot for today
+        if dt[:10] == today and dt[11:13] in ("17", "18", "19"):
+            eve = f.get("temperature")
+    def _f(x):
+        try:
+            return float(x)
+        except Exception:
+            return None
+    return (_f(cur), _f(tmin), _f(tmax), _f(eve))
+
+
+def temp_load_factor(strat, temp_c):
+    """Multiplier ≥1 on predicted coast/base load for HVAC in hot/cold weather, using the temp_* config.
+    Gentle and clamped. Returns (factor, note)."""
+    if temp_c is None:
+        return 1.0, None
+    mild = strat.get("temp_mild_c", 20.0)
+    hot, cold = strat.get("temp_hot_c", 28.0), strat.get("temp_cold_c", 12.0)
+    cap = strat.get("temp_nudge_max", 0.40)
+    if temp_c >= hot:
+        f = min(cap, (temp_c - mild) * strat.get("temp_per_c_hot", 0.015))
+        return 1.0 + f, f"hot {temp_c:.0f}°C → +{f*100:.0f}% HVAC load"
+    if temp_c <= cold:
+        f = min(cap, (mild - temp_c) * strat.get("temp_per_c_cold", 0.020))
+        return 1.0 + f, f"cold {temp_c:.0f}°C → +{f*100:.0f}% HVAC load"
+    return 1.0, f"mild {temp_c:.0f}°C"
+
+
+# ------------------------------------------------------------ charge advisor --
+
+def charge_advisor(snap, profile, strat):
+    """Human-facing 'is it a good time to put the car on?' — good / ok / avoid + a one-line reason and
+    the free-window headroom. Reflects the same economics that drive the auto plug control."""
+    dyn = snap.get("dynamic") or {}
+    money = snap.get("money") or {}
+    soc = snap.get("soc")
+    max_soc = dyn.get("max_soc", strat.get("max_soc", 90))
+    feedin = snap.get("feedin_power") or 0.0
+    min_exp = snap.get("ev_min_export_kw") or 1.0
+    now = datetime.now(); h = now.hour + now.minute / 60.0
+    free = profile.get("free") or {}
+    peak = profile.get("peak") or {}
+    fe = free.get("end")
+    battery_full = isinstance(soc, (int, float)) and soc >= max_soc - 2
+    free_left = money.get("free_left_kwh")
+    def _r(rating, reason, until=None):
+        return {"rating": rating, "reason": reason, "until_h": until,
+                "free_left_kwh": free_left}
+    if _in_window(peak, h):
+        return _r("avoid", f"peak {peak.get('c', '')}c until {peak.get('end')}:00 — run the house off battery",
+                  peak.get("end"))
+    if _in_window(free, h):
+        if isinstance(free_left, (int, float)) and free_left <= 1:
+            return _r("avoid", f"free {free.get('free_kwh',50):g}kWh cap used up — car would pay {free.get('excess_c','')}c", fe)
+        if battery_full:
+            return _r("good", f"FREE window until {fe}:00 · {free_left:g}kWh free left — plug in now (0c)", fe)
+        return _r("ok", f"free window, battery still filling first — car charges once it's full", fe)
+    if feedin >= min_exp:
+        return _r("good", f"spare solar {feedin:.1f}kW exporting now — divert it to the car")
+    solar_rem = (snap.get("solar_forecast") or {}).get("remaining_today") or 0.0
+    daytime = 8 <= h < 16
+    if daytime and battery_full and solar_rem >= 3:
+        return _r("ok", f"battery full · ~{solar_rem:.0f}kWh solar still to come — likely surplus soon")
+    # outside free/peak, no surplus: cost falls on the shoulder rate / battery reserve
+    sh = profile.get("shoulder_c", "")
+    fs = free.get("start")
+    hrs_to_free = ((fs - h) % 24) if fs is not None else None
+    tnote = (snap.get("temp_nudge") or {}).get("note")
+    warm = f" ({tnote})" if tnote and ("hot" in tnote or "cold" in tnote) else ""
+    if hrs_to_free is not None:
+        return _r("avoid", f"shoulder {sh}c, no surplus — wait ~{hrs_to_free:.0f}h for the free window{warm}", fs)
+    return _r("avoid", f"shoulder {sh}c, no surplus — battery is for the house{warm}")
+
+
 def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
     """GloBird time-of-use strategy (import-cost driven, no price forecasting). Reads the ACTIVE tariff
     `profile` (the resolved tariffs[tariff_profile] dict) — free/peak/export windows + per-band cents:
@@ -1602,7 +1845,11 @@ def gather_and_decide(cfg: dict) -> dict:
     # this scheduler read came back flaky — so hysteresis doesn't drop a charge mid-window (see 11:22 bug).
     charging = sched_active or (time.time() < _CHARGE["until"])
     demand_window = (ha.get_state(cfg["ha"].get("demand_window_entity")) == "on")
-    weather = ha.get_state(cfg["ha"].get("weather_entity", "weather.forecast_home"))
+    weather_entity = cfg["ha"].get("weather_entity", "weather.forecast_home")
+    weather = ha.get_state(weather_entity)
+    # Temperature → HVAC load nudge: a hot or cold evening lifts predicted base (coast) consumption.
+    # (raw temps read here; the factor is computed below once `strat` is in scope.)
+    temp_cur, temp_min, temp_max, temp_eve = weather_temps(ha, weather_entity)
 
     # Forecast.Solar: sum the per-plane sensors into a single forward solar view (kWh).
     def _sum_ents(ids):
@@ -1676,7 +1923,7 @@ def gather_and_decide(cfg: dict) -> dict:
 
     load_ov(cfg)
     strat = cfg["strategy"]
-    cap_kwh = float(strat.get("battery_capacity_kwh", 30))
+    cap_kwh = float(strat.get("battery_capacity_kwh", 41.44))
     stored_kwh = round(cap_kwh * soc / 100.0, 1)
     # Use the measured rolling base load if we have enough history; else the static estimate.
     typical_load = consumption["avg_daily_total_kwh"] if consumption["days_sampled"] >= 2 \
@@ -1701,7 +1948,10 @@ def gather_and_decide(cfg: dict) -> dict:
     free_start = (profile.get("free") or {}).get("start", 11)
     hrs_to_free = (free_start - hh) % 24 or 24.0          # hours until next free window
     pred_free = predict_base_load(consumption.get("hour_profile"), hrs_to_free) if consumption.get("profile_days", 0) >= 2 else None
-    need_kwh = max(0.0, (pred_free if pred_free is not None else float(typical_load) * (hrs_to_free / 24.0)) - (solar_remaining or 0.0))
+    temp_ref = temp_eve if temp_eve is not None else temp_cur
+    temp_factor, temp_note = temp_load_factor(strat, temp_ref)
+    coast_load = (pred_free if pred_free is not None else float(typical_load) * (hrs_to_free / 24.0)) * temp_factor
+    need_kwh = max(0.0, coast_load - (solar_remaining or 0.0))
     survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
     rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc)
 
@@ -1716,7 +1966,7 @@ def gather_and_decide(cfg: dict) -> dict:
     sell_enabled = bool(strat.get("sell_enabled", False)) and bool(profile.get("export"))
 
     now_epoch = time.time()
-    return {
+    snap = {
         "demand_window": demand_window,
         "weather": weather,
         "solar_forecast": {"today_total": solar_today_total, "remaining_today": solar_remaining,
@@ -1780,6 +2030,14 @@ def gather_and_decide(cfg: dict) -> dict:
         "recommendation": rec,
         "applied": None,
     }
+    # Live money: today's real electricity $ (spend by band, export credit, saved vs no-solar-no-battery)
+    # and the free-window headroom the charge advisor + auto plug rely on.
+    snap["money"] = track_money(cfg, profile, load, grid_power, feedin_power)
+    snap["temp_nudge"] = {"factor": round(temp_factor, 3), "note": temp_note,
+                          "cur_c": temp_cur, "min_c": temp_min, "max_c": temp_max, "eve_c": temp_eve}
+    snap["ev_min_export_kw"] = float((cfg.get("ev_divert") or {}).get("min_export_kw", 1.0) or 1.0)
+    snap["charge_advisor"] = charge_advisor(snap, profile, strat)
+    return snap
 
 
 def manual_tick(cfg, snap):
@@ -2199,6 +2457,23 @@ def chart_svg(snap: dict) -> str:
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Ht}" '
            f'viewBox="0 0 {W} {Ht}" font-family="system-ui, sans-serif">',
            f'<rect x="0" y="0" width="{W}" height="{Ht}" fill="#ffffff"/>']
+    # Tariff-band shading behind the curves: peak (expensive, red) + free (green) by clock hour, so it's
+    # obvious WHY the plan charges in the free window and coasts through the evening peak.
+    tw = (snap.get("dynamic") or {}).get("tariff") or {}
+    peakw, freew = tw.get("peak") or {}, tw.get("free") or {}
+    shaded_peak = shaded_free = False
+    for o in range(-24, 24):
+        hr = (H + o) % 24
+        if _in_window(peakw, hr):
+            out.append(f'<rect x="{X(o):.1f}" y="{pT}" width="{X(o+1)-X(o):.1f}" height="{ih}" fill="#b23c3c" fill-opacity="0.07"/>')
+            shaded_peak = True
+        elif _in_window(freew, hr):
+            out.append(f'<rect x="{X(o):.1f}" y="{pT}" width="{X(o+1)-X(o):.1f}" height="{ih}" fill="#2e9e5b" fill-opacity="0.09"/>')
+            shaded_free = True
+    if shaded_free:
+        out.append(f'<text x="{pL+3}" y="{pT+12}" font-size="11" fill="#2e9e5b">free</text>')
+    if shaded_peak:
+        out.append(f'<text x="{W-pR-3}" y="{pT+12}" font-size="11" fill="#b23c3c" text-anchor="end">peak</text>')
     for f in (0, .25, .5, .75, 1):          # y gridlines + labels
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
@@ -2465,6 +2740,31 @@ def render(snap: dict, cfg: dict) -> str:
     def _n(v):
         return v if v is not None else "–"
 
+    # Charge advisor — is now a good time to put the car on? Colour-coded good/ok/avoid.
+    adv = snap.get("charge_advisor") or {}
+    _ac = {"good": ("#2e9e5b", "#eaf7ef", "🔌 Good time to charge"),
+           "ok":   ("#c8860a", "#fdf6e8", "🔌 OK to charge"),
+           "avoid":("#b23c3c", "#fbeeee", "🚫 Hold off charging")}
+    ac_col, ac_bg, ac_hdr = _ac.get(adv.get("rating"), ("#888", "#f3f3f3", "Car charging"))
+    advisor_card = (
+        f'<div class=card style="border-color:{ac_col};background:{ac_bg}">'
+        f'<small style="color:{ac_col};font-weight:600">{ac_hdr}</small>'
+        f'<div style="font-size:1rem;font-weight:600;margin:.2rem 0;color:#333">{adv.get("reason") or "—"}</div>'
+        f'<small style="color:#666">🔌 {_n(snap.get("ev_kw"))} kW now · meter: {snap.get("ev_power_source") or "—"}</small></div>'
+    ) if adv else ""
+
+    # Money — today's real electricity cost + what the solar/battery saved vs buying everything from grid.
+    mo = snap.get("money") or {}
+    band = mo.get("by_band") or {}
+    credit = f' · credit ${mo.get("export_credit",0):.2f}' if mo.get("export_credit") else ""
+    money_card = (
+        f'<div class=card style="border-color:#2e9e5b"><small>Money today</small>'
+        f'<div class=big style="color:#2e9e5b">${mo.get("saved",0):.2f} <small style="color:#888">saved</small></div>'
+        f'<small>spent ${mo.get("spent",0):.2f}{credit} · vs ${mo.get("baseline",0):.2f} all-grid</small><br>'
+        f'<small style="opacity:.7">peak ${band.get("peak",0):.2f} · shoulder ${band.get("shoulder",0):.2f} · '
+        f'free {mo.get("free_used_kwh",0):g}/{mo.get("free_cap_kwh",50):g}kWh · wk ${mo.get("week_saved",0):.2f}</small></div>'
+    ) if mo else ""
+
     fe = snap.get("fox_error")
     if fe and fe.get("rate_limited"):
         banner = (f'<div class="card warn">⛔ FoxESS API rate-limited — telemetry/control may be stale '
@@ -2475,16 +2775,20 @@ def render(snap: dict, cfg: dict) -> str:
     else:
         banner = ''
 
+    tn = snap.get("temp_nudge") or {}
+    temp_txt = f' · {tn["cur_c"]:.0f}°C' if isinstance(tn.get("cur_c"), (int, float)) else ""
     cards = "".join([
         f'<div class="card{" warn" if wm_stale else ""}"><small>Work mode</small><div class=big>{_n(wm)}</div>'
         f'<small>{("read "+str(wma)+"s ago"+(" ⚠ stale" if wm_stale else "")) if wma is not None else "no read yet"}</small></div>',
         f'<div class=card><small>Battery</small><div class=big>{round(soc) if isinstance(soc,(int,float)) else "–"}%</div>'
         f'<small>{_n(bat.get("stored_kwh"))}/{_n(bat.get("capacity_kwh"))} kWh stored</small></div>',
-        f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
-        f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div>'
-        f'<small>{ev_status}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>',
+        money_card,
+        advisor_card if advisor_card else (
+            f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
+            f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div>'
+            f'<small>{ev_status}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>'),
         f'<div class=card><small>Weather &amp; solar</small><div class=big>{_n(sf.get("today_total"))} <small>kWh today</small></div>'
-        f'<small>{snap.get("weather") or "—"} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
+        f'<small>{snap.get("weather") or "—"}{temp_txt} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
         f'{cal_txt}</small></div>',
     ])
     tb = "".join(ch for ch in str(snap.get("ts") or "") if ch.isalnum()) or "0"
@@ -2619,10 +2923,12 @@ def make_handler(cfg):
                     s, svg, err = {}, "", f"{type(e).__name__}: {e}"
                 rnd = lambda xs: [round(v, 3) for v in xs]
                 dbg = {
-                    "version": "1.61.0",
+                    "version": "1.62.0",
                     "now": now.strftime("%Y-%m-%d %H:%M"), "H": s.get("H"),
                     "car": snap.get("car"),
                     "ev_kw": snap.get("ev_kw"), "ev_power_source": snap.get("ev_power_source"),
+                    "money": snap.get("money"), "charge_advisor": snap.get("charge_advisor"),
+                    "temp_nudge": snap.get("temp_nudge"),
                     "free_window": ((snap.get("dynamic") or {}).get("tariff") or {}).get("free"),
                     "have_snapshot": bool(snap), "snapshot_ts": snap.get("ts"),
                     "n_bells": len(bells), "hour_profile_len": len(prof),
