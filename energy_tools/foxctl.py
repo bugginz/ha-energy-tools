@@ -133,6 +133,12 @@ DEFAULT_CONFIG = {
                   "free_window_charge": True,   # in the free tariff window, top the car once the battery is full
                   "min_export_kw": 1.0, "min_dwell_min": 10,
                   "battery_priority": True, "min_soc": 0,
+                  # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
+                  # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
+                  # is positive, so the car auto-stops before a cold night eats the battery. Free-window
+                  # 0c soak is exempt. comfort_reserve_kwh = battery kWh never planned away; start_margin
+                  # = surplus needed to (re)start the car (deadband vs the 0kWh stop threshold).
+                  "outlook_gate": True, "comfort_reserve_kwh": 2.0, "start_margin_kwh": 1.0,
                   # Interim daily car cap (until a real car-SoC sensor exists): auto-divert charges up to
                   # this many kWh/day then stops; resets ~4am or when you press Force car charge. 0 = off.
                   "session_cap_kwh": 30},
@@ -1216,6 +1222,29 @@ def ha_call_service(cfg, domain, service, entity_id):
     urllib.request.urlopen(req, timeout=15).read()
 
 
+def _load_to_sunrise(hour_profile, hrs_to_sunrise, typical_daily_kwh, temp_factor):
+    """Expected house base load from now until tomorrow's sunrise, scaled by the HVAC temp factor
+    (the cold-night heating uplift — same model survival_soc uses). Prefers the learned hour-of-day
+    profile; falls back to a flat pro-rate of the typical daily load when the profile isn't ready."""
+    base = predict_base_load(hour_profile, hrs_to_sunrise)
+    if base is None:
+        base = float(typical_daily_kwh or 0.0) * (float(hrs_to_sunrise) / 24.0)
+    return round(base * float(temp_factor or 1.0), 2)
+
+
+def ev_car_budget(soc, cap_kwh, inverter_min_soc, solar_remaining_kwh, load_to_sunrise_kwh, comfort_reserve_kwh):
+    """Forward surplus (kWh) of usable battery + remaining solar over tonight's expected load, after a
+    comfort reserve. Positive => provably spare capacity the car may take; negative => charging the car
+    would eat into what the house needs to reach tomorrow's sun. Pure. Returns (budget_kwh, parts)."""
+    usable = max(0.0, (float(soc) - float(inverter_min_soc)) / 100.0) * float(cap_kwh)
+    solar = float(solar_remaining_kwh or 0.0)
+    load = float(load_to_sunrise_kwh or 0.0)
+    reserve = float(comfort_reserve_kwh or 0.0)
+    budget = usable + solar - load - reserve
+    return round(budget, 2), {"battery_kwh": round(usable, 2), "solar_remaining_kwh": round(solar, 2),
+                              "load_to_sunrise_kwh": round(load, 2), "reserve_kwh": round(reserve, 2)}
+
+
 def ev_divert_decision(snap, ev):
     """Pure policy: should the car charger be ON this cycle? Two ways to say yes:
       1. FREE window — once the house battery is full, soak remaining FREE grid energy into the car
@@ -1289,6 +1318,19 @@ def ev_divert_tick(cfg, snap):
         want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
     else:
         want, why = ev_divert_decision(snap, ev)
+        # Outlook gate: only let SPARE-SOLAR diversion run while the forward budget proves the
+        # battery+solar is surplus to tonight's needs (heating incl.). Free-window 0c soak is exempt.
+        # Deadband: stop at budget < 0; require budget > start_margin to (re)start a stopped car.
+        cb = snap.get("car_budget") or {}
+        budget = cb.get("kwh")
+        if want and "spare solar" in why and cb.get("outlook_gate", True) and isinstance(budget, (int, float)):
+            margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
+            if budget < 0:
+                want, why = False, f"outlook: battery+solar short {abs(budget):.1f}kWh for tonight (heating) — car held to protect reserve"
+            elif budget < margin and not _EV.get("on"):
+                want, why = False, f"outlook: only +{budget:.1f}kWh surplus (need >{margin:.0f}kWh to start car)"
+            elif want:
+                why += f" · outlook +{budget:.1f}kWh"
         if cap > 0 and ev_cum is not None:
             if session >= cap:
                 _EV["capped"] = True
@@ -2186,6 +2228,20 @@ def gather_and_decide(cfg: dict) -> dict:
     rest_today_load = round(predict_base_load(consumption.get("hour_profile"), hrs_to_midnight), 1) if have_profile else None
     next24_load = round(predict_base_load(consumption.get("hour_profile"), 24), 1) if have_profile else None
 
+    # Outlook-driven car budget: usable battery + remaining solar − tonight's expected load (heating
+    # incl.) − comfort reserve. ev_divert_tick reads snap["car_budget"] to auto stop/start the car.
+    ev_cfg = cfg.get("ev_divert") or {}
+    inv_floor = int(strat.get("inverter_min_soc", 10))
+    hrs_to_sunrise = 12.0
+    if sun_rise:
+        _rt = _parse_t(sun_rise)
+        if _rt:
+            hrs_to_sunrise = min(18.0, max(0.5, (_rt - datetime.now(timezone.utc)).total_seconds() / 3600.0))
+    night_factor, _night_note = temp_load_factor(strat, fc_periods.get("tonight_low_c"))
+    load_to_sunrise = _load_to_sunrise(consumption.get("hour_profile"), hrs_to_sunrise, typical_load, night_factor)
+    car_budget_kwh, car_budget_parts = ev_car_budget(soc, cap_kwh, inv_floor, solar_remaining,
+                                                     load_to_sunrise, ev_cfg.get("comfort_reserve_kwh", 2.0))
+
     sell_eff = _OV["sell"] if _OV.get("sell") is not None else strat.get("sell_price", 0.50)
     # export to grid off by default — needs the master toggle AND a profile export window
     sell_enabled = bool(strat.get("sell_enabled", False)) and bool(profile.get("export"))
@@ -2262,6 +2318,10 @@ def gather_and_decide(cfg: dict) -> dict:
                           "cur_c": temp_cur, "min_c": fc_periods.get("today_low_c"),
                           "max_c": fc_periods.get("today_max_c"), "eve_c": temp_eve}
     snap["ev_min_export_kw"] = float((cfg.get("ev_divert") or {}).get("min_export_kw", 1.0) or 1.0)
+    snap["car_budget"] = {"kwh": car_budget_kwh, "parts": car_budget_parts,
+                          "hrs_to_sunrise": round(hrs_to_sunrise, 1), "night_factor": round(night_factor, 3),
+                          "outlook_gate": bool(ev_cfg.get("outlook_gate", True)),
+                          "start_margin_kwh": float(ev_cfg.get("start_margin_kwh", 1.0) or 0.0)}
     snap["charge_advisor"] = charge_advisor(snap, profile, strat)
     # Live AC state + self-calibrating kW-per-Hz learning, and the forward-look forecast table.
     snap["ac"] = ac
