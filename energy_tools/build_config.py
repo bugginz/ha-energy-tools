@@ -37,6 +37,11 @@ fc["ev_divert"] = {
     "battery_priority": bool(opt.get("ev_divert_battery_priority", True)),
     "min_dwell_min": int(opt.get("ev_divert_min_dwell_min", 10)),
     "session_cap_kwh": float(opt.get("ev_session_cap_kwh", 30)),
+    # Outlook gate: hold spare-solar diversion to the car while the forward budget (battery + remaining
+    # solar − tonight's expected load incl. heating − reserve) can't prove a surplus over the night.
+    "outlook_gate": bool(opt.get("ev_outlook_gate", True)),
+    "comfort_reserve_kwh": float(opt.get("ev_comfort_reserve_kwh", 2.0)),
+    "start_margin_kwh": float(opt.get("ev_start_margin_kwh", 1.0)),
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
@@ -49,9 +54,11 @@ for k in ("force_charge_power_kw", "solar_defer_kw",
           "ev_charge_kw", "ev_expected_kwh"):
     if k in opt:
         S[k] = float(opt[k])
-for k in ("reserve_soc", "max_soc", "inverter_min_soc"):
+for k in ("reserve_soc", "max_soc", "charge_target_soc", "inverter_min_soc"):
     if k in opt:
         S[k] = int(opt[k])
+if "shoulder_topup" in opt:
+    S["shoulder_topup"] = bool(opt["shoulder_topup"])
 if "poll_seconds" in opt:
     fc["poll_seconds"] = int(opt["poll_seconds"])
 if "avoid_demand_window" in opt:

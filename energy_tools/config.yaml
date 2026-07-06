@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.63.0"
+version: "1.65.0"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -25,11 +25,13 @@ options:
   poll_seconds: 300
   avoid_demand_window: false
   max_soc: 90
+  charge_target_soc: 100
+  shoulder_topup: true
   inverter_min_soc: 10
   topup_to_target: true
   battery_capacity_kwh: 41.44
   typical_daily_load_kwh: 30
-  ev_power_entity: "sensor.6294ha_series_2_current"
+  ev_power_entity: "sensor.6294ha_series_2_power"
   ev_voltage: 240
   ev_charger_switch: "switch.6294ha_series_2_socket_2"
   ev_divert_feedin_max: 0.10
@@ -39,6 +41,9 @@ options:
   ev_divert_battery_priority: true
   ev_divert_min_dwell_min: 10
   ev_session_cap_kwh: 30
+  ev_outlook_gate: true
+  ev_comfort_reserve_kwh: 2.0
+  ev_start_margin_kwh: 1.0
   ev_charge_kw: 7.0
   ev_expected_kwh: 7.5
   weather_entity: "weather.forecast_home"
@@ -73,6 +78,8 @@ schema:
   poll_seconds: int(60,3600)
   avoid_demand_window: bool
   max_soc: int(0,100)
+  charge_target_soc: int(0,100)
+  shoulder_topup: bool
   inverter_min_soc: int(0,100)
   topup_to_target: bool
   battery_capacity_kwh: float
@@ -87,6 +94,9 @@ schema:
   ev_divert_battery_priority: bool
   ev_divert_min_dwell_min: int
   ev_session_cap_kwh: float
+  ev_outlook_gate: bool
+  ev_comfort_reserve_kwh: float
+  ev_start_margin_kwh: float
   ev_charge_kw: float
   ev_expected_kwh: float
   weather_entity: str?

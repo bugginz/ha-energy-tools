@@ -1986,7 +1986,7 @@ def charge_advisor(snap, profile, strat):
     return _r("avoid", f"shoulder {sh}c, no surplus — battery is for the house{warm}")
 
 
-def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
+def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remaining=None):
     """GloBird time-of-use strategy (import-cost driven, no price forecasting). Reads the ACTIVE tariff
     `profile` (the resolved tariffs[tariff_profile] dict) — free/peak/export windows + per-band cents:
       • FREE window   → grid-charge battery to full (first free_kwh/day are 0c).
@@ -2005,6 +2005,12 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
     sh_txt = f"{shoulder_c:g}c" if isinstance(shoulder_c, (int, float)) else "shoulder"
     max_soc = strat.get("max_soc", 90)
     reserve = strat.get("reserve_soc", 20)
+    # Charge target (seasonal): defaults to max_soc, but can be lifted (e.g. 100% in winter when cold-night
+    # heating saps the battery). Applies to BOTH the free-window fill and the pre-peak shoulder top-up, so
+    # the free 0c window fills to target first — never pay shoulder for capacity the free window could give.
+    charge_target = min(100, int(strat.get("charge_target_soc") or max_soc))
+    cap_kwh = float(strat.get("battery_capacity_kwh", 41.44))
+    topup_on = bool(strat.get("shoulder_topup", True))
     # export to grid (feed-in) — off by default; needs both the master toggle AND a profile export window
     sell_on = bool(strat.get("sell_enabled", False)) and bool(expw)
     nowl = datetime.now()
@@ -2012,19 +2018,34 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
     in_free = fs <= h < fe
     in_eve = es <= h < ee
     in_peak = ps <= h < pe
+    in_prepeak = fe <= h < ps               # shoulder after free ends, before peak starts (cheapest pre-peak import)
     action, target_mode, fc, fd = "SET_MODE", (work_mode or "SelfUse"), False, False
+    fc_win = None
     reasons = []
-    # Force-charge from grid ONLY in the FREE window — never before 11:00 and never in the peak.
-    if in_free and soc < max_soc:
+    # Force-charge from grid in the FREE window (0c), or — if free + solar won't fill by peak — in the
+    # cheaper pre-peak shoulder. Never before 11:00 and never in the peak itself.
+    if in_free and soc < charge_target:
         action, fc = "FORCE_CHARGE", True
+        fc_win = f"{fs:02d}:00–{fe:02d}:00 free"
         reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 (0c, first {free.get('free_kwh', 50):g}kWh) → "
-                       f"grid-charge to {max_soc}% — full by {fe:02d}:00.")
+                       f"grid-charge to {charge_target}% — full by {fe:02d}:00.")
     elif in_free:
-        reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {max_soc}%). SelfUse.")
+        reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {charge_target}%). SelfUse.")
     elif in_eve and sell_on and soc > survival_soc + 1:
         action, fd = "SELL", True
         reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
                        f"(keeps enough to coast to 11:00).")
+    elif (topup_on and in_prepeak and soc < charge_target
+          and isinstance(shoulder_c, (int, float)) and isinstance(peak_c, (int, float)) and shoulder_c < peak_c
+          and (solar_remaining or 0.0) < max(0.0, (charge_target - soc) / 100.0 * cap_kwh)):
+        # Free window ended below target and remaining solar won't finish the fill → top up now, in the
+        # pre-peak shoulder (cheapest import left before peak), so we ride peak off battery not grid.
+        action, fc = "FORCE_CHARGE", True
+        fc_win = f"{fe:02d}:00–{ps:02d}:00 shoulder top-up"
+        gap = max(0.0, (charge_target - soc) / 100.0 * cap_kwh)
+        reasons.append(f"ZeroHero pre-peak shoulder {fe:02d}:00–{ps:02d}:00 ({sh_txt}) — battery {soc:.0f}% < {charge_target}% "
+                       f"and solar won't fill ({(solar_remaining or 0.0):.1f}kWh left, need {gap:.1f}kWh) → top up now "
+                       f"before peak ({pc_txt}).")
     elif in_peak:
         reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 ({pc_txt}) → cover load from battery, ZERO grid "
                        f"import (no force-charge, no feed-in). SelfUse.")
@@ -2037,7 +2058,7 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc):
            "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
            "reason": " ".join(reasons)}
     if fc:
-        rec["force_charge_plan"] = {"window": f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": max_soc,
+        rec["force_charge_plan"] = {"window": fc_win or f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": charge_target,
                                     "min_soc_on_grid": strat.get("min_soc_on_grid", 10),
                                     "power_kw": strat.get("force_charge_power_kw", 10.5)}
     return rec
@@ -2220,7 +2241,7 @@ def gather_and_decide(cfg: dict) -> dict:
     coast_load = (pred_free if pred_free is not None else float(typical_load) * (hrs_to_free / 24.0)) * temp_factor
     need_kwh = max(0.0, coast_load - (solar_remaining or 0.0))
     survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
-    rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc)
+    rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc, solar_remaining)
 
     # Load forecast for the dashboard (learned hour-of-day profile, phased from the current hour).
     have_profile = consumption.get("profile_days", 0) >= 2 and bool(consumption.get("hour_profile"))
@@ -2259,7 +2280,7 @@ def gather_and_decide(cfg: dict) -> dict:
                     "tariff_label": profile.get("label"),
                     "tariff": {"free": profile.get("free"), "peak": profile.get("peak"),
                                "shoulder_c": profile.get("shoulder_c"), "export": profile.get("export")},
-                    "target_soc": strat.get("max_soc", 90),
+                    "target_soc": min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 90))),
                     "max_soc": strat.get("max_soc", 90),
                     "survival_soc": survival_soc,
                     "topup": bool(strat.get("topup_to_target", False)),

@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.65.0 — winter charge-to-100% + pre-peak shoulder top-up
+
+Fills the battery to full while it's still cheap, so cold nights don't drain it into expensive grid.
+
+- **Seasonal charge target.** New `charge_target_soc` (default **100**) is the fill target for **both** the
+  free window and the new shoulder top-up — so the free 0c window fills all the way first, and we never
+  pay shoulder rates for capacity the free window could have given. Lifts the daily fill above the 90%
+  `max_soc` health cap for winter; drop it back to 90 when the cold passes. (`max_soc` still governs the
+  other logic.)
+- **Pre-peak shoulder top-up.** If the free window ends (usually 14:00) with the battery **below target**
+  **and** the remaining solar won't finish the fill, foxctl force-charges in the **shoulder window between
+  free-end and peak-start (14:00–16:00)** — the cheapest import left before peak — so the evening peak
+  (16:00–23:00) is ridden off battery, not bought at 59.4c. Fires only when shoulder is genuinely cheaper
+  than the coming peak, and **never charges into peak** (the decision re-evaluates every cycle and stops at
+  16:00). New `shoulder_topup` toggle (default on). `decide_zerohero` now takes `solar_remaining`.
+
+## 1.64.0 — outlook-driven EV auto stop/start (forward surplus budget)
+
+The car now stops itself before a cold night eats the battery, instead of only reacting to live solar.
+
+- **Forward surplus budget.** Each cycle foxctl computes `car_budget = usable battery + remaining solar −
+  tonight's expected load (heating incl.) − comfort reserve`. Spare-solar diversion to the car is held
+  whenever that budget can't prove a surplus over the night, so the car stops **anticipatorily** as sunset
+  nears / cloud rolls in / the forecast turns cold — not after the battery's already at risk. Free-window
+  0c grid soak (battery full) stays exempt. New `ev_car_budget` / `_load_to_sunrise` reuse
+  `predict_base_load` + the temperature factor, consistent with `survival_soc`.
+- **Deadband + visibility.** Stop at budget < 0, require budget > `start_margin_kwh` to (re)start, on top of
+  the existing dwell/cap/manual-override. `snap["car_budget"]` carries the number + parts breakdown, and the
+  stop/start reason spells out the outlook. New options: `ev_outlook_gate`, `ev_comfort_reserve_kwh`,
+  `ev_start_margin_kwh`.
+- **Real-watt EV metering.** `ev_power_entity` default moves to `sensor.6294ha_series_2_power` (measured W)
+  from the current×voltage estimate.
+
 ## 1.63.0 — forecast "what's coming & why" table + Faikin AC awareness
 
 Turns temperature + AC into a forward-looking plan you can read at a glance.
