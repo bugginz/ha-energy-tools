@@ -1206,7 +1206,7 @@ def _solar_bells(rise_iso, set_iso, kwh_tomorrow, kwh_remaining):
 
 
 
-_NOTIFY = {"last_stale": False, "last_selling": False}
+_NOTIFY = {"stale_count": 0, "stale_notified": False, "last_selling": False}
 
 _EV = {"on": None, "last_change": 0.0, "override_until": 0.0, "lowdraw_since": 0.0,
        "session_day": None, "session_start_kwh": None, "capped": False}   # divert + manual force + daily cap
@@ -1391,10 +1391,19 @@ def maybe_notify(cfg, snap):
                     f"{rec.get('sell_floor')}% (overnight buffer kept)."))
     _NOTIFY["last_selling"] = selling
     stale = "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or "")
-    if nc.get("on_stale", True) and stale and not _NOTIFY["last_stale"]:
+    # A single failed poll self-heals (control already holds for that cycle), so only
+    # page after `stale_cycles` consecutive stale cycles, once per outage.
+    if stale:
+        _NOTIFY["stale_count"] += 1
+    else:
+        _NOTIFY["stale_count"] = 0
+        _NOTIFY["stale_notified"] = False
+    if (nc.get("on_stale", True) and not _NOTIFY["stale_notified"]
+            and _NOTIFY["stale_count"] >= int(nc.get("stale_cycles", 3))):
         out.append(("⚠️ foxctl telemetry stale",
-                    "HA sensors frozen and FoxESS fallback failed — control on safety hold until data recovers."))
-    _NOTIFY["last_stale"] = stale
+                    f"FoxESS telemetry unavailable for {_NOTIFY['stale_count']} consecutive cycles — "
+                    "control on safety hold until data recovers."))
+        _NOTIFY["stale_notified"] = True
     for t, m in out:
         ha_notify(cfg, t, m)
 

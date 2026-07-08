@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.66.0"
+version: "1.66.1"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -64,6 +64,7 @@ options:
   notify_service: "notify.mobile_app_phoney"
   notify_on_stale: true
   notify_on_sell: true
+  notify_stale_cycles: 3
   notify_min_gap_min: 180
 schema:
   foxess_token: str
@@ -117,4 +118,5 @@ schema:
   notify_service: str
   notify_on_stale: bool
   notify_on_sell: bool
+  notify_stale_cycles: int(1,12)
   notify_min_gap_min: int(15,1440)

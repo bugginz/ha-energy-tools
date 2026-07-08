@@ -88,6 +88,7 @@ N = fc.setdefault("notify", {})
 N["enabled"] = bool(opt.get("notify_enabled", False))
 N["service"] = opt.get("notify_service", "notify.mobile_app_phoney")
 N["on_stale"] = bool(opt.get("notify_on_stale", True))
+N["stale_cycles"] = int(opt.get("notify_stale_cycles", 3))
 N["on_sell"] = bool(opt.get("notify_on_sell", True))
 N["min_gap_min"] = int(opt.get("notify_min_gap_min", 180))
 

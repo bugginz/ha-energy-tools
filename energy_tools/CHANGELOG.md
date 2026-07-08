@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.66.1 — debounce the stale-telemetry notification
+
+A single failed poll cycle self-heals (control already goes on safety hold for
+that cycle), so it no longer pages the phone.
+
+- **`notify_stale_cycles`** (default **3**): the stale notification only fires
+  after that many *consecutive* stale cycles, once per outage; recovery resets it.
+- Message no longer claims "HA sensors frozen" (those legacy poller entities are
+  gone by design since foxctl became the single FoxESS poller) — it now reports
+  how many cycles telemetry has been unavailable.
+- New `tests/test_notify.py` covering the debounce behaviour.
+
 ## 1.66.0 — run standalone under docker compose (post-HAOS migration)
 
 Same image now runs both as a HAOS add-on and as a plain docker compose service
