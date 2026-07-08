@@ -141,7 +141,14 @@ DEFAULT_CONFIG = {
                   "outlook_gate": True, "comfort_reserve_kwh": 2.0, "start_margin_kwh": 1.0,
                   # Interim daily car cap (until a real car-SoC sensor exists): auto-divert charges up to
                   # this many kWh/day then stops; resets ~4am or when you press Force car charge. 0 = off.
-                  "session_cap_kwh": 30},
+                  "session_cap_kwh": 30,
+                  # Pre-dawn dump: from predawn_start_hour until the free-window start, put battery
+                  # surplus above predawn_floor_soc into the car — the window refills it for ~free.
+                  # floor_guard also cuts MANUAL switch-on sessions that would breach the floor
+                  # (UI force-charge override is the one exemption). predawn_import_stop_kw aborts a
+                  # dump that starts pulling from the meter; guard_grace_min spaces repeat guard cuts.
+                  "predawn_dump": True, "predawn_floor_soc": 30, "predawn_start_hour": 4,
+                  "floor_guard": True, "predawn_import_stop_kw": 0.5, "guard_grace_min": 10},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
