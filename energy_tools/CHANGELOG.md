@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.67.0 — pre-dawn battery→car dump + universal SoC floor-guard
+
+The free window refills the battery for ~free, so overnight surplus above a 30% planning
+floor now goes into the car pre-dawn instead of sitting unused. And a charge session
+started BY HAND in HA — previously invisible to foxctl's edge-triggered switch logic —
+gets cut when the projection says the battery won't hold the floor to window-open.
+
+- **Pre-dawn dump** (`ev_predawn_dump`, default on): from `ev_predawn_start_hour` (4) to
+  the free-window start, car ON while `(soc − 30%)×capacity − forecast load to window` is
+  positive (start needs > `ev_start_margin_kwh`, stop at 0 — same deadband as the outlook
+  gate). Battery-only: sustained grid import > `ev_predawn_import_stop_kw` (0.5 kW, 2
+  polls) aborts the session.
+- **Floor-guard** (`ev_floor_guard`, default on): any hour, any session origin — actual
+  draw + guard budget (incl. remaining solar) ≤ 0 outside the free window → switch OFF,
+  reason in the events log. UI "Force car charge" is the one exemption;
+  `ev_guard_grace_min` (10) spaces repeat cuts after a deliberate re-flip.
+- `snap["predawn_budget"]` in `/api/state`, pre-dawn line on the car card, `version` in
+  `/api/state` + the page header. New `tests/test_predawn.py` (stdlib unittest).
+
 ## 1.66.1 — debounce the stale-telemetry notification
 
 A single failed poll cycle self-heals (control already goes on safety hold for

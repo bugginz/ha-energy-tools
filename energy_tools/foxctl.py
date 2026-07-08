@@ -3208,6 +3208,12 @@ def render(snap: dict, cfg: dict) -> str:
     def _n(v):
         return v if v is not None else "–"
 
+    pdb = snap.get("predawn_budget") or {}
+    pd_txt = ""
+    if isinstance(pdb.get("kwh"), (int, float)) and (pdb.get("active") or pdb.get("in_free_window") is False and pdb.get("kwh") > 0):
+        pd_txt = (f' · pre-dawn {pdb["kwh"]:+.1f}kWh vs {pdb.get("floor_soc", 30):.0f}% floor'
+                  f' (window {int(pdb.get("window_start_hour", 10)):02d}:00)')
+
     # Charge advisor — is now a good time to put the car on? Colour-coded good/ok/avoid.
     adv = snap.get("charge_advisor") or {}
     _ac = {"good": ("#2e9e5b", "#eaf7ef", "🔌 Good time to charge"),
@@ -3218,7 +3224,7 @@ def render(snap: dict, cfg: dict) -> str:
         f'<div class=card style="border-color:{ac_col};background:{ac_bg}">'
         f'<small style="color:{ac_col};font-weight:600">{ac_hdr}</small>'
         f'<div style="font-size:1rem;font-weight:600;margin:.2rem 0;color:#333">{adv.get("reason") or "—"}</div>'
-        f'<small style="color:#666">🔌 {_n(snap.get("ev_kw"))} kW now · meter: {snap.get("ev_power_source") or "—"}</small></div>'
+        f'<small style="color:#666">🔌 {_n(snap.get("ev_kw"))} kW now · meter: {snap.get("ev_power_source") or "—"}{pd_txt}</small></div>'
     ) if adv else ""
 
     # Money — today's real electricity cost + what the solar/battery saved vs buying everything from grid.
@@ -3254,7 +3260,7 @@ def render(snap: dict, cfg: dict) -> str:
         advisor_card if advisor_card else (
             f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
             f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div>'
-            f'<small>{ev_status}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>'),
+            f'<small>{ev_status}{pd_txt}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>'),
         f'<div class=card><small>Weather &amp; solar</small><div class=big>{_n(sf.get("today_total"))} <small>kWh today</small></div>'
         f'<small>{snap.get("weather") or "—"}{temp_txt} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'
         f'{cal_txt}</small></div>',
@@ -3263,7 +3269,7 @@ def render(snap: dict, cfg: dict) -> str:
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>foxctl</title><style>{CSS}</style></head><body>
-<h1>foxctl <small id=refr style="color:#888;font-weight:400"></small></h1>
+<h1>foxctl <small style="color:#bbb;font-weight:400">v{VERSION}</small> <small id=refr style="color:#888;font-weight:400"></small></h1>
 {banner}
 <div class=row id=cards>{cards}</div>
 <div class=ctrls>Chart size <button data-cz="-0.25" aria-label="smaller">−</button><span class=cz id=czl>100%</span><button data-cz="0.25" aria-label="bigger">+</button><button data-cz="0">fit</button><span style="opacity:.7">· tap a chart to enlarge</span></div>
