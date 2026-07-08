@@ -1245,6 +1245,18 @@ def ev_car_budget(soc, cap_kwh, inverter_min_soc, solar_remaining_kwh, load_to_s
                               "load_to_sunrise_kwh": round(load, 2), "reserve_kwh": round(reserve, 2)}
 
 
+def ev_predawn_budget(soc, cap_kwh, floor_soc, load_to_window_kwh):
+    """kWh of battery above the PLANNING floor that the house provably won't need before the next
+    free-window start (where the battery refills for ~free). Positive => the car may take it
+    pre-dawn; <= 0 => any charge session is eating what the house needs to hold the floor.
+    No solar term — conservative at night; the floor-guard adds remaining solar separately.
+    Pure. Returns (budget_kwh, parts)."""
+    usable = max(0.0, (float(soc) - float(floor_soc)) / 100.0) * float(cap_kwh)
+    load = float(load_to_window_kwh or 0.0)
+    return round(usable - load, 2), {"usable_above_floor_kwh": round(usable, 2),
+                                     "load_to_window_kwh": round(load, 2)}
+
+
 def ev_divert_decision(snap, ev):
     """Pure policy: should the car charger be ON this cycle? Two ways to say yes:
       1. FREE window — once the house battery is full, soak remaining FREE grid energy into the car
