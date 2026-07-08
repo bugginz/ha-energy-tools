@@ -39,6 +39,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
+VERSION = "1.67.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
 WORK_MODES = ["SelfUse", "Feedin", "Backup", "PeakShaving"]
@@ -2291,6 +2293,25 @@ def gather_and_decide(cfg: dict) -> dict:
     car_budget_kwh, car_budget_parts = ev_car_budget(soc, cap_kwh, inv_floor, solar_remaining,
                                                      load_to_sunrise, ev_cfg.get("comfort_reserve_kwh", 2.0))
 
+    # Pre-dawn dump + floor-guard budget: battery above the PLANNING floor vs expected load until the
+    # next free-window start (hrs_to_free, computed above for survival_soc — same horizon, same profile
+    # + night factor). guard_kwh adds remaining solar so a daytime solar-fed session is never cut.
+    pd_floor = float(ev_cfg.get("predawn_floor_soc", 30) or 30)
+    pd_start = int(ev_cfg.get("predawn_start_hour", 4))
+    load_to_window = _load_to_sunrise(consumption.get("hour_profile"), hrs_to_free, typical_load, night_factor)
+    predawn_kwh, predawn_parts = ev_predawn_budget(soc, cap_kwh, pd_floor, load_to_window)
+    _free_win = profile.get("free") or {}
+    in_free = bool(_free_win) and _in_window(_free_win, hh)
+    predawn_snap = {
+        "kwh": predawn_kwh, "parts": predawn_parts,
+        "guard_kwh": round(predawn_kwh + float(solar_remaining or 0.0), 2),
+        "floor_soc": pd_floor, "window_start_hour": free_start,
+        "hrs_to_window": round(hrs_to_free, 1), "in_free_window": in_free,
+        "active": bool(_free_win) and not in_free and pd_start <= hh < float(free_start),
+        "dump_enabled": bool(ev_cfg.get("predawn_dump", True)),
+        "guard_enabled": bool(ev_cfg.get("floor_guard", True)),
+    }
+
     sell_eff = _OV["sell"] if _OV.get("sell") is not None else strat.get("sell_price", 0.50)
     # export to grid off by default — needs the master toggle AND a profile export window
     sell_enabled = bool(strat.get("sell_enabled", False)) and bool(profile.get("export"))
@@ -2371,6 +2392,8 @@ def gather_and_decide(cfg: dict) -> dict:
                           "hrs_to_sunrise": round(hrs_to_sunrise, 1), "night_factor": round(night_factor, 3),
                           "outlook_gate": bool(ev_cfg.get("outlook_gate", True)),
                           "start_margin_kwh": float(ev_cfg.get("start_margin_kwh", 1.0) or 0.0)}
+    snap["predawn_budget"] = predawn_snap
+    snap["version"] = VERSION
     snap["charge_advisor"] = charge_advisor(snap, profile, strat)
     # Live AC state + self-calibrating kW-per-Hz learning, and the forward-look forecast table.
     snap["ac"] = ac
