@@ -1394,6 +1394,33 @@ def ev_divert_tick(cfg, snap):
                 want, why = False, f"daily cap {cap:.0f}kWh reached ({session:.1f}kWh) — resets ~4am / Force car charge"
             elif want:
                 why += f" · {session:.1f}/{cap:.0f}kWh today"
+    # FLOOR-GUARD (spec 2026-07-08 feature 2): a session started by hand in HA is invisible to the
+    # edge-trigger below (_EV["on"] tracks foxctl's own belief — want==belief → no switch call). So:
+    # if the car is ACTUALLY drawing, nothing above wants it on, no UI force-charge override is
+    # active, we're outside the free window (import there is 0c), and the guard budget (incl.
+    # remaining solar, so a solar-fed daytime session is never cut) says the battery lands below the
+    # floor before the window opens → cut it. guard_grace_min spaces repeat cuts so a deliberate
+    # re-flip gets a visible grace window instead of an instant silent kill.
+    pdb_g = snap.get("predawn_budget") or {}
+    gb = pdb_g.get("guard_kwh")
+    ev_kw_now = snap.get("ev_kw")
+    if (ev.get("floor_guard", True) and pdb_g.get("guard_enabled", True) and not want
+            and _EV.get("on") is False  # edge-trigger below already handles on=None/True; this is the blind spot
+            and now >= _EV.get("override_until", 0) and not pdb_g.get("in_free_window")
+            and isinstance(ev_kw_now, (int, float)) and ev_kw_now >= 0.3
+            and isinstance(gb, (int, float)) and gb <= 0
+            and (now - _EV.get("guard_cut_ts", 0.0)) >= float(ev.get("guard_grace_min", 10)) * 60):
+        try:
+            ha_call_service(cfg, "switch", "turn_off", sw)
+        except Exception as e:
+            print(f"floor-guard switch failed: {e}", file=sys.stderr)
+            return f"ev divert error: {e}"
+        log_event("ev_divert", (f"car charger OFF (floor-guard: battery would land below "
+                                f"{pdb_g.get('floor_soc', 30):.0f}% before the "
+                                f"{int(pdb_g.get('window_start_hour', 10)):02d}:00 free window — "
+                                f"short {abs(gb):.1f}kWh)"))
+        _EV["on"], _EV["last_change"], _EV["guard_cut_ts"] = False, now, now
+        return f"car charger off (floor-guard cut manual session · short {abs(gb):.1f}kWh)"
     due = (now - _EV["last_change"]) >= ev.get("min_dwell_min", 10) * 60
     if now < _EV.get("override_until", 0):
         due = True                               # apply a manual force-charge immediately, no dwell wait

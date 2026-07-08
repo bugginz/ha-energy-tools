@@ -145,5 +145,74 @@ class PredawnTickTest(unittest.TestCase):
         svc2.assert_not_called()
 
 
+class FloorGuardTest(unittest.TestCase):
+    """Manual switch-ons are invisible to the edge-trigger; the guard acts on ACTUAL draw."""
+
+    def setUp(self):
+        self._ev = dict(foxctl._EV)
+        foxctl._EV.update({"on": False, "last_change": 0.0, "override_until": 0.0,
+                           "lowdraw_since": 0.0, "session_day": None,
+                           "session_start_kwh": None, "capped": False,
+                           "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None})
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev)
+
+    def _run(self, snap, **ev_overrides):
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event") as log:
+            out = foxctl.ev_divert_tick(tick_cfg(**ev_overrides), snap)
+        return out, svc, log
+
+    def test_guard_cuts_manual_session(self):
+        # foxctl believes the car is off (_EV.on False) but it IS drawing → manual flip. Budget short.
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=2.43)
+        out, svc, log = self._run(snap)
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("floor-guard", out)
+        self.assertTrue(any("floor-guard" in str(c) for c in log.call_args_list))
+        self.assertEqual(foxctl._EV["on"], False)
+        self.assertGreater(foxctl._EV["guard_cut_ts"], 0)
+
+    def test_guard_respects_ui_force_charge_override(self):
+        import time as _t
+        foxctl._EV["override_until"] = _t.time() + 3600
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=2.43)
+        out, svc, log = self._run(snap)
+        # override path wants ON; the only switch call allowed is turn_on, never a guard turn_off
+        for c in svc.call_args_list:
+            self.assertNotEqual(c.args[2], "turn_off")
+        self.assertNotIn("floor-guard", out)
+
+    def test_guard_skipped_inside_free_window(self):
+        snap = tick_snap(predawn_block(-2.5, active=False, in_free=True), ev_kw=2.43)
+        out, svc, log = self._run(snap)
+        svc.assert_not_called()
+
+    def test_guard_grace_blocks_immediate_recut(self):
+        import time as _t
+        foxctl._EV["guard_cut_ts"] = _t.time() - 60          # cut 1 min ago; grace is 10 min
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=2.43)
+        out, svc, log = self._run(snap)
+        svc.assert_not_called()
+
+    def test_guard_uses_guard_kwh_not_kwh(self):
+        # Daytime solar-fed session: raw budget negative but guard_kwh (incl. solar) positive → no cut.
+        snap = tick_snap(predawn_block(-3.0, active=False, guard_kwh=4.0), ev_kw=2.43)
+        out, svc, log = self._run(snap)
+        svc.assert_not_called()
+
+    def test_guard_disabled_by_config(self):
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=2.43)
+        out, svc, log = self._run(snap, floor_guard=False)
+        svc.assert_not_called()
+
+    def test_no_cut_when_not_drawing(self):
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=0.0)
+        out, svc, log = self._run(snap)
+        svc.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
