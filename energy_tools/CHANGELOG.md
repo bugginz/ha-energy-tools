@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.66.0 — run standalone under docker compose (post-HAOS migration)
+
+Same image now runs both as a HAOS add-on and as a plain docker compose service
+(the add-on host was migrated from a Pi 4/HAOS to a Pi 5 running HA Container).
+
+- **`HA_URL` / `MQTT_HOST` env overrides.** `build_config.py` defaults stay add-on
+  compatible (`http://supervisor/core`, `core-mosquitto`); compose sets
+  `HA_URL=http://localhost:8123` and `MQTT_HOST=localhost`. nemfuel's `mqtt.env`
+  is generated with the same host.
+- **`HA_TOKEN` support.** `run.sh` seeds the token file from `HA_TOKEN` (long-lived
+  token) when set, falls back to `SUPERVISOR_TOKEN` under the Supervisor, and
+  otherwise keeps a pre-seeded `/data/.config/sen66/ha_token`.
+- **Standalone builds.** `BUILD_FROM` defaults to `alpine:3.21` so plain
+  `docker build` works, and the image installs `tzdata` — tariff windows use
+  naive local time, so `TZ=Australia/Sydney` must actually resolve.
+
 ## 1.65.0 — winter charge-to-100% + pre-peak shoulder top-up
 
 Fills the battery to full while it's still cheap, so cold nights don't drain it into expensive grid.

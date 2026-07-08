@@ -6,14 +6,20 @@ the baked template foxctl_config.json. The tunable thresholds + control flags ar
 add-on OPTIONS and override the template here.
 """
 import json
+import os
 
 opt = json.load(open("/data/options.json"))
+
+# Under the Supervisor the defaults below hold; standalone (docker compose)
+# override with HA_URL=http://localhost:8123 and MQTT_HOST=localhost.
+HA_URL = os.environ.get("HA_URL", "http://supervisor/core")
+MQTT_HOST = os.environ.get("MQTT_HOST", "core-mosquitto")
 
 # ---- foxctl ----
 fc = json.load(open("/foxctl_config.json"))
 fc["foxess"]["token"] = opt["foxess_token"]
 fc["foxess"]["sn"] = opt["foxess_sn"]
-fc["ha"]["url"] = "http://supervisor/core"
+fc["ha"]["url"] = HA_URL
 fc["ha"]["token_file"] = "/data/.config/sen66/ha_token"
 fc["state_dir"] = "/data/.config/foxctl"   # persistent across restarts/updates (rolling consumption)
 if opt.get("ev_power_entity"):
@@ -45,7 +51,7 @@ fc["ev_divert"] = {
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
-              "host": "core-mosquitto", "port": 1883,
+              "host": MQTT_HOST, "port": 1883,
               "user": opt.get("mqtt_user", ""), "pass": opt.get("mqtt_pass", "")}
 
 S = fc["strategy"]
@@ -95,8 +101,8 @@ json.dump(nf, open("/data/.config/nemfuel/config.json", "w"), indent=2)
 
 # ---- MQTT creds for nemfuel ----
 with open("/data/.config/sen66/mqtt.env", "w") as f:
-    f.write("MQTT_HOST=core-mosquitto\nMQTT_PORT=1883\n"
-            "MQTT_USER=%s\nMQTT_PASS=%s\n" % (opt.get("mqtt_user", ""), opt.get("mqtt_pass", "")))
+    f.write("MQTT_HOST=%s\nMQTT_PORT=1883\n"
+            "MQTT_USER=%s\nMQTT_PASS=%s\n" % (MQTT_HOST, opt.get("mqtt_user", ""), opt.get("mqtt_pass", "")))
 
 print("[energy_tools] config written (tariff=%s max_soc=%s%% control=%s/%s)" % (
     S.get("tariff_mode"), S.get("max_soc"),

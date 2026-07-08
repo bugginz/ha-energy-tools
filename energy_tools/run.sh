@@ -11,9 +11,17 @@ fi
 export HOME=/data
 mkdir -p /data/.config/foxctl /data/.config/nemfuel /data/.config/sen66
 
-# HA API token for foxctl (talks to core via the supervisor proxy)
-printf '%s' "${SUPERVISOR_TOKEN}" > /data/.config/sen66/ha_token
-echo "[energy_tools] SUPERVISOR_TOKEN length: ${#SUPERVISOR_TOKEN}"
+# HA API token for foxctl. Under the Supervisor this is the proxy token;
+# standalone (docker compose) pass HA_TOKEN (a long-lived token) instead,
+# or pre-seed /data/.config/sen66/ha_token and set neither.
+if [ -n "${HA_TOKEN:-}" ]; then
+  printf '%s' "${HA_TOKEN}" > /data/.config/sen66/ha_token
+elif [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+  printf '%s' "${SUPERVISOR_TOKEN}" > /data/.config/sen66/ha_token
+fi
+if [ ! -s /data/.config/sen66/ha_token ]; then
+  echo "[energy_tools] WARNING: no HA token (HA_TOKEN/SUPERVISOR_TOKEN unset, ha_token missing)"
+fi
 
 # Build config files from add-on options + baked templates
 python3 /build_config.py
