@@ -1325,6 +1325,12 @@ def ev_divert_tick(cfg, snap):
     if not cfg["control"].get("allow_control"):
         return "ev divert: control disabled"
     now = time.time()
+    # STALE/DOWN telemetry (same convention as maybe_notify / apply_recommendation): soc/grid_power/ev_kw
+    # can be frozen at last-good values during a FoxESS outage. The NEW pre-dawn dump + floor-guard
+    # branches must not act on frozen/garbage data (cold-start soc=0 would floor-guard-cut a manual
+    # session every 10min) — gate once here, shared by both. Pre-existing paths are untouched.
+    ts = snap.get("telemetry_source") or ""
+    stale_telemetry = "stale" in ts or "down" in ts
     # Interim daily car cap: count kWh delivered since the session start (4am-anchored day); once the
     # cap is hit, hold off auto-divert until the day rolls over or a manual force-charge resets it.
     cap = float(ev.get("session_cap_kwh", 0) or 0)
@@ -1340,6 +1346,7 @@ def ev_divert_tick(cfg, snap):
         want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
     else:
         want, why = ev_divert_decision(snap, ev)
+        base_why = why    # captured before the pre-dawn branch can overwrite it (SAFETY-hold check below)
         # Outlook gate: only let SPARE-SOLAR diversion run while the forward budget proves the
         # battery+solar is surplus to tonight's needs (heating incl.). Free-window 0c soak is exempt.
         # Deadband: stop at budget < 0; require budget > start_margin to (re)start a stopped car.
@@ -1360,14 +1367,21 @@ def ev_divert_tick(cfg, snap):
         if (not want and pdb.get("dump_enabled") and pdb.get("active")
                 and isinstance(pdb.get("kwh"), (int, float))
                 and _EV.get("predawn_parked_day") != day):
-            b = float(pdb["kwh"])
-            margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
-            if b > 0 and (_EV.get("on") or b > margin):
-                want, why = True, (f"pre-dawn surplus +{b:.1f}kWh above {pdb.get('floor_soc', 30):.0f}% floor"
-                                   f" · refills free at {int(pdb.get('window_start_hour', 10)):02d}:00")
-            elif b <= 0 and _EV.get("on"):
-                want, why = False, (f"pre-dawn done: surplus exhausted (budget {b:+.1f}kWh at "
-                                    f"{pdb.get('floor_soc', 30):.0f}% floor)")
+            if stale_telemetry:
+                if _EV.get("on"):                 # a dump was running on last-good data — stop it
+                    want, why = False, "pre-dawn hold: telemetry stale — dump stopped"
+                # else: leave want/why (already not-want) — don't arm on frozen data
+            elif "car held off" in base_why or base_why.startswith("battery is selling"):
+                pass    # respect ev_divert_decision's SAFETY hold — never override it with the dump
+            else:
+                b = float(pdb["kwh"])
+                margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
+                if b > 0 and (_EV.get("on") or b > margin):
+                    want, why = True, (f"pre-dawn surplus +{b:.1f}kWh above {pdb.get('floor_soc', 30):.0f}% floor"
+                                       f" · refills free at {int(pdb.get('window_start_hour', 10)):02d}:00")
+                elif b <= 0 and _EV.get("on"):
+                    want, why = False, (f"pre-dawn done: surplus exhausted (budget {b:+.1f}kWh at "
+                                        f"{pdb.get('floor_soc', 30):.0f}% floor)")
         # Park a dump whose socket shows sustained no-draw (car full or unplugged) until the 4am day
         # roll — otherwise the branch would cycle an empty socket every dwell period to window-open.
         if want and why.startswith("pre-dawn") and _EV.get("on") and _EV.get("lowdraw_since") \
@@ -1404,7 +1418,7 @@ def ev_divert_tick(cfg, snap):
     pdb_g = snap.get("predawn_budget") or {}
     gb = pdb_g.get("guard_kwh")
     ev_kw_now = snap.get("ev_kw")
-    if (ev.get("floor_guard", True) and pdb_g.get("guard_enabled", True) and not want
+    if (ev.get("floor_guard", True) and pdb_g.get("guard_enabled", True) and not want and not stale_telemetry
             and _EV.get("on") is False  # edge-trigger below already handles on=None/True; this is the blind spot
             and now >= _EV.get("override_until", 0) and not pdb_g.get("in_free_window")
             and isinstance(ev_kw_now, (int, float)) and ev_kw_now >= 0.3

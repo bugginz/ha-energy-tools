@@ -41,10 +41,11 @@ def tick_cfg(**ev_overrides):
     return {"ev_divert": ev, "control": {"allow_control": True}}
 
 
-def tick_snap(predawn=None, ev_kw=0.0, grid_power=0.0):
+def tick_snap(predawn=None, ev_kw=0.0, grid_power=0.0, telemetry_source="FoxESS"):
     return {"predawn_budget": predawn or {}, "ev_kw": ev_kw, "grid_power": grid_power,
             "energy_totals": {}, "feedin_power": 0.0, "soc": 56.0,
-            "dynamic": {}, "recommendation": {}, "scheduler": {}, "money": {}}
+            "dynamic": {}, "recommendation": {}, "scheduler": {}, "money": {},
+            "telemetry_source": telemetry_source}
 
 
 def predawn_block(kwh, active=True, guard_kwh=None, in_free=False):
@@ -212,6 +213,76 @@ class FloorGuardTest(unittest.TestCase):
         snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=0.0)
         out, svc, log = self._run(snap)
         svc.assert_not_called()
+
+
+class StaleTelemetryTest(unittest.TestCase):
+    """Frozen soc/grid_power during a FoxESS outage must not drive the pre-dawn dump or floor-guard."""
+
+    def setUp(self):
+        self._ev = dict(foxctl._EV)
+        foxctl._EV.update({"on": False, "last_change": 0.0, "override_until": 0.0,
+                           "lowdraw_since": 0.0, "session_day": None,
+                           "session_start_kwh": None, "capped": False,
+                           "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None})
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev)
+
+    def test_dump_does_not_start_when_stale(self):
+        snap = tick_snap(predawn_block(5.0), telemetry_source="FoxESS(stale)")
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(tick_cfg(), snap)
+        svc.assert_not_called()          # want stays False == on False → no switch call
+
+    def test_running_dump_stops_when_stale(self):
+        foxctl._EV["on"] = True
+        snap = tick_snap(predawn_block(5.0), ev_kw=2.4, telemetry_source="FoxESS(stale)")
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), snap)
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("pre-dawn hold", out)
+
+    def test_floor_guard_does_not_cut_when_stale(self):
+        # Manual-session fixture that would normally trip the floor-guard.
+        snap = tick_snap(predawn_block(-2.5, active=False), ev_kw=2.43, telemetry_source="FoxESS(stale)")
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(tick_cfg(), snap)
+        svc.assert_not_called()
+
+    def test_dump_does_not_start_when_telemetry_down(self):
+        snap = tick_snap(predawn_block(5.0), telemetry_source="down")
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(tick_cfg(), snap)
+        svc.assert_not_called()
+
+
+class SafetyHoldTest(unittest.TestCase):
+    """The pre-dawn dump must never override ev_divert_decision's SAFETY holds."""
+
+    def setUp(self):
+        self._ev = dict(foxctl._EV)
+        foxctl._EV.update({"on": False, "last_change": 0.0, "override_until": 0.0,
+                           "lowdraw_since": 0.0, "session_day": None,
+                           "session_start_kwh": None, "capped": False,
+                           "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None})
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev)
+
+    def test_dump_does_not_arm_during_force_charge_hold(self):
+        snap = tick_snap(predawn_block(5.0))
+        snap.update(recommendation={"force_charge": True}, dynamic={"target_soc": 90}, soc=50)
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), snap)
+        svc.assert_not_called()
+        self.assertIn("car held off", out)
 
 
 if __name__ == "__main__":
