@@ -34,5 +34,116 @@ class PredawnBudgetTest(unittest.TestCase):
         self.assertAlmostEqual(budget, 8.29, places=2)
 
 
+def tick_cfg(**ev_overrides):
+    ev = {"switch": "switch.car", "min_dwell_min": 10, "start_margin_kwh": 1.0,
+          "session_cap_kwh": 0, "outlook_gate": False}
+    ev.update(ev_overrides)
+    return {"ev_divert": ev, "control": {"allow_control": True}}
+
+
+def tick_snap(predawn=None, ev_kw=0.0, grid_power=0.0):
+    return {"predawn_budget": predawn or {}, "ev_kw": ev_kw, "grid_power": grid_power,
+            "energy_totals": {}, "feedin_power": 0.0, "soc": 56.0,
+            "dynamic": {}, "recommendation": {}, "scheduler": {}, "money": {}}
+
+
+def predawn_block(kwh, active=True, guard_kwh=None, in_free=False):
+    return {"kwh": kwh, "guard_kwh": kwh if guard_kwh is None else guard_kwh,
+            "parts": {}, "floor_soc": 30.0, "window_start_hour": 10,
+            "hrs_to_window": 5.0, "in_free_window": in_free, "active": active,
+            "dump_enabled": True, "guard_enabled": True}
+
+
+class PredawnTickTest(unittest.TestCase):
+    """Pre-dawn dump start/stop + import abort inside ev_divert_tick."""
+
+    def setUp(self):
+        self._ev = dict(foxctl._EV)
+        foxctl._EV.update({"on": False, "last_change": 0.0, "override_until": 0.0,
+                           "lowdraw_since": 0.0, "session_day": None,
+                           "session_start_kwh": None, "capped": False,
+                           "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None})
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev)
+
+    def test_dump_starts_when_budget_above_margin(self):
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(2.8)))
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_on", "switch.car")
+        self.assertIn("pre-dawn surplus +2.8kWh", out)
+
+    def test_dump_needs_start_margin_from_off(self):
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(0.5)))
+        svc.assert_not_called()          # 0.5 < start_margin 1.0 and car is off
+        self.assertIn("off", out)
+
+    def test_dump_keeps_running_below_margin_above_zero(self):
+        foxctl._EV["on"] = True
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(0.5), ev_kw=2.4))
+        svc.assert_not_called()          # deadband: no switch flap between 0 and margin
+        self.assertIn("pre-dawn surplus", out)
+
+    def test_dump_stops_at_zero_budget(self):
+        foxctl._EV["on"] = True
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(-0.3), ev_kw=2.4))
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("pre-dawn done", out)
+
+    def test_inactive_window_no_dump(self):
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(5.0, active=False)))
+        svc.assert_not_called()
+
+    def test_import_abort_after_two_hits(self):
+        foxctl._EV["on"] = True
+        cfg = tick_cfg()
+        snap = tick_snap(predawn_block(3.0), ev_kw=2.4, grid_power=1.2)
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out1 = foxctl.ev_divert_tick(cfg, snap)      # hit 1 — stays on
+            self.assertIn("pre-dawn surplus", out1)
+            svc.assert_not_called()
+            out2 = foxctl.ev_divert_tick(cfg, snap)      # hit 2 — abort
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("pre-dawn abort", out2)
+
+    def test_import_hits_reset_on_clean_poll(self):
+        foxctl._EV["on"] = True
+        cfg = tick_cfg()
+        with mock.patch.object(foxctl, "ha_call_service"), mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(cfg, tick_snap(predawn_block(3.0), ev_kw=2.4, grid_power=1.2))
+            foxctl.ev_divert_tick(cfg, tick_snap(predawn_block(3.0), ev_kw=2.4, grid_power=0.0))
+            self.assertEqual(foxctl._EV["import_hits"], 0)
+
+    def test_dump_parks_when_socket_shows_no_draw(self):
+        # Socket on for 6+ min with ~0 draw → car full/unplugged. Park until the 4am day roll,
+        # otherwise the branch would cycle an empty socket every dwell period until window-open.
+        import time as _t
+        foxctl._EV["on"] = True
+        foxctl._EV["lowdraw_since"] = _t.time() - 400
+        cfg = tick_cfg()
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(cfg, tick_snap(predawn_block(3.0), ev_kw=0.02))
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("pre-dawn parked", out)
+        self.assertIsNotNone(foxctl._EV["predawn_parked_day"])
+        # …and a later tick the same (4am-anchored) day must NOT restart the dump.
+        with mock.patch.object(foxctl, "ha_call_service") as svc2, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(cfg, tick_snap(predawn_block(3.0), ev_kw=0.0))
+        svc2.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

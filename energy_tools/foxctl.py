@@ -1218,7 +1218,8 @@ def _solar_bells(rise_iso, set_iso, kwh_tomorrow, kwh_remaining):
 _NOTIFY = {"stale_count": 0, "stale_notified": False, "last_selling": False}
 
 _EV = {"on": None, "last_change": 0.0, "override_until": 0.0, "lowdraw_since": 0.0,
-       "session_day": None, "session_start_kwh": None, "capped": False}   # divert + manual force + daily cap
+       "session_day": None, "session_start_kwh": None, "capped": False,
+       "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None}   # + pre-dawn dump/guard
 
 
 def ha_call_service(cfg, domain, service, entity_id):
@@ -1352,6 +1353,40 @@ def ev_divert_tick(cfg, snap):
                 want, why = False, f"outlook: only +{budget:.1f}kWh surplus (need >{margin:.0f}kWh to start car)"
             elif want:
                 why += f" · outlook +{budget:.1f}kWh"
+        # 3) PRE-DAWN dump: put overnight battery surplus above the planning floor into the car —
+        #    the free window refills the battery for ~free a few hours later (spec 2026-07-08).
+        #    Deadband mirrors the outlook gate: need budget > start_margin to START, > 0 to KEEP GOING.
+        pdb = snap.get("predawn_budget") or {}
+        if (not want and pdb.get("dump_enabled") and pdb.get("active")
+                and isinstance(pdb.get("kwh"), (int, float))
+                and _EV.get("predawn_parked_day") != day):
+            b = float(pdb["kwh"])
+            margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
+            if b > 0 and (_EV.get("on") or b > margin):
+                want, why = True, (f"pre-dawn surplus +{b:.1f}kWh above {pdb.get('floor_soc', 30):.0f}% floor"
+                                   f" · refills free at {int(pdb.get('window_start_hour', 10)):02d}:00")
+            elif b <= 0 and _EV.get("on"):
+                want, why = False, (f"pre-dawn done: surplus exhausted (budget {b:+.1f}kWh at "
+                                    f"{pdb.get('floor_soc', 30):.0f}% floor)")
+        # Park a dump whose socket shows sustained no-draw (car full or unplugged) until the 4am day
+        # roll — otherwise the branch would cycle an empty socket every dwell period to window-open.
+        if want and why.startswith("pre-dawn") and _EV.get("on") and _EV.get("lowdraw_since") \
+                and (now - _EV["lowdraw_since"]) > 300:
+            _EV["predawn_parked_day"] = day
+            want, why = False, "pre-dawn parked: no draw — car full or unplugged (resets ~4am)"
+        # Import abort: a dump must be battery-only — if the meter shows sustained import (house spike
+        # pushing house+car past inverter discharge), buying at shoulder rates defeats the point.
+        if want and why.startswith("pre-dawn"):
+            gp = snap.get("grid_power")
+            stop_kw = float(ev.get("predawn_import_stop_kw", 0.5) or 0.0)
+            if isinstance(gp, (int, float)) and gp > stop_kw:
+                _EV["import_hits"] = _EV.get("import_hits", 0) + 1
+            else:
+                _EV["import_hits"] = 0
+            if _EV["import_hits"] >= 2:
+                want, why = False, f"pre-dawn abort: importing {gp:.1f}kW from grid — dump must be battery-only"
+        else:
+            _EV["import_hits"] = 0
         if cap > 0 and ev_cum is not None:
             if session >= cap:
                 _EV["capped"] = True
