@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.67.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.67.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1381,6 +1381,12 @@ def ev_divert_tick(cfg, snap):
         #    the free window refills the battery for ~free a few hours later (spec 2026-07-08).
         #    Deadband mirrors the outlook gate: need budget > start_margin to START, > 0 to KEEP GOING.
         pdb = snap.get("predawn_budget") or {}
+        # Un-park if the car proves it IS drawing — the portable charger can take >5 min to
+        # wake the car, so the no-draw park can race a slow session start (2026-07-10: parked
+        # at 04:05, car began pulling 2.4 kW seconds later; only the switch dwell saved it).
+        if (_EV.get("predawn_parked_day") == day and _EV.get("on")
+                and isinstance(snap.get("ev_kw"), (int, float)) and snap["ev_kw"] >= 0.3):
+            _EV["predawn_parked_day"] = None
         if (not want and pdb.get("dump_enabled") and pdb.get("active")
                 and isinstance(pdb.get("kwh"), (int, float))
                 and _EV.get("predawn_parked_day") != day):
@@ -1401,8 +1407,9 @@ def ev_divert_tick(cfg, snap):
                                         f"{pdb.get('floor_soc', 30):.0f}% floor)")
         # Park a dump whose socket shows sustained no-draw (car full or unplugged) until the 4am day
         # roll — otherwise the branch would cycle an empty socket every dwell period to window-open.
+        # 600s, not the generic 300s note threshold: a sleeping car takes ~5½ min to start drawing.
         if want and why.startswith("pre-dawn") and _EV.get("on") and _EV.get("lowdraw_since") \
-                and (now - _EV["lowdraw_since"]) > 300:
+                and (now - _EV["lowdraw_since"]) > 600:
             _EV["predawn_parked_day"] = day
             want, why = False, "pre-dawn parked: no draw — car full or unplugged (resets ~4am)"
         # Import abort: a dump must be battery-only — if the meter shows sustained import (house spike

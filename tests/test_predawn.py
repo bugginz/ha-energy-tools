@@ -127,11 +127,11 @@ class PredawnTickTest(unittest.TestCase):
             self.assertEqual(foxctl._EV["import_hits"], 0)
 
     def test_dump_parks_when_socket_shows_no_draw(self):
-        # Socket on for 6+ min with ~0 draw → car full/unplugged. Park until the 4am day roll,
+        # Socket on for 10+ min with ~0 draw → car full/unplugged. Park until the 4am day roll,
         # otherwise the branch would cycle an empty socket every dwell period until window-open.
         import time as _t
         foxctl._EV["on"] = True
-        foxctl._EV["lowdraw_since"] = _t.time() - 400
+        foxctl._EV["lowdraw_since"] = _t.time() - 700
         cfg = tick_cfg()
         with mock.patch.object(foxctl, "ha_call_service") as svc, \
              mock.patch.object(foxctl, "log_event"):
@@ -144,6 +144,32 @@ class PredawnTickTest(unittest.TestCase):
              mock.patch.object(foxctl, "log_event"):
             foxctl.ev_divert_tick(cfg, tick_snap(predawn_block(3.0), ev_kw=0.0))
         svc2.assert_not_called()
+
+    def test_no_park_inside_wake_grace(self):
+        # A sleeping car can take ~5½ min to start drawing (seen live 2026-07-10) — the park
+        # threshold (600s) must ride out a low-draw spell the generic 300s note would flag.
+        import time as _t
+        foxctl._EV["on"] = True
+        foxctl._EV["lowdraw_since"] = _t.time() - 400
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(3.0), ev_kw=0.02))
+        svc.assert_not_called()
+        self.assertIn("pre-dawn surplus", out)
+        self.assertIsNone(foxctl._EV["predawn_parked_day"])
+
+    def test_draw_unparks_a_raced_park(self):
+        # Parked, but the switch is still on (dwell) and the car starts pulling real power —
+        # the park raced a slow wake-up; clear it and let the dump continue.
+        foxctl._EV["on"] = True
+        foxctl._EV["predawn_parked_day"] = (
+            foxctl.datetime.now() - foxctl.timedelta(hours=4)).strftime("%Y-%m-%d")
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            out = foxctl.ev_divert_tick(tick_cfg(), tick_snap(predawn_block(3.0), ev_kw=2.4))
+        svc.assert_not_called()          # already on — no switch flip
+        self.assertIn("pre-dawn surplus", out)
+        self.assertIsNone(foxctl._EV["predawn_parked_day"])
 
 
 class FloorGuardTest(unittest.TestCase):

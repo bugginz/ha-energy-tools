@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.67.2 — pre-dawn no-draw park no longer races a slow car wake-up
+
+First live dump (2026-07-10 04:00) exposed a race: the portable charger took ~5½ min to
+wake the car, one tick past the 300s no-draw window — the dump parked itself for the day
+just as the car started pulling 2.4 kW (only the switch dwell kept the session alive).
+Two changes: the pre-dawn park threshold is now 600s (the generic 300s "no draw" note is
+unchanged), and a park is CLEARED if the socket shows real draw (≥0.3 kW) while the
+switch is still on — the car proving it's awake un-parks the branch.
+
 ## 1.67.1 — scheduler "active" is now time-aware
 
 A hand-programmed inverter scheduler group (e.g. the four4free 10:00–14:00 import window)
