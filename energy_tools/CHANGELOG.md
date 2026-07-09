@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.67.1 — scheduler "active" is now time-aware
+
+A hand-programmed inverter scheduler group (e.g. the four4free 10:00–14:00 import window)
+is enabled 24/7 but only RUNS inside its window — foxctl treated "enabled" as "active",
+so ev_divert held the car off with "battery force-charging — car held off" at 2am and the
+pre-dawn dump could never start. `scheduler_status` now reports `active` only while the
+clock is inside the group's window, and adds `segment` (what's programmed, regardless of
+time). Also makes `already_charging`/`already_selling` in the apply path and the manual
+override "(active)" label time-correct. Default `tariff_mode` → four4free.
+
 ## 1.67.0 — pre-dawn battery→car dump + universal SoC floor-guard
 
 The free window refills the battery for ~free, so overnight surplus above a 30% planning

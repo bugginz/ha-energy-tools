@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.67.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.67.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -307,18 +307,35 @@ class FoxESS:
         return self.call("/op/v0/device/scheduler/enable", {"deviceSN": self.sn, "groups": [fc]})
 
     def scheduler_status(self) -> dict:
-        """Compact view for the dashboard: is a schedule active, and which window."""
-        r = self.scheduler() or {}
-        active = None
+        """Compact view for the dashboard: is a schedule active NOW, and which window."""
+        now = datetime.now()
+        return self._scheduler_view(self.scheduler(), now.hour * 60 + now.minute)
+
+    @staticmethod
+    def _scheduler_view(raw, now_minutes) -> dict:
+        """Pure: a group is ACTIVE only while the clock is inside its window. An enabled
+        group can sit parked on the inverter all day (e.g. a hand-programmed 10:00–14:00
+        free-window import) and the inverter ignores it outside those hours — counting it
+        as active made ev_divert hold the car off "force-charging" at 2am. `segment` is
+        the first enabled group regardless of clock (what's programmed)."""
+        r = raw or {}
+        active = segment = None
         if r.get("enable"):
             for g in r.get("groups", []):
-                if g.get("enable") and g.get("workMode") not in (None, "Invalid"):
-                    active = {"mode": g.get("workMode"),
-                              "window": "%02d:%02d-%02d:%02d" % (g.get("startHour"), g.get("startMinute"),
-                                                                 g.get("endHour"), g.get("endMinute")),
-                              "fdSoc": g.get("fdSoc"), "fdPwr": g.get("fdPwr")}
+                if not g.get("enable") or g.get("workMode") in (None, "Invalid"):
+                    continue
+                seg = {"mode": g.get("workMode"),
+                       "window": "%02d:%02d-%02d:%02d" % (g.get("startHour") or 0, g.get("startMinute") or 0,
+                                                          g.get("endHour") or 0, g.get("endMinute") or 0),
+                       "fdSoc": g.get("fdSoc"), "fdPwr": g.get("fdPwr")}
+                if segment is None:
+                    segment = seg
+                start = (g.get("startHour") or 0) * 60 + (g.get("startMinute") or 0)
+                end = (g.get("endHour") or 0) * 60 + (g.get("endMinute") or 0)
+                if start <= now_minutes < end:
+                    active = seg
                     break
-        return {"enabled": bool(r.get("enable")), "active": active}
+        return {"enabled": bool(r.get("enable")), "active": active, "segment": segment}
 
     def disable_scheduler(self) -> dict:
         """Stop any active schedule -> inverter reverts to its plain WorkMode.

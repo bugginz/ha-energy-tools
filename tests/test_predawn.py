@@ -285,5 +285,59 @@ class SafetyHoldTest(unittest.TestCase):
         self.assertIn("car held off", out)
 
 
+class SchedulerViewTest(unittest.TestCase):
+    """_scheduler_view: an enabled group is only ACTIVE while the clock is inside its
+    window (2026-07-10: a persisted 10:00-14:00 group read as 'force-charging' at 2am,
+    holding the car off all night and blocking the pre-dawn dump)."""
+
+    RAW = {"enable": 1, "groups": [
+        {"enable": 1, "workMode": "ForceCharge", "startHour": 10, "startMinute": 0,
+         "endHour": 14, "endMinute": 0, "fdSoc": 100, "fdPwr": 10500},
+    ]}
+
+    def view(self, minutes, raw=None):
+        return foxctl.FoxESS._scheduler_view(raw if raw is not None else self.RAW, minutes)
+
+    def test_outside_window_is_not_active_but_segment_visible(self):
+        v = self.view(2 * 60)                                  # 02:00
+        self.assertTrue(v["enabled"])
+        self.assertIsNone(v["active"])
+        self.assertEqual(v["segment"]["window"], "10:00-14:00")
+
+    def test_inside_window_is_active(self):
+        for minutes in (10 * 60, 12 * 60 + 30, 13 * 60 + 59):
+            self.assertEqual(self.view(minutes)["active"]["mode"], "ForceCharge")
+
+    def test_window_end_is_exclusive(self):
+        self.assertIsNone(self.view(14 * 60)["active"])
+
+    def test_scheduler_disabled(self):
+        v = self.view(12 * 60, raw={"enable": 0, "groups": self.RAW["groups"]})
+        self.assertFalse(v["enabled"])
+        self.assertIsNone(v["active"])
+        self.assertIsNone(v["segment"])
+
+    def test_disabled_and_invalid_groups_skipped(self):
+        raw = {"enable": 1, "groups": [
+            {"enable": 0, "workMode": "ForceCharge", "startHour": 0, "startMinute": 0,
+             "endHour": 23, "endMinute": 59},
+            {"enable": 1, "workMode": "Invalid", "startHour": 0, "startMinute": 0,
+             "endHour": 23, "endMinute": 59},
+        ]}
+        v = self.view(12 * 60, raw=raw)
+        self.assertIsNone(v["active"])
+        self.assertIsNone(v["segment"])
+
+    def test_second_group_active_first_reported_as_segment(self):
+        raw = {"enable": 1, "groups": [
+            dict(self.RAW["groups"][0]),
+            {"enable": 1, "workMode": "ForceDischarge", "startHour": 18, "startMinute": 0,
+             "endHour": 21, "endMinute": 0, "fdSoc": 15, "fdPwr": 8000},
+        ]}
+        v = self.view(19 * 60, raw=raw)
+        self.assertEqual(v["active"]["mode"], "ForceDischarge")
+        self.assertEqual(v["segment"]["mode"], "ForceCharge")
+
+
 if __name__ == "__main__":
     unittest.main()
