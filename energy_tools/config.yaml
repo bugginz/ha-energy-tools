@@ -58,7 +58,7 @@ options:
   ac_fan_entity: "sensor.living_room_ac_fanfreq"
   ac_outside_entity: "sensor.living_room_ac_outside"
   ac_kw_per_hz: 0.02
-  tariff_mode: zerohero
+  tariff_mode: four4free
   auto_sell: true
   sell_price: 0.50
   publish_telemetry: true
