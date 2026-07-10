@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.68.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.68.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1326,10 +1326,14 @@ def ev_divert_decision(snap, ev):
             fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
             cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
             gp = snap.get("grid_power")
+            # "Running" = believed on OR actually drawing — a manual session's draw is already
+            # inside grid_power, so adding the estimate again would double-count it.
+            running = _EV.get("on") or (isinstance(snap.get("ev_kw"), (int, float))
+                                        and snap["ev_kw"] >= 0.3)
             if cap_kw > 0 and isinstance(gp, (int, float)):
-                if _EV.get("on") and gp > cap_kw:
+                if running and gp > cap_kw:
                     return False, f"free window: import {gp:.1f}kW over the {cap_kw:g}kW supply cap — car pauses"
-                if not _EV.get("on") and gp + _car_draw_est(snap) > cap_kw:
+                if not running and gp + _car_draw_est(snap) > cap_kw:
                     return False, (f"free window: battery+house importing {gp:.1f}kW — no headroom "
                                    f"for the car under the {cap_kw:g}kW supply cap")
             return True, f"free window · car + battery together ({fl})"

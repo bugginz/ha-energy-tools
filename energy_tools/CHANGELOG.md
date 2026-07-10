@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.68.1 — headroom check: actual draw counts as running
+
+A session foxctl didn't start (manual flip) is already inside grid_power — the start-check
+added the expected draw on top and double-counted, reporting "no headroom" while the car
+charged. `ev_kw ≥ 0.3` now counts as running for the supply-cap deadband.
+
 ## 1.68.0 — free window: car charges ALONGSIDE the battery fill
 
 Battery-full is no longer a precondition for the free-window car soak — the ~60A supply

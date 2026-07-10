@@ -383,6 +383,15 @@ class SimultaneousFreeWindowTest(unittest.TestCase):
         self.assertFalse(want)
         self.assertIn("cap used up", why)
 
+    def test_actual_draw_counts_as_running_no_double_count(self):
+        # Manual session: belief off, car drawing 2.3kW already inside grid_power — the
+        # start-check must not add the estimate on top (12.7 alone is under the cap).
+        s = self.snap(grid_kw=12.7)
+        s["ev_kw"] = 2.3
+        want, why = self.decide(s)
+        self.assertTrue(want)
+        self.assertIn("car + battery together", why)
+
     def test_force_charge_hold_still_applies_outside_window(self):
         want, why = self.decide(self.snap(grid_kw=2.0), hour=16)   # pre-peak top-up hours
         self.assertFalse(want)
