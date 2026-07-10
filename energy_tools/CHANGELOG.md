@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.67.3 — four4free free window corrected to 11:00–15:00
+
+User-confirmed with GloBird 2026-07-10; the profile had 10:00–14:00. Moves the money
+pricing bands, the free-window car soak, and the pre-dawn dump horizon (dump now runs
+04:00→11:00).
+
 ## 1.67.2 — pre-dawn no-draw park no longer races a slow car wake-up
 
 First live dump (2026-07-10 04:00) exposed a race: the portable charger took ~5½ min to

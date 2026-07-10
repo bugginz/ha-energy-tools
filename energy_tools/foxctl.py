@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.67.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.67.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
             "four4free": {
                 "label": "GloBird Four4Free",
                 "supply_c": 134.2,
-                "free": {"start": 10, "end": 14, "free_kwh": 50, "excess_c": 26.4},
+                "free": {"start": 11, "end": 15, "free_kwh": 50, "excess_c": 26.4},   # confirmed 2026-07-10 (was 10-14 in the marketing blurb)
                 "peak": {"start": 16, "end": 23, "c": 59.95},
                 "shoulder_c": 37.51,
                 "fit_peak_c": 8.0, "fit_else_c": 0.0,
