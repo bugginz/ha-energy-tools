@@ -2980,7 +2980,7 @@ def chart_svg(snap: dict) -> str:
         dh = (ss.get("end", 0) - ss.get("start", 0)) / 3600.0
         akw = (ss.get("kwh", 0.0) / dh) if dh > 0.02 else (ss.get("peak_kw") or 0.0)
         act_blocks.append((max(a, -24.0), min(b, 0.0), akw))
-    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 24, 30
+    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 40, 30   # pT fits two legend rows at 15px text
     iw, ih = W - pL - pR, Ht - pT - pB
     peak_act = max([k for *_, k in act_blocks], default=0.0)
     ymax = max(max(sol_all), max(use_all), car_kw, peak_act, 1.0) * 1.15
@@ -3055,7 +3055,7 @@ def chart_svg(snap: dict) -> str:
         lbl = "Car (solid = charged · dashed = planned)" if act_blocks else "Car (planned free window)"
         out.append(f'<rect x="{pL+160}" y="4" width="12" height="12" fill="#2e9e5b" fill-opacity="0.5"/>'
                    f'<text x="{pL+176}" y="14" font-size="15" fill="#666666">{lbl}</text>')
-    out.append(f'<text x="{W-pR}" y="14" font-size="14" fill="#999999" text-anchor="end">'
+    out.append(f'<text x="{W-pR}" y="32" font-size="14" fill="#999999" text-anchor="end">'
                f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')
     return "".join(out)
@@ -3236,7 +3236,7 @@ def daily_svg(snap: dict) -> str:
         nonlocal lx
         out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
                    f'<text x="{lx+15}" y="15" font-size="14" fill="#666666">{text}</text>')
-        lx += 34 + (len(text) - 4) * 7.0
+        lx += 34 + (len(text) - 4) * 8.0   # ~8px/char at 14px text
 
     for key, colour, label in _OVERLAY_METRICS:                 # kWh metrics on the left axis
         series = [d[key] for d in days if d.get(key)]
