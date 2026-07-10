@@ -54,6 +54,7 @@ fc["ev_divert"] = {
     "floor_guard": bool(opt.get("ev_floor_guard", True)),
     "predawn_import_stop_kw": float(opt.get("ev_predawn_import_stop_kw", 0.5)),
     "guard_grace_min": int(opt.get("ev_guard_grace_min", 10)),
+    "supply_cap_kw": float(opt.get("ev_supply_cap_kw", 14.5)),
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),

@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.67.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.68.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -132,7 +132,10 @@ DEFAULT_CONFIG = {
     # Solar diversion: turn a car-charger power point ON when export is too cheap to bother to sell,
     # OFF otherwise. Needs control.allow_control. switch="" disables. Tracked via ev_power_entity.
     "ev_divert": {"switch": "", "feedin_max": 0.10, "allow_grid": True,
-                  "free_window_charge": True,   # in the free tariff window, top the car once the battery is full
+                  "free_window_charge": True,   # in the free tariff window, run the car alongside the battery fill
+                  # Supply headroom for simultaneous free-window charging: battery force-charge +
+                  # house + car must fit under the grid connection's max import (~60A observed 14.5kW).
+                  "supply_cap_kw": 14.5,
                   "min_export_kw": 1.0, "min_dwell_min": 10,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
@@ -1284,40 +1287,58 @@ def ev_predawn_budget(soc, cap_kwh, floor_soc, load_to_window_kwh):
                                      "load_to_window_kwh": round(load, 2)}
 
 
+def _car_draw_est(snap):
+    """Expected car draw (kW) for supply-headroom planning: the biggest recent measured session
+    peak (portable charger ~2.4 kW — NOT the 7 kW nameplate), else a conservative 2.5."""
+    peaks = [s.get("peak_kw") for s in ((snap.get("car") or {}).get("sessions") or [])[:5]]
+    peaks = [p for p in peaks if isinstance(p, (int, float)) and p > 0.3]
+    return max(peaks) if peaks else 2.5
+
+
 def ev_divert_decision(snap, ev):
-    """Pure policy: should the car charger be ON this cycle? Two ways to say yes:
-      1. FREE window — once the house battery is full, soak remaining FREE grid energy into the car
-         (cap-aware, 0c) so spare free capacity is used rather than wasted.
+    """Policy: should the car charger be ON this cycle? Two ways to say yes:
+      1. FREE window — 0c grid: run the car ALONGSIDE the battery fill as long as the supply
+         can carry both (cap- and headroom-aware).
       2. Spare SOLAR — divert export ≥ min_export_kw into the car (battery fills to survival first).
-    Never steals power while the inverter is selling or force-charging. (want, why)."""
+    Never steals power while the inverter is selling, or force-charging on PAID power.
+    Reads _EV["on"] for the headroom deadband. (want, why)."""
     feedin_power = snap.get("feedin_power") or 0.0
     soc = snap.get("soc")
-    # SAFETY: never divert to the car while the inverter is actively SELLING (export→grid) or
-    # FORCE-CHARGING the battery toward a target it's still well below — plugging in would steal that
-    # power (drain export revenue / starve the critical battery fill). Yields to the battery scheduler.
+    # SAFETY: never divert to the car while the inverter is actively SELLING (export→grid) —
+    # plugging in would drain export revenue.
     rec = snap.get("recommendation") or {}
     active = (snap.get("scheduler") or {}).get("active") or {}
     if rec.get("force_discharge") or active.get("mode") == "ForceDischarge":
         return False, "battery is selling to grid — car held off (don't redirect export)"
-    target = (snap.get("dynamic") or {}).get("target_soc")
-    if (rec.get("force_charge") or active.get("mode") == "ForceCharge") and isinstance(soc, (int, float)) \
-            and isinstance(target, (int, float)) and soc < target - 5:
-        return False, f"battery force-charging to {target}% (now {soc:.0f}%) — car held off"
-    # 1) FREE window: once the battery is full, put the car on to soak remaining free grid energy (0c),
-    #    capped by the daily free_kwh headroom. This is what makes spare free capacity actually get used.
+    # 1) FREE window: grid is 0c — the car charges WHILE the battery force-charges (2026-07-10
+    #    user request; battery-full is no longer a precondition). The ~60A supply must carry
+    #    battery force-charge + house + car: to START, current import plus the car's expected
+    #    draw must fit under supply_cap_kw; a RUNNING car (its draw now inside grid_power) stays
+    #    until import exceeds the cap. free_kwh/day + session caps still apply.
     dyn = snap.get("dynamic") or {}
     free = (dyn.get("tariff") or {}).get("free") or {}
-    max_soc = dyn.get("max_soc")
     if free and ev.get("free_window_charge", True) and ev.get("allow_grid", True):
         now = datetime.now(); h = now.hour + now.minute / 60.0
         if _in_window(free, h):
             free_left = (snap.get("money") or {}).get("free_left_kwh")
-            if isinstance(max_soc, (int, float)) and isinstance(soc, (int, float)) and soc < max_soc - 2:
-                return False, f"free window — battery filling to {max_soc:.0f}% first (now {soc:.0f}%)"
             if isinstance(free_left, (int, float)) and free_left <= 1:
                 return False, f"free {free.get('free_kwh', 50):g}kWh/day cap used up — car would pay {free.get('excess_c', '')}c"
             fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
-            return True, f"free window · battery full · {fl} → car (0c)"
+            cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
+            gp = snap.get("grid_power")
+            if cap_kw > 0 and isinstance(gp, (int, float)):
+                if _EV.get("on") and gp > cap_kw:
+                    return False, f"free window: import {gp:.1f}kW over the {cap_kw:g}kW supply cap — car pauses"
+                if not _EV.get("on") and gp + _car_draw_est(snap) > cap_kw:
+                    return False, (f"free window: battery+house importing {gp:.1f}kW — no headroom "
+                                   f"for the car under the {cap_kw:g}kW supply cap")
+            return True, f"free window · car + battery together ({fl})"
+    # SAFETY: outside the free window a force-charge runs on PAID power (pre-peak shoulder
+    # top-up, manual force charge) — never let the car compete with that fill.
+    target = (snap.get("dynamic") or {}).get("target_soc")
+    if (rec.get("force_charge") or active.get("mode") == "ForceCharge") and isinstance(soc, (int, float)) \
+            and isinstance(target, (int, float)) and soc < target - 5:
+        return False, f"battery force-charging to {target}% (now {soc:.0f}%) — car held off"
     # 2) Spare solar
     if feedin_power < ev.get("min_export_kw", 1.0):
         return False, "no spare solar export"
@@ -2096,9 +2117,9 @@ def charge_advisor(snap, profile, strat):
     if _in_window(free, h):
         if isinstance(free_left, (int, float)) and free_left <= 1:
             return _r("avoid", f"free {free.get('free_kwh',50):g}kWh cap used up — car would pay {free.get('excess_c','')}c", fe)
-        if battery_full:
-            return _r("good", f"FREE window until {fe}:00 · {free_left:g}kWh free left — plug in now (0c)", fe)
-        return _r("ok", f"free window, battery still filling first — car charges once it's full", fe)
+        fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
+        note = "" if battery_full else " — car and battery charge together"
+        return _r("good", f"FREE window until {fe}:00 · {fl} — plug in now (0c){note}", fe)
     if feedin >= min_exp:
         return _r("good", f"spare solar {feedin:.1f}kW exporting now — divert it to the car")
     solar_rem = (snap.get("solar_forecast") or {}).get("remaining_today") or 0.0

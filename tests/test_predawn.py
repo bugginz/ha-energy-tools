@@ -311,6 +311,84 @@ class SafetyHoldTest(unittest.TestCase):
         self.assertIn("car held off", out)
 
 
+class _FakeDT:
+    """Stand-in for foxctl.datetime with a fixed clock."""
+    def __init__(self, dt):
+        self._dt = dt
+    def now(self):
+        return self._dt
+    def __getattr__(self, name):
+        import datetime as _d
+        return getattr(_d.datetime, name)
+
+
+class SimultaneousFreeWindowTest(unittest.TestCase):
+    """Free window: the car charges ALONGSIDE the battery fill (2026-07-10), bounded by the
+    supply cap — start needs import + expected car draw under the cap; a running car stays
+    until import exceeds it. The force-charge hold only applies OUTSIDE the free window."""
+
+    def setUp(self):
+        self._ev = dict(foxctl._EV)
+        foxctl._EV.update({"on": False, "last_change": 0.0, "override_until": 0.0,
+                           "lowdraw_since": 0.0, "session_day": None,
+                           "session_start_kwh": None, "capped": False,
+                           "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None})
+
+    def tearDown(self):
+        foxctl._EV.clear(); foxctl._EV.update(self._ev)
+
+    def snap(self, grid_kw, free_left=40.0, soc=50):
+        return {"soc": soc, "grid_power": grid_kw, "feedin_power": 0.0,
+                "recommendation": {"force_charge": True},
+                "scheduler": {"enabled": True,
+                              "active": {"mode": "ForceCharge", "window": "11:00-15:00"}},
+                "dynamic": {"target_soc": 100,
+                            "tariff": {"free": {"start": 11, "end": 15,
+                                                "free_kwh": 50, "excess_c": 26.4}}},
+                "money": {"free_left_kwh": free_left},
+                "car": {"sessions": [{"peak_kw": 2.4}]}}
+
+    EV = {"free_window_charge": True, "allow_grid": True, "supply_cap_kw": 14.5,
+          "min_export_kw": 1.0}
+
+    def decide(self, snap, hour=12):
+        import datetime as _d
+        with mock.patch.object(foxctl, "datetime",
+                               _FakeDT(_d.datetime(2026, 7, 10, hour, 0))):
+            return foxctl.ev_divert_decision(snap, dict(self.EV))
+
+    def test_car_joins_battery_fill_with_headroom(self):
+        want, why = self.decide(self.snap(grid_kw=11.0))       # 11.0 + 2.4 < 14.5
+        self.assertTrue(want)
+        self.assertIn("car + battery together", why)
+
+    def test_no_start_without_headroom(self):
+        want, why = self.decide(self.snap(grid_kw=12.5))       # 12.5 + 2.4 > 14.5
+        self.assertFalse(want)
+        self.assertIn("no headroom", why)
+
+    def test_running_car_survives_to_the_cap(self):
+        foxctl._EV["on"] = True
+        want, why = self.decide(self.snap(grid_kw=14.0))       # includes car draw, <= cap
+        self.assertTrue(want)
+
+    def test_running_car_pauses_over_the_cap(self):
+        foxctl._EV["on"] = True
+        want, why = self.decide(self.snap(grid_kw=15.2))
+        self.assertFalse(want)
+        self.assertIn("supply cap", why)
+
+    def test_free_cap_exhausted_still_blocks(self):
+        want, why = self.decide(self.snap(grid_kw=11.0, free_left=0.5))
+        self.assertFalse(want)
+        self.assertIn("cap used up", why)
+
+    def test_force_charge_hold_still_applies_outside_window(self):
+        want, why = self.decide(self.snap(grid_kw=2.0), hour=16)   # pre-peak top-up hours
+        self.assertFalse(want)
+        self.assertIn("car held off", why)
+
+
 class SchedulerViewTest(unittest.TestCase):
     """_scheduler_view: an enabled group is only ACTIVE while the clock is inside its
     window (2026-07-10: a persisted 10:00-14:00 group read as 'force-charging' at 2am,

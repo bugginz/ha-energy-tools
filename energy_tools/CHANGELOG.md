@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.68.0 — free window: car charges ALONGSIDE the battery fill
+
+Battery-full is no longer a precondition for the free-window car soak — the ~60A supply
+carries the battery force-charge (10.5 kW) + house + car (~2.4 kW measured) with headroom
+to spare, so waiting wasted free-window hours. New `ev_supply_cap_kw` (default 14.5,
+the observed max import): the car starts only if current import + its expected draw
+(biggest recent session peak, not the 7 kW nameplate) fits under the cap, and pauses if
+import exceeds it. The force-charge safety hold now applies only OUTSIDE the free window
+(pre-peak shoulder top-up, manual force charge — paid power). Charge advisor text
+harmonised: free window now reads "plug in now (0c) — car and battery charge together"
+instead of the contradictory "battery filling first".
+
 ## 1.67.3 — four4free free window corrected to 11:00–15:00
 
 User-confirmed with GloBird 2026-07-10; the profile had 10:00–14:00. Moves the money
