@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.69.0 — grid decisions read the local CT clamp
+
+The A1 Meross clamp on the grid main (seconds-fresh, +import/−export, verified by
+force-sell test) now feeds foxctl's grid-power decisions, with the cloud FoxESS value
+(up to ~5 min stale) as fallback: new `ha.grid_power_entity` (default
+`sensor.grid_main_power_local`) → `snap.grid_power_live` → `_gp_now()` used by the
+free-window supply-cap headroom check and the pre-dawn import abort. New **fast-guard
+thread** polls the clamp every 20 s while a charge session runs and cuts the car within
+~40 s of sustained import over the supply cap (any hour, override included — it protects
+the service fuse) or over the pre-dawn battery-only threshold (override exempt) — the
+5-minute main loop alone could ride a kettle-on-top-of-car spike for minutes.
+
 ## 1.68.2 — phone-readable dashboard
 
 Charts no longer shrink below ~700px on small screens (pan sideways instead — the 720px

@@ -7,6 +7,7 @@
   "url": "http://homeassistant.local:8123",
   "token_file": "~/.config/sen66/ha_token",
   "demand_window_entity": "binary_sensor.home_demand_window",
+  "grid_power_entity": "sensor.grid_main_power_local",
   "soc_entity": "sensor.foxess_bat_soc",
   "pv_entity": "sensor.foxess_pv_power",
   "load_entity": "sensor.foxess_load_power",

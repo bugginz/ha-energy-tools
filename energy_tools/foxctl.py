@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.68.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.69.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -56,6 +56,10 @@ DEFAULT_CONFIG = {
         "url": "http://homeassistant.local:8123",
         "token_file": "~/.config/sen66/ha_token",
         "demand_window_entity": "binary_sensor.home_demand_window",
+        # Local grid-main CT clamp (Meross A1, seconds-fresh, +import/−export in W). Preferred
+        # over cloud FoxESS grid_power (up to ~5 min stale) for the EV supply-cap headroom
+        # guard and pre-dawn import abort. "" disables → FoxESS only.
+        "grid_power_entity": "sensor.grid_main_power_local",
         # Read inverter telemetry from HA (foxess-ha integration) to avoid a 2nd FoxESS poller.
         "soc_entity": "sensor.foxess_bat_soc",
         "pv_entity": "sensor.foxess_pv_power",
@@ -407,6 +411,28 @@ class HAClient:
             return self._state(entity).get("attributes") or {}
         except Exception:
             return {}
+
+    def get_power_kw_fresh(self, entity: str, max_age_s: float = 180.0):
+        """A power entity (W or kW) as kW, ONLY if HA updated it within max_age_s — for
+        sensors where acting on stale data is worse than having none (the local grid CT).
+        Returns (kw, age_s) or (None, None) on missing/stale/non-numeric."""
+        if not entity:
+            return None, None
+        try:
+            st = self._state(entity)
+            val = float(st["state"])
+            upd = str(st.get("last_updated") or "")
+            age = None
+            if upd:
+                ts = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+                age = (datetime.now(ts.tzinfo) - ts).total_seconds()
+            if age is None or age > max_age_s:
+                return None, None
+            unit = str((st.get("attributes") or {}).get("unit_of_measurement") or "").lower()
+            kw = val if unit == "kw" else val / 1000.0
+            return round(kw, 3), round(age, 1)
+        except Exception:
+            return None, None
 
     def get_forecasts(self, entity: str, kind: str = "daily"):
         """Call weather.get_forecasts and return the forecast list (or []). Modern HA weather entities
@@ -1287,6 +1313,13 @@ def ev_predawn_budget(soc, cap_kwh, floor_soc, load_to_window_kwh):
                                      "load_to_window_kwh": round(load, 2)}
 
 
+def _gp_now(snap):
+    """Grid power (kW, +import/−export) preferring the LOCAL clamp (seconds-fresh) over the
+    cloud FoxESS value (up to ~5 min stale). grid_power_live is None when absent/stale."""
+    v = snap.get("grid_power_live")
+    return v if isinstance(v, (int, float)) else snap.get("grid_power")
+
+
 def _car_draw_est(snap):
     """Expected car draw (kW) for supply-headroom planning: the biggest recent measured session
     peak (portable charger ~2.4 kW — NOT the 7 kW nameplate), else a conservative 2.5."""
@@ -1325,7 +1358,7 @@ def ev_divert_decision(snap, ev):
                 return False, f"free {free.get('free_kwh', 50):g}kWh/day cap used up — car would pay {free.get('excess_c', '')}c"
             fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
             cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
-            gp = snap.get("grid_power")
+            gp = _gp_now(snap)
             # "Running" = believed on OR actually drawing — a manual session's draw is already
             # inside grid_power, so adding the estimate again would double-count it.
             running = _EV.get("on") or (isinstance(snap.get("ev_kw"), (int, float))
@@ -1440,7 +1473,7 @@ def ev_divert_tick(cfg, snap):
         # Import abort: a dump must be battery-only — if the meter shows sustained import (house spike
         # pushing house+car past inverter discharge), buying at shoulder rates defeats the point.
         if want and why.startswith("pre-dawn"):
-            gp = snap.get("grid_power")
+            gp = _gp_now(snap)
             stop_kw = float(ev.get("predawn_import_stop_kw", 0.5) or 0.0)
             if isinstance(gp, (int, float)) and gp > stop_kw:
                 _EV["import_hits"] = _EV.get("import_hits", 0) + 1
@@ -2223,6 +2256,8 @@ def gather_and_decide(cfg: dict) -> dict:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
     ha = HAClient(cfg["ha"]["url"], ha_token)
+    # Local grid-main CT (A1 clamp, seconds-fresh, +import/−export) — None if absent/stale.
+    gp_live, gp_live_age = ha.get_power_kw_fresh(cfg["ha"].get("grid_power_entity"), 180.0)
 
     # foxctl is the SINGLE FoxESS poller: telemetry comes straight from the FoxESS API each cycle
     # (one call), is published to MQTT for the dashboards, and on a fetch failure we reuse the last
@@ -2477,6 +2512,7 @@ def gather_and_decide(cfg: dict) -> dict:
                 "charging": car_sessions.get("active"),
                 "sessions": car_sessions.get("sessions")},
         "grid_power": round(grid_power, 2),
+        "grid_power_live": gp_live, "grid_power_live_age_s": gp_live_age,
         "feedin_power": round(feedin_power, 2),
         "battery_power": round(battery_power, 2),
         "bat_charge_power": bat_charge_power,
@@ -3625,8 +3661,70 @@ def make_handler(cfg):
     return H
 
 
+FAST_GUARD_POLL_S = 20
+
+
+def fast_guard_loop(cfg):
+    """Seconds-cadence import safety, fed by the LOCAL grid clamp (A1). The main loop only
+    runs every poll_seconds (300s) and FoxESS cloud telemetry is itself minutes stale, so a
+    kettle-on-top-of-car spike could ride over the supply cap for many minutes before the
+    tick noticed. This thread cuts the car switch fast while a session is running:
+      • import > ev.supply_cap_kw (2 consecutive samples) — any hour, incl. UI override
+        (the cap protects the service fuse, not economics);
+      • import > ev.predawn_import_stop_kw (2 samples) while a pre-dawn dump is active
+        (dump must be battery-only) — UI force-charge override exempt.
+    Bookkeeping mirrors a tick cut (_EV on/last_change) so the next tick re-evaluates
+    cleanly; a tick restart can re-trip the guard — bounded flap of ~FAST_GUARD_POLL_S of
+    draw per poll cycle, negligible. No-ops without control, a switch, or a fresh clamp."""
+    ent = (cfg.get("ha") or {}).get("grid_power_entity")
+    sw = (cfg.get("ev_divert") or {}).get("switch")
+    if not (ent and sw and cfg["control"].get("allow_control") and cfg["control"].get("auto_apply")):
+        return
+    try:
+        token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+    except Exception:
+        return
+    ha = HAClient(cfg["ha"]["url"], token)
+    ev = cfg.get("ev_divert") or {}
+    cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
+    stop_kw = float(ev.get("predawn_import_stop_kw", 0.5) or 0.0)
+    hits = 0
+    while True:
+        time.sleep(FAST_GUARD_POLL_S)
+        try:
+            with LAST_LOCK:
+                session_hint = bool((LAST.get("car") or {}).get("charging"))
+                predawn_active = bool((LAST.get("predawn_budget") or {}).get("active"))
+            if not (_EV.get("on") or session_hint):
+                hits = 0
+                continue
+            kw, _age = ha.get_power_kw_fresh(ent, 120.0)
+            if kw is None:
+                hits = 0
+                continue
+            over_cap = cap_kw > 0 and kw > cap_kw
+            over_predawn = (predawn_active and stop_kw > 0 and kw > stop_kw
+                            and time.time() >= _EV.get("override_until", 0.0))
+            hits = hits + 1 if (over_cap or over_predawn) else 0
+            if hits < 2:
+                continue
+            why = (f"fast-guard: importing {kw:.1f}kW > {cap_kw:g}kW supply cap" if over_cap
+                   else f"fast-guard: pre-dawn dump importing {kw:.1f}kW > {stop_kw:g}kW — battery-only rule")
+            ha_call_service(cfg, "switch", "turn_off", sw)
+            _EV["on"], _EV["last_change"] = False, time.time()
+            log_event("ev_divert", f"{why} → car off (local clamp, {FAST_GUARD_POLL_S}s poll)")
+            with LAST_LOCK:
+                if LAST:
+                    LAST["ev_divert"] = f"car charger off ({why})"
+            hits = 0
+        except Exception as e:
+            print(f"fast-guard error: {e}", file=sys.stderr)
+            hits = 0
+
+
 def serve(cfg: dict):
     Thread(target=loop, args=(cfg,), daemon=True).start()
+    Thread(target=fast_guard_loop, args=(cfg,), daemon=True).start()
     host, port = cfg["web"]["host"], cfg["web"]["port"]
     httpd = ThreadingHTTPServer((host, port), make_handler(cfg))
     print(f"foxctl web on http://{host}:{port}  (loop every {cfg['poll_seconds']}s)")

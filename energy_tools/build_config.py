@@ -27,7 +27,8 @@ if opt.get("ev_power_entity"):
 if opt.get("ev_voltage"):
     fc["ha"]["ev_voltage"] = float(opt["ev_voltage"])
 # Weather + AC (Faikin) entities → ha config
-for k in ("weather_entity", "ac_climate_entity", "ac_comp_entity", "ac_fan_entity", "ac_outside_entity"):
+for k in ("weather_entity", "ac_climate_entity", "ac_comp_entity", "ac_fan_entity", "ac_outside_entity",
+          "grid_power_entity"):
     if opt.get(k):
         fc["ha"][k] = opt[k]
 if opt.get("ac_kw_per_hz"):

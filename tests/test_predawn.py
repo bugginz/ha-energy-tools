@@ -118,6 +118,19 @@ class PredawnTickTest(unittest.TestCase):
         svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
         self.assertIn("pre-dawn abort", out2)
 
+    def test_import_abort_uses_local_clamp_when_present(self):
+        # Cloud grid_power says clean (0.0, stale) but the local clamp shows import — abort.
+        foxctl._EV["on"] = True
+        cfg = tick_cfg()
+        snap = tick_snap(predawn_block(3.0), ev_kw=2.4, grid_power=0.0)
+        snap["grid_power_live"] = 1.1
+        with mock.patch.object(foxctl, "ha_call_service") as svc, \
+             mock.patch.object(foxctl, "log_event"):
+            foxctl.ev_divert_tick(cfg, snap)
+            out2 = foxctl.ev_divert_tick(cfg, snap)
+        svc.assert_called_once_with(mock.ANY, "switch", "turn_off", "switch.car")
+        self.assertIn("pre-dawn abort", out2)
+
     def test_import_hits_reset_on_clean_poll(self):
         foxctl._EV["on"] = True
         cfg = tick_cfg()
@@ -382,6 +395,20 @@ class SimultaneousFreeWindowTest(unittest.TestCase):
         want, why = self.decide(self.snap(grid_kw=11.0, free_left=0.5))
         self.assertFalse(want)
         self.assertIn("cap used up", why)
+
+    def test_gp_now_prefers_local_clamp(self):
+        self.assertEqual(foxctl._gp_now({"grid_power": 0.2, "grid_power_live": 13.4}), 13.4)
+        self.assertEqual(foxctl._gp_now({"grid_power": 0.2, "grid_power_live": None}), 0.2)
+        self.assertEqual(foxctl._gp_now({"grid_power": 0.2}), 0.2)
+
+    def test_local_clamp_drives_headroom_check(self):
+        # Cloud value says 0.2kW (stale), the local clamp says 14.9kW — the running car must pause.
+        foxctl._EV["on"] = True
+        s = self.snap(grid_kw=0.2)
+        s["grid_power_live"] = 14.9
+        want, why = self.decide(s)
+        self.assertFalse(want)
+        self.assertIn("supply cap", why)
 
     def test_actual_draw_counts_as_running_no_double_count(self):
         # Manual session: belief off, car drawing 2.3kW already inside grid_power — the
