@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.68.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.68.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2740,6 +2740,14 @@ h1{font-size:1.3rem;font-weight:600;margin:.2rem 0 1rem}
 .chartwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:8px}
 .chartimg{width:calc(100% * var(--cz,1));min-width:100%;height:auto;display:block;border:1px solid #eee;border-radius:8px;background:#fff;cursor:zoom-in}
 .cap{font-size:.8rem;color:#888;margin:.45rem .3rem 0}
+/* Phones: never let a chart render below ~700px wide — pan sideways instead of shrinking
+   the 720px SVG to unreadable ~6px text. Tables get near-body size (overrides inline .82rem). */
+@media(max-width:700px){
+ .chartimg{min-width:700px}
+ table{font-size:1rem!important}
+ .cap,.ctrls{font-size:.95rem}
+ body{margin:.8rem auto}
+}
 .muted{color:#888;padding:1.4rem;text-align:center}
 .ctrls{display:flex;align-items:center;gap:.35rem;font-size:.8rem;color:#888;margin:.4rem .2rem -.4rem}
 .ctrls button{font:inherit;color:inherit;background:transparent;border:1px solid #ccc;border-radius:6px;padding:.05rem .55rem;cursor:pointer;line-height:1.7}
@@ -3002,16 +3010,16 @@ def chart_svg(snap: dict) -> str:
             out.append(f'<rect x="{X(o):.1f}" y="{pT}" width="{X(o+1)-X(o):.1f}" height="{ih}" fill="#2e9e5b" fill-opacity="0.09"/>')
             shaded_free = True
     if shaded_free:
-        out.append(f'<text x="{pL+3}" y="{pT+12}" font-size="11" fill="#2e9e5b">free</text>')
+        out.append(f'<text x="{pL+3}" y="{pT+12}" font-size="13" fill="#2e9e5b">free</text>')
     if shaded_peak:
-        out.append(f'<text x="{W-pR-3}" y="{pT+12}" font-size="11" fill="#b23c3c" text-anchor="end">peak</text>')
+        out.append(f'<text x="{W-pR-3}" y="{pT+12}" font-size="13" fill="#b23c3c" text-anchor="end">peak</text>')
     for f in (0, .25, .5, .75, 1):          # y gridlines + labels
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
-        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
+        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="14" fill="#888888" '
                    f'text-anchor="end">{ymax*f:.1f}</text>')
     for o in range(-24, 25, 6):             # x labels = clock hour at that offset
-        out.append(f'<text x="{X(o):.0f}" y="{Ht-9}" font-size="12" fill="#888888" '
+        out.append(f'<text x="{X(o):.0f}" y="{Ht-9}" font-size="14" fill="#888888" '
                    f'text-anchor="middle">{(H+o)%24:02d}</text>')
     # solar fill under the whole combined curve
     area = (f"{X(-24):.1f},{Y(0):.1f} "
@@ -3033,21 +3041,21 @@ def chart_svg(snap: dict) -> str:
     # NOW divider
     out.append(f'<line x1="{NOW:.1f}" y1="{pT}" x2="{NOW:.1f}" y2="{pT+ih}" '
                f'stroke="#c0392b" stroke-width="1.5" stroke-dasharray="2 3"/>')
-    out.append(f'<text x="{NOW:.1f}" y="{pT-9}" font-size="12" fill="#c0392b" text-anchor="middle">now</text>')
+    out.append(f'<text x="{NOW:.1f}" y="{pT-9}" font-size="14" fill="#c0392b" text-anchor="middle">now</text>')
     # past (solid) then future (dashed), solar then usage
     out.append(poly(psol, -24, "#e0a800", False))
     out.append(poly(fsol, 0, "#e0a800", True))
     out.append(poly(puse, -24, "#8e44ad", False))
     out.append(poly(fuse, 0, "#8e44ad", True))
     out.append(f'<rect x="{pL+4}" y="4" width="12" height="12" fill="#e0a800"/>'
-               f'<text x="{pL+20}" y="14" font-size="13" fill="#666666">Solar</text>')
+               f'<text x="{pL+20}" y="14" font-size="15" fill="#666666">Solar</text>')
     out.append(f'<rect x="{pL+80}" y="4" width="12" height="12" fill="#8e44ad"/>'
-               f'<text x="{pL+96}" y="14" font-size="13" fill="#666666">Usage</text>')
+               f'<text x="{pL+96}" y="14" font-size="15" fill="#666666">Usage</text>')
     if car_windows or act_blocks:
         lbl = "Car (solid = charged · dashed = planned)" if act_blocks else "Car (planned free window)"
         out.append(f'<rect x="{pL+160}" y="4" width="12" height="12" fill="#2e9e5b" fill-opacity="0.5"/>'
-                   f'<text x="{pL+176}" y="14" font-size="13" fill="#666666">{lbl}</text>')
-    out.append(f'<text x="{W-pR}" y="14" font-size="12" fill="#999999" text-anchor="end">'
+                   f'<text x="{pL+176}" y="14" font-size="15" fill="#666666">{lbl}</text>')
+    out.append(f'<text x="{W-pR}" y="14" font-size="14" fill="#999999" text-anchor="end">'
                f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')
     return "".join(out)
@@ -3193,7 +3201,7 @@ def daily_svg(snap: dict) -> str:
     allvals = [v for d in days for key, _, _ in _OVERLAY_METRICS
                for a in [d.get(key)] if a for v in a]
     if not days or not allvals:
-        out.append(f'<text x="{W/2}" y="{Ht/2}" font-size="14" fill="#999999" text-anchor="middle">'
+        out.append(f'<text x="{W/2}" y="{Ht/2}" font-size="16" fill="#999999" text-anchor="middle">'
                    f'no daily history yet — fills in as the forecast store backfills</text></svg>')
         return "".join(out)
     ymax = max(allvals) * 1.12
@@ -3203,13 +3211,13 @@ def daily_svg(snap: dict) -> str:
     for f in (0, .25, .5, .75, 1):                      # y grid + left kWh labels (+ right % labels)
         y = pT + ih * (1 - f)
         out.append(f'<line x1="{pL}" y1="{y:.1f}" x2="{W-pR}" y2="{y:.1f}" stroke="#dddddd" stroke-width="1"/>')
-        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="12" fill="#888888" '
+        out.append(f'<text x="{pL-7}" y="{y+4:.1f}" font-size="14" fill="#888888" '
                    f'text-anchor="end">{ymax*f:.1f}</text>')
         if has_soc:
-            out.append(f'<text x="{W-pR+7}" y="{y+4:.1f}" font-size="12" fill="{_SOC_COLOUR}" '
+            out.append(f'<text x="{W-pR+7}" y="{y+4:.1f}" font-size="14" fill="{_SOC_COLOUR}" '
                        f'text-anchor="start">{100*f:.0f}%</text>')
     for h in range(0, 24, 3):                           # x hour-of-day labels
-        out.append(f'<text x="{X(h):.0f}" y="{Ht-10}" font-size="11" fill="#888888" '
+        out.append(f'<text x="{X(h):.0f}" y="{Ht-10}" font-size="13" fill="#888888" '
                    f'text-anchor="middle">{h:02d}</text>')
 
     def band(lo, hi, colour, yfn):
@@ -3227,7 +3235,7 @@ def daily_svg(snap: dict) -> str:
     def legend(colour, text):
         nonlocal lx
         out.append(f'<rect x="{lx}" y="6" width="11" height="11" fill="{colour}"/>'
-                   f'<text x="{lx+15}" y="15" font-size="12" fill="#666666">{text}</text>')
+                   f'<text x="{lx+15}" y="15" font-size="14" fill="#666666">{text}</text>')
         lx += 34 + (len(text) - 4) * 7.0
 
     for key, colour, label in _OVERLAY_METRICS:                 # kWh metrics on the left axis
@@ -3249,7 +3257,7 @@ def daily_svg(snap: dict) -> str:
         out.append(line(savg, _SOC_COLOUR, 2.6, Ysoc, dash="5 3"))
         legend(_SOC_COLOUR, f"SoC ⌀{sum(savg)/24:.0f}%")
     tail = "band = spread across days" if ndays > 1 else "single day"
-    out.append(f'<text x="{W-pR}" y="15" font-size="12" fill="#999999" text-anchor="end">'
+    out.append(f'<text x="{W-pR}" y="15" font-size="14" fill="#999999" text-anchor="end">'
                f'{ndays} day(s) · {tail}</text>')
     out.append('</svg>')
     return "".join(out)
@@ -3338,9 +3346,10 @@ def render(snap: dict, cfg: dict) -> str:
 <div class=ctrls>Chart size <button data-cz="-0.25" aria-label="smaller">−</button><span class=cz id=czl>100%</span><button data-cz="0.25" aria-label="bigger">+</button><button data-cz="0">fit</button><span style="opacity:.7">· tap a chart to enlarge</span></div>
 <div class=chart><div style="font-size:.9rem;color:#888;margin:.1rem .3rem .4rem">Last 24 hours (measured) → next 24 hours (forecast) — solar vs house usage</div>
 <div id=chart><div class=chartwrap><img class=chartimg src="api/chart.svg?t={tb}" alt="Past 24h measured and next 24h forecast — solar vs house usage"></div>
-<div class=cap>{chart_caption(snap)}</div>{chart_stats_html(snap)}{forecast_table_html(snap)}{charge_log_html(snap)}</div>
+<div class=cap>{chart_caption(snap)} · <a href="api/chart.svg" target="_blank" rel="noopener">open full-size ↗</a></div>{chart_stats_html(snap)}{forecast_table_html(snap)}{charge_log_html(snap)}</div>
 <div style="font-size:.9rem;color:#888;margin:.9rem .3rem .4rem">Day by day — usage, solar &amp; battery SoC spread (band = day-to-day range, bold = average)</div>
-<div class=chartwrap><img class=chartimg src="api/daily.svg?t={tb}" alt="Each day's 24-hour usage, solar and battery SoC profile, with the day-to-day spread band"></div></div>
+<div class=chartwrap><img class=chartimg src="api/daily.svg?t={tb}" alt="Each day's 24-hour usage, solar and battery SoC profile, with the day-to-day spread band"></div>
+<div class=cap><a href="api/daily.svg" target="_blank" rel="noopener">open full-size ↗</a></div></div>
 <p><small>auto-refresh 60s · <a href="api/chart">chart debug</a> · <a href="api/state">full state</a></small></p>
 <div id=lb><div class=hint>tap anywhere to close</div><img id=lbimg alt="enlarged chart"></div>
 <script>{JS}</script>
@@ -3430,7 +3439,7 @@ def make_handler(cfg):
                     svg = chart_svg(snap)
                 except Exception as e:
                     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="60">'
-                           f'<text x="8" y="36" font-size="14" fill="#c0392b">chart error: '
+                           f'<text x="8" y="36" font-size="16" fill="#c0392b">chart error: '
                            f'{type(e).__name__}: {e}</text></svg>')
                 self._send(200, svg, "image/svg+xml")
             elif self.path.startswith("/api/daily.svg"):
@@ -3441,7 +3450,7 @@ def make_handler(cfg):
                     svg = daily_svg(snap)
                 except Exception as e:
                     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="720" height="60">'
-                           f'<text x="8" y="36" font-size="14" fill="#c0392b">daily chart error: '
+                           f'<text x="8" y="36" font-size="16" fill="#c0392b">daily chart error: '
                            f'{type(e).__name__}: {e}</text></svg>')
                 self._send(200, svg, "image/svg+xml")
             elif self.path.startswith("/api/chart"):

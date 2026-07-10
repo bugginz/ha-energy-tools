@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.68.2 — phone-readable dashboard
+
+Charts no longer shrink below ~700px on small screens (pan sideways instead — the 720px
+SVG at iPhone width rendered ~6px text), all SVG chart text is 2px bigger, tables render
+at near-body size on phones, and each chart has an "open full-size ↗" link that escapes
+the HA app webview into Safari where pinch-zoom works natively.
+
 ## 1.68.1 — headroom check: actual draw counts as running
 
 A session foxctl didn't start (manual flip) is already inside grid_power — the start-check
