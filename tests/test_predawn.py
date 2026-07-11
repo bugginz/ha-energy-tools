@@ -425,6 +425,26 @@ class SimultaneousFreeWindowTest(unittest.TestCase):
         self.assertIn("car held off", why)
 
 
+class AttributeEvKwTest(unittest.TestCase):
+    """Draw on the shared plug only counts as the car while the car's relay is ON
+    (2026-07-11: outdoor heater on the spare socket tripped the floor-guard all evening)."""
+
+    def test_relay_off_zeroes_draw(self):
+        kw, src = foxctl._attribute_ev_kw(1.5, "off", "entity x")
+        self.assertEqual(kw, 0.0)
+        self.assertIn("ignoring 1.50kW", src)
+
+    def test_relay_on_keeps_draw(self):
+        self.assertEqual(foxctl._attribute_ev_kw(2.4, "on", "s"), (2.4, "s"))
+
+    def test_unavailable_fails_toward_guarding(self):
+        self.assertEqual(foxctl._attribute_ev_kw(2.4, "unavailable", "s"), (2.4, "s"))
+        self.assertEqual(foxctl._attribute_ev_kw(2.4, None, "s"), (2.4, "s"))
+
+    def test_relay_off_no_draw_untouched(self):
+        self.assertEqual(foxctl._attribute_ev_kw(0.0, "off", "s"), (0.0, "s"))
+
+
 class SchedulerViewTest(unittest.TestCase):
     """_scheduler_view: an enabled group is only ACTIVE while the clock is inside its
     window (2026-07-10: a persisted 10:00-14:00 group read as 'force-charging' at 2am,

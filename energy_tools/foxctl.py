@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.69.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.69.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -634,6 +634,16 @@ def _csess_summary(kw):
     return {"active": active, "now_kw": round(kw, 2) if isinstance(kw, (int, float)) else None,
             "today_kwh": round(sum(s["kwh"] for s in out if s["end"] >= mid), 2),
             "sessions": out[:_CS_KEEP]}
+
+
+def _attribute_ev_kw(ev_kw, switch_state, source):
+    """Pure: zero the measured EV draw when the car's relay reads firmly 'off' — the plug's
+    power sensor spans both sockets, so draw with the relay off is some OTHER appliance
+    (outdoor heater on the spare socket). 'unavailable'/None keeps the draw (fail toward
+    guarding: during a flaky read a real manual session must still be cuttable)."""
+    if switch_state == "off" and isinstance(ev_kw, (int, float)) and ev_kw >= 0.05:
+        return 0.0, f"{source} (relay off — ignoring {ev_kw:.2f}kW on the shared plug)"
+    return ev_kw, source
 
 
 def track_charge_session(cfg, ev_kw, ev_cum_kwh, now=None):
@@ -2289,6 +2299,11 @@ def gather_and_decide(cfg: dict) -> dict:
     # charger switch (companion power sensor / live-watt attribute). Read here so it feeds the
     # energy counters and lets base-load usage be measured minus the car.
     ev_kw, ev_power_source = resolve_ev_power(ha, cfg)
+    # The plug's power sensor covers BOTH its sockets — only attribute draw to the car while
+    # the car's own relay is actually on (2026-07-11: the outdoor heater on the spare socket
+    # read as a 1.5 kW "manual car session" and the floor-guard no-op-cut it all evening).
+    ev_switch_state = ha.get_state((cfg.get("ev_divert") or {}).get("switch") or "")
+    ev_kw, ev_power_source = _attribute_ev_kw(ev_kw, ev_switch_state, ev_power_source)
     # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
@@ -2528,6 +2543,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "load_kw": round(load, 2),
         "ev_kw": round(ev_kw, 2) if isinstance(ev_kw, (int, float)) else ev_kw,
         "ev_power_source": ev_power_source,
+        "ev_switch_state": ev_switch_state,
         "solar_surplus_kw": round(pv - load, 2),
         "telemetry_source": tsrc,
         "fox_error": fox_error_status(),

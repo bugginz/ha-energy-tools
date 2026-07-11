@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.69.1 — plug draw only counts as the car while the car's relay is ON
+
+The 6294HA's power sensor spans both its sockets; the outdoor heater on the spare socket
+read as a 1.5 kW "manual car session" and the floor-guard no-op-cut the (already off) car
+relay every grace interval all evening. `_attribute_ev_kw` zeroes the measured draw when
+the car's relay reads firmly "off" (unavailable/unknown keeps it — fail toward guarding),
+which also keeps heater watts out of the car session log and EV energy counters.
+`snap.ev_switch_state` exposed. Proper per-socket attribution arrives with the MeatPi.
+
 ## 1.69.0 — grid decisions read the local CT clamp
 
 The A1 Meross clamp on the grid main (seconds-fresh, +import/−export, verified by
