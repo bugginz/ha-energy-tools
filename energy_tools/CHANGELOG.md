@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.70.1 — four4free free window back to 10:00–14:00
+
+GloBird confirmed 10:00–14:00 (2026-07-13) — the 11:00–15:00 advice of 07-10 was wrong,
+so this reverts 1.67.3's window change. The user's hand-programmed inverter schedule
+needs the matching change in the FoxESS app (foxctl won't touch it, per the 1.70.0
+directive).
+
 ## 1.70.0 — foxctl never touches the user's inverter schedule
 
 USER DIRECTIVE: the hand-programmed schedule (11:00–15:00 fill) is untouchable; foxctl

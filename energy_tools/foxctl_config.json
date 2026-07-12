@@ -69,8 +69,8 @@
     "label": "GloBird Four4Free",
     "supply_c": 134.2,
     "free": {
-     "start": 11,
-     "end": 15,
+     "start": 10,
+     "end": 14,
      "free_kwh": 50,
      "excess_c": 26.4
     },
