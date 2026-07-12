@@ -425,6 +425,82 @@ class SimultaneousFreeWindowTest(unittest.TestCase):
         self.assertIn("car held off", why)
 
 
+class SchedulerGroupPreservationTest(unittest.TestCase):
+    """USER DIRECTIVE 2026-07-12: the hand-programmed schedule group is untouchable —
+    foxctl only adds/removes its OWN group, and never blind-disables on a flaky read."""
+
+    USER = {"startHour": 11, "startMinute": 0, "endHour": 15, "endMinute": 0,
+            "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100, "fdPwr": 10500, "enable": 1}
+
+    class FakeFox:
+        sn = "SN"
+        def __init__(self, raw):
+            self.raw, self.calls = raw, []
+        def scheduler(self):
+            return self.raw
+        def call(self, path, body):
+            self.calls.append((path, body))
+            return {"ok": 1}
+
+    def setUp(self):
+        import tempfile
+        self.cfg = {"state_dir": tempfile.mkdtemp()}
+        foxctl._SCHED.update({"loaded": False, "mine_key": None, "user_groups": []})
+
+    def tearDown(self):
+        foxctl._SCHED.update({"loaded": False, "mine_key": None, "user_groups": []})
+
+    def mine(self):
+        return foxctl._sched_group((15, 3), (16, 0), "ForceCharge", 10, 100, 10.5)
+
+    def test_write_preserves_user_groups(self):
+        fox = self.FakeFox({"enable": 1, "groups": [dict(self.USER)]})
+        g = self.mine()
+        foxctl.scheduler_write_own(self.cfg, fox, g)
+        path, body = fox.calls[-1]
+        self.assertIn("scheduler/enable", path)
+        self.assertEqual(body["groups"], [self.USER, g])
+        self.assertEqual(foxctl._SCHED["mine_key"], foxctl._group_key(g))
+
+    def test_clear_removes_only_ours_and_keeps_master_flag(self):
+        g = self.mine()
+        foxctl._SCHED.update({"loaded": True, "mine_key": foxctl._group_key(g)})
+        fox = self.FakeFox({"enable": 1, "groups": [dict(self.USER), g]})
+        foxctl.scheduler_clear_own(self.cfg, fox)
+        path, body = fox.calls[-1]
+        self.assertIn("scheduler/enable", path)          # NOT set/flag
+        self.assertEqual(body["groups"], [self.USER])
+
+    def test_clear_disables_master_only_when_no_user_groups(self):
+        g = self.mine()
+        foxctl._SCHED.update({"loaded": True, "mine_key": foxctl._group_key(g)})
+        fox = self.FakeFox({"enable": 1, "groups": [g]})
+        foxctl.scheduler_clear_own(self.cfg, fox)
+        path, body = fox.calls[-1]
+        self.assertIn("set/flag", path)
+        self.assertEqual(body["enable"], 0)
+
+    def test_flaky_read_uses_cached_user_groups(self):
+        foxctl._SCHED.update({"loaded": True, "user_groups": [dict(self.USER)]})
+        fox = self.FakeFox(None)                          # scheduler/get flake
+        g = self.mine()
+        foxctl.scheduler_write_own(self.cfg, fox, g)
+        _, body = fox.calls[-1]
+        self.assertEqual(body["groups"], [self.USER, g])
+
+    def test_clear_refuses_blind_disable_on_flake(self):
+        foxctl._SCHED.update({"loaded": True, "mine_key": foxctl._group_key(self.mine())})
+        fox = self.FakeFox(None)                          # flake + empty cache
+        self.assertIsNone(foxctl.scheduler_clear_own(self.cfg, fox))
+        self.assertEqual(fox.calls, [])
+
+    def test_clear_noop_when_nothing_is_ours(self):
+        foxctl._SCHED.update({"loaded": True})
+        fox = self.FakeFox({"enable": 1, "groups": [dict(self.USER)]})
+        self.assertIsNone(foxctl.scheduler_clear_own(self.cfg, fox))
+        self.assertEqual(fox.calls, [])
+
+
 class AttributeEvKwTest(unittest.TestCase):
     """Draw on the shared plug only counts as the car while the car's relay is ON
     (2026-07-11: outdoor heater on the spare socket tripped the floor-guard all evening)."""

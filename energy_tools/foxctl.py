@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.69.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.70.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -744,6 +744,89 @@ _OV = {"floor": None, "sell": None, "manual": None, "loaded": False}
 
 def _state_dir(cfg):
     return Path(cfg.get("state_dir") or str(Path.home() / "foxctl"))
+
+
+# ---------------------------------------------------------- scheduler groups --
+# USER DIRECTIVE (2026-07-12): the hand-programmed inverter schedule (11:00–15:00 fill)
+# is UNTOUCHABLE. foxctl may only add/remove/enable/disable its OWN additional group.
+# The FoxESS scheduler/enable endpoint REPLACES the whole group list and set/flag
+# enable=0 disables EVERYTHING — so every write must carry the user's groups along,
+# and "stop" means rewriting the list without ours, never flipping the master flag
+# (except when no user groups exist at all).
+
+_SCHED = {"loaded": False, "mine_key": None, "user_groups": []}
+
+
+def _sched_group(start_hm, end_hm, mode, min_soc, fd_soc, power_kw):
+    sh, sm = start_hm
+    eh, em = end_hm
+    return {"startHour": sh, "startMinute": sm, "endHour": eh, "endMinute": em,
+            "workMode": mode, "minSocOnGrid": int(min_soc), "fdSoc": int(fd_soc),
+            "fdPwr": int(power_kw * 1000), "enable": 1}
+
+
+def _group_key(g):
+    return [g.get("startHour"), g.get("startMinute"), g.get("endHour"), g.get("endMinute"),
+            g.get("workMode"), int(g.get("fdSoc") or 0), int(g.get("fdPwr") or 0)]
+
+
+def _sched_load(cfg):
+    if not _SCHED["loaded"]:
+        try:
+            d = json.loads((_state_dir(cfg) / "sched_own.json").read_text())
+            _SCHED["mine_key"], _SCHED["user_groups"] = d.get("mine_key"), d.get("user_groups") or []
+        except Exception:
+            pass
+        _SCHED["loaded"] = True
+
+
+def _sched_save(cfg):
+    try:
+        (_state_dir(cfg) / "sched_own.json").write_text(
+            json.dumps({"mine_key": _SCHED["mine_key"], "user_groups": _SCHED["user_groups"]}))
+    except Exception as e:
+        print(f"sched_own persist failed: {e}", file=sys.stderr)
+
+
+def _read_user_groups(cfg, fox):
+    """Current inverter groups minus foxctl's own. A flaky/null scheduler read (seen live:
+    errno 0, result null) falls back to the last-good cache — NEVER treat a flake as
+    'no user groups', that's how a hand-programmed schedule gets wiped."""
+    _sched_load(cfg)
+    raw = fox.scheduler() or {}
+    groups = [g for g in (raw.get("groups") or []) if g.get("workMode") not in (None, "Invalid")]
+    if not groups and not raw:
+        return None, _SCHED.get("user_groups") or []    # flake → cache
+    user = [g for g in groups if _group_key(g) != _SCHED.get("mine_key")]
+    _SCHED["user_groups"] = user
+    return groups, user
+
+
+def scheduler_write_own(cfg, fox, group):
+    """Write foxctl's OWN group, carrying every user group along (list-replace API)."""
+    _, user = _read_user_groups(cfg, fox)
+    r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user + [group]})
+    _SCHED["mine_key"] = _group_key(group)
+    _sched_save(cfg)
+    return r
+
+
+def scheduler_clear_own(cfg, fox):
+    """Remove foxctl's own group only. Master flag goes off ONLY when no user groups exist.
+    On a flaky read with nothing cached, do NOTHING — leaving our group one more cycle is
+    recoverable; blind-disabling the user's schedule is not."""
+    groups, user = _read_user_groups(cfg, fox)
+    if groups is None and not user:
+        return None                                     # flake + empty cache → refuse to act blind
+    if _SCHED.get("mine_key") is None and groups is not None and len(user) == len(groups):
+        return None                                     # nothing of ours on the inverter
+    if user:
+        r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user})
+    else:
+        r = fox.call("/op/v0/device/scheduler/set/flag", {"deviceSN": fox.sn, "enable": 0})
+    _SCHED["mine_key"] = None
+    _sched_save(cfg)
+    return r
 
 
 def load_ov(cfg):
@@ -2597,7 +2680,7 @@ def manual_tick(cfg, snap):
     now = time.time()
     if now >= mo["until"]:                      # expired → revert to auto
         try:
-            fox.disable_scheduler()
+            scheduler_clear_own(cfg, fox)
         except Exception as e:
             print(f"manual revert failed: {e}", file=sys.stderr)
         _CHARGE["until"] = 0.0
@@ -2611,7 +2694,7 @@ def manual_tick(cfg, snap):
     soc_now = snap.get("soc")
     if mo["mode"] == "sell" and isinstance(soc_now, (int, float)) and soc_now <= mo.get("min_soc", inv_floor):
         try:
-            fox.disable_scheduler()
+            scheduler_clear_own(cfg, fox)
         except Exception as e:
             print(f"manual sell floor revert failed: {e}", file=sys.stderr)
         _OV["manual"] = None; save_ov(cfg)
@@ -2624,12 +2707,12 @@ def manual_tick(cfg, snap):
         return f"MANUAL {mo['mode']} until {hhmm} (active)"
     nd = datetime.now()
     if mo["mode"] == "charge":
-        fox.enable_force_charge((nd.hour, nd.minute), (end.hour, end.minute),
-                                inv_floor, mo["cap"], mo["power"])
+        scheduler_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
+                                                   "ForceCharge", inv_floor, mo["cap"], mo["power"]))
         _CHARGE["until"] = mo["until"]
     else:
-        fox.enable_force_discharge((nd.hour, nd.minute), (end.hour, end.minute),
-                                   inv_floor, mo["power"])
+        scheduler_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
+                                                   "ForceDischarge", inv_floor, inv_floor, mo["power"]))
     msg = f"MANUAL {mo['mode']} START until {hhmm} @ {mo['power']}kW"
     log_event("override", msg)
     return msg
@@ -2675,16 +2758,16 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             tot = now.hour * 60 + now.minute + mins
             eh, em = (tot // 60) % 24, tot % 60
             inv_floor = int(strat.get("inverter_min_soc", 10))   # constant device floor — never the survival number
-            fox.enable_force_discharge((now.hour, now.minute), (eh, em),
-                                       inv_floor, strat["force_charge_power_kw"])
+            scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
+                                "ForceDischarge", inv_floor, inv_floor, strat["force_charge_power_kw"]))
             m = (f"AUTO-SELL START until ~{eh:02d}:{em:02d} (sells toward {rec.get('sell_floor')}% survival "
                  f"[software-stopped]; inverter hard floor {inv_floor}% @ {strat['force_charge_power_kw']}kW)")
             msgs.append(m); log_event("sell", m, {"feedin_kw": snap.get("feedin_power"), "soc": snap.get("soc")})
         return "; ".join(msgs) or "selling"
     if already_selling and not rec.get("force_discharge"):
-        fox.disable_scheduler()
-        msgs.append("auto-sell STOP → revert to work mode")
-        log_event("disable", "auto-sell STOP → revert to work mode")
+        scheduler_clear_own(cfg, fox)
+        msgs.append("auto-sell STOP → removed foxctl's schedule group")
+        log_event("disable", "auto-sell STOP → removed foxctl's schedule group")
     if rec["force_charge"]:
         if not ctrl.get("set_force_charge"):
             msgs.append("force-charge recommended but control.set_force_charge=false — skipped")
@@ -2693,21 +2776,36 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
         else:
             now = datetime.now()
             mins = int(strat.get("force_charge_minutes", 120))   # safety cap; re-evaluated each cycle
-            tot = now.hour * 60 + now.minute + mins
-            eh, em = (tot // 60) % 24, tot % 60
-            fox.enable_force_charge((now.hour, now.minute), (eh, em),
-                                    int(strat.get("inverter_min_soc", 10)), eff_target,
-                                    strat["force_charge_power_kw"])
-            _CHARGE["until"] = time.time() + mins * 60   # remember our intended charge window
-            m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
-            msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
+            nowm = now.hour * 60 + now.minute
+            tot = nowm + mins
+            # Never let an AUTO window cross into peak — the safety cap is for foxctl dying,
+            # not a licence to buy at 59.95c (2026-07-12: a 14:30 write ran minutes into 16:00).
+            peak = ((snap.get("dynamic") or {}).get("tariff") or {}).get("peak") or {}
+            ps = peak.get("start")
+            psm = int(ps * 60) if isinstance(ps, (int, float)) else None
+            if psm is not None and nowm < psm:
+                tot = min(tot, psm)
+            if psm is not None and 0 <= psm - nowm < 10:
+                msgs.append("force-charge wanted but <10min to peak — skipped")
+            else:
+                eh, em = (tot // 60) % 24, tot % 60
+                scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
+                                    "ForceCharge", int(strat.get("inverter_min_soc", 10)),
+                                    eff_target, strat["force_charge_power_kw"]))
+                _CHARGE["until"] = time.time() + (tot - nowm) * 60   # our intended (clamped) window
+                m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
+                msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
     else:
-        # Stop only on the transition out of charging — one write, not every cycle.
-        if ctrl.get("set_force_charge") and (already_charging or time.time() < _CHARGE["until"]):
-            fox.disable_scheduler()
+        # Stop only on the transition out of charging — one write, not every cycle. Removes OUR
+        # group only (user schedule untouched); mine_key also catches a lingering group post-restart.
+        _sched_load(cfg)
+        if ctrl.get("set_force_charge") and (already_charging or time.time() < _CHARGE["until"]
+                                             or _SCHED.get("mine_key")):
+            r = scheduler_clear_own(cfg, fox)
             _CHARGE["until"] = 0.0
-            msgs.append("force-charge STOP → revert to work mode")
-            log_event("disable", "force-charge STOP → revert to work mode", {"band": rec.get("band")})
+            if r is not None:
+                msgs.append("force-charge STOP → removed foxctl's schedule group")
+                log_event("disable", "force-charge STOP → removed foxctl's schedule group", {"band": rec.get("band")})
     if rec["action"] in ("SET_MODE", "FORCE_CHARGE") and ctrl.get("set_work_mode"):
         if snap["work_mode"] != rec["target_mode"]:
             fox.set_work_mode(rec["target_mode"])
@@ -2727,8 +2825,9 @@ def force_charge_test(cfg: dict, minutes: int = 10) -> str:
     now = datetime.now()
     tot = now.hour * 60 + now.minute + max(1, int(minutes))
     eh, em = (tot // 60) % 24, tot % 60
-    fox.enable_force_charge((now.hour, now.minute), (eh, em),
-                            int(strat.get("inverter_min_soc", 10)), strat.get("max_soc", 90), strat["force_charge_power_kw"])
+    scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em), "ForceCharge",
+                        int(strat.get("inverter_min_soc", 10)), strat.get("max_soc", 90),
+                        strat["force_charge_power_kw"]))
     msg = (f"force-charge TEST enabled {now.hour:02d}:{now.minute:02d}→{eh:02d}:{em:02d} "
            f"cap {strat.get('max_soc', 90)}% @ {strat['force_charge_power_kw']}kW")
     log_event("force_charge_test", msg)
@@ -2738,10 +2837,10 @@ def force_charge_test(cfg: dict, minutes: int = 10) -> str:
 def scheduler_off(cfg: dict) -> str:
     if not cfg["control"].get("allow_control"):
         return "control disabled (control.allow_control=false)"
-    FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]).disable_scheduler()
+    scheduler_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
     _CHARGE["until"] = 0.0
-    log_event("disable", "manual: scheduler disabled → reverted to plain work mode")
-    return "scheduler disabled → reverted to plain work mode"
+    log_event("disable", "manual: removed foxctl's schedule group (user schedule untouched)")
+    return "removed foxctl's schedule group (user schedule untouched)"
 
 
 def run_once(cfg: dict, do_apply: bool) -> dict:
@@ -3665,7 +3764,7 @@ def make_handler(cfg):
                 try:
                     set_manual(cfg, None, 0, 0, 0)
                     if cfg["control"].get("allow_control"):
-                        FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]).disable_scheduler()
+                        scheduler_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
                     _CHARGE["until"] = 0.0
                     snap = run_once(cfg, do_apply=True)
                     self._send(200, json.dumps({"cancelled": True, "applied": snap.get("applied")},

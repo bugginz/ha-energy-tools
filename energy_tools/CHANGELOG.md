@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.70.0 — foxctl never touches the user's inverter schedule
+
+USER DIRECTIVE: the hand-programmed schedule (11:00–15:00 fill) is untouchable; foxctl
+may only add/remove/enable/disable its OWN additional group. The FoxESS scheduler API
+replaces the whole group list and the master flag disables everything, so every write
+now carries the user's groups along (`scheduler_write_own`), and every stop rewrites the
+list without foxctl's group instead of flipping the master flag (`scheduler_clear_own` —
+flag only goes off when NO user groups exist). foxctl's group is fingerprinted and
+persisted (`sched_own.json`); a flaky scheduler read (seen live: errno 0, result null)
+falls back to the last-good cache and a clear NEVER blind-disables on a flake.
+Also: AUTO force-charge windows are clamped to peak start (a 14:30 write no longer ends
+16:30 — the 120-min cap is for foxctl dying, not buying at 59.95c) and a top-up won't
+start within 10 min of peak.
+
 ## 1.69.1 — plug draw only counts as the car while the car's relay is ON
 
 The 6294HA's power sensor spans both its sockets; the outdoor heater on the spare socket
