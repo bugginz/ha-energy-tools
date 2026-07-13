@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.71.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.71.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -806,8 +806,12 @@ def _read_user_groups(cfg, fox):
 
 
 def scheduler_write_own(cfg, fox, group):
-    """Write foxctl's OWN group, carrying every user group along (list-replace API)."""
-    _, user = _read_user_groups(cfg, fox)
+    """Write foxctl's OWN group, carrying every user group along (list-replace API).
+    Returns None WITHOUT writing on a flaky read — writing from the cached group list
+    clobbered the user's just-programmed schedule (2026-07-13, three times)."""
+    groups, user = _read_user_groups(cfg, fox)
+    if groups is None:
+        return None
     r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user + [group]})
     _SCHED["mine_key"] = _group_key(group)
     _sched_save(cfg)
@@ -2828,6 +2832,8 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             mins = int(strat.get("force_charge_minutes", 120))   # safety cap; re-evaluated each cycle
             nowm = now.hour * 60 + now.minute
             tot = nowm + mins
+            dyn_free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+            in_free_now = _in_window(dyn_free, now.hour + now.minute / 60.0)
             # Never let an AUTO window cross into peak — the safety cap is for foxctl dying,
             # not a licence to buy at 59.95c (2026-07-12: a 14:30 write ran minutes into 16:00).
             peak = ((snap.get("dynamic") or {}).get("tariff") or {}).get("peak") or {}
@@ -2835,16 +2841,29 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             psm = int(ps * 60) if isinstance(ps, (int, float)) else None
             if psm is not None and nowm < psm:
                 tot = min(tot, psm)
-            if psm is not None and 0 <= psm - nowm < 10:
+            if in_free_now and strat.get("base_schedule_guard", True):
+                # The BASE group (the user's app schedule; guardian-restored if the cloud eats
+                # it) OWNS the free-window fill — foxctl writes no rolling windows here. Every
+                # extra write was another chance for a flaky read to clobber the user's
+                # schedule (2026-07-13: it did, repeatedly). Clear any leftover own group so
+                # the guardian can install the base group next cycle.
+                _sched_load(cfg)
+                if _SCHED.get("mine_key"):
+                    scheduler_clear_own(cfg, fox)
+                msgs.append("free window — base schedule owns the fill (no foxctl write)")
+            elif psm is not None and 0 <= psm - nowm < 10:
                 msgs.append("force-charge wanted but <10min to peak — skipped")
             else:
                 eh, em = (tot // 60) % 24, tot % 60
-                scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
-                                    "ForceCharge", int(strat.get("inverter_min_soc", 10)),
-                                    eff_target, strat["force_charge_power_kw"]))
-                _CHARGE["until"] = time.time() + (tot - nowm) * 60   # our intended (clamped) window
-                m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
-                msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
+                r = scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
+                                        "ForceCharge", int(strat.get("inverter_min_soc", 10)),
+                                        eff_target, strat["force_charge_power_kw"]))
+                if r is None:
+                    msgs.append("force-charge wanted but scheduler read flaky — write deferred")
+                else:
+                    _CHARGE["until"] = time.time() + (tot - nowm) * 60   # our intended (clamped) window
+                    m = f"force-charge START until ~{eh:02d}:{em:02d} (cap {eff_target}% @ {strat['force_charge_power_kw']}kW)"
+                    msgs.append(m); log_event("force_charge", m, {"band": rec.get("band"), "soc": snap.get("soc")})
     else:
         # Stop only on the transition out of charging — one write, not every cycle. Removes OUR
         # group only (user schedule untouched); mine_key also catches a lingering group post-restart.

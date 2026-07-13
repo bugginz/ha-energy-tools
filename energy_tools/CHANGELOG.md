@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.71.1 — foxctl stops writing windows during the free window; flaky reads defer writes
+
+Root cause of the user's schedule being repeatedly clobbered: on a flaky scheduler read
+(frequent), writes fell back to the CACHED group list — which couldn't contain a group
+the user had just programmed — and the 2-hourly rolling rewrites kept re-rolling that
+dice. Now: (1) a flaky read DEFERS the write entirely (retry next cycle, never write from
+cache); (2) inside the free window foxctl writes no rolling windows at all — the base
+group (user's app schedule, guardian-restored if eaten) owns the fill, and any leftover
+foxctl group is cleared to hand the window back.
+
 ## 1.71.0 — base-schedule guardian
 
 User-authorized: the free-window base fill group (10:00–14:00 ForceCharge, hand-programmed

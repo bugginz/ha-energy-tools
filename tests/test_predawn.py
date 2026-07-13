@@ -480,13 +480,13 @@ class SchedulerGroupPreservationTest(unittest.TestCase):
         self.assertIn("set/flag", path)
         self.assertEqual(body["enable"], 0)
 
-    def test_flaky_read_uses_cached_user_groups(self):
+    def test_flaky_read_defers_the_write(self):
+        # Writing from the cached list clobbered a just-programmed user group (2026-07-13) —
+        # a flake now defers the write entirely.
         foxctl._SCHED.update({"loaded": True, "user_groups": [dict(self.USER)]})
         fox = self.FakeFox(None)                          # scheduler/get flake
-        g = self.mine()
-        foxctl.scheduler_write_own(self.cfg, fox, g)
-        _, body = fox.calls[-1]
-        self.assertEqual(body["groups"], [self.USER, g])
+        self.assertIsNone(foxctl.scheduler_write_own(self.cfg, fox, self.mine()))
+        self.assertEqual(fox.calls, [])
 
     def test_clear_refuses_blind_disable_on_flake(self):
         foxctl._SCHED.update({"loaded": True, "mine_key": foxctl._group_key(self.mine())})
