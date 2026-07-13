@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.71.0 — base-schedule guardian
+
+User-authorized: the free-window base fill group (10:00–14:00 ForceCharge, hand-programmed
+in the FoxESS app) gets RESTORED by foxctl if the cloud silently eats it again (twice so
+far). Every apply cycle: if a healthy scheduler read shows no ForceCharge group
+intersecting the free window, foxctl re-adds the base group (window/cap/power track the
+active tariff + strategy) and registers it as a USER group — never foxctl's to clear.
+Never acts on a flaky read. `base_schedule_guard` option (default true).
+
 ## 1.70.3 — the car socket's PHYSICAL state is always on the card
 
 "Good time to charge" never said whether the relay was actually on. Every car card

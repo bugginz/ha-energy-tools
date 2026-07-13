@@ -501,6 +501,73 @@ class SchedulerGroupPreservationTest(unittest.TestCase):
         self.assertEqual(fox.calls, [])
 
 
+class BaseScheduleGuardTest(unittest.TestCase):
+    """User-authorized (2026-07-13): re-add the free-window base fill group when a HEALTHY
+    read shows it missing; never act on a flake; registered as a USER group."""
+
+    BASE = {"startHour": 10, "startMinute": 0, "endHour": 14, "endMinute": 0,
+            "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100, "fdPwr": 10500, "enable": 1}
+
+    class FakeFox:
+        sn = "SN"
+        def __init__(self):
+            self.calls = []
+        def call(self, path, body):
+            self.calls.append((path, body))
+            return {"ok": 1}
+
+    def setUp(self):
+        import tempfile
+        self.cfg = {"state_dir": tempfile.mkdtemp(),
+                    "strategy": {"base_schedule_guard": True, "inverter_min_soc": 10,
+                                 "charge_target_soc": 100, "max_soc": 100,
+                                 "force_charge_power_kw": 10.5}}
+        foxctl._SCHED.update({"loaded": True, "mine_key": None, "user_groups": []})
+
+    def tearDown(self):
+        foxctl._SCHED.update({"loaded": False, "mine_key": None, "user_groups": []})
+
+    def snap(self, groups, read_ok=True):
+        return {"dynamic": {"tariff": {"free": {"start": 10, "end": 14}}},
+                "scheduler": {"enabled": bool(groups), "groups": groups, "read_ok": read_ok}}
+
+    def test_restores_missing_base_group(self):
+        fox = self.FakeFox()
+        msg = foxctl.ensure_base_schedule(self.cfg, fox, self.snap([]))
+        self.assertIn("restored 10:00–14:00", msg)
+        _, body = fox.calls[-1]
+        self.assertEqual(body["groups"][-1]["startHour"], 10)
+        self.assertEqual(body["groups"][-1]["fdSoc"], 100)
+        # registered as a USER group, so scheduler_clear_own will never remove it
+        self.assertIn(foxctl._group_key(body["groups"][-1]),
+                      [foxctl._group_key(g) for g in foxctl._SCHED["user_groups"]])
+
+    def test_present_base_group_untouched(self):
+        fox = self.FakeFox()
+        self.assertIsNone(foxctl.ensure_base_schedule(self.cfg, fox, self.snap([dict(self.BASE)])))
+        self.assertEqual(fox.calls, [])
+
+    def test_never_acts_on_flaky_read(self):
+        fox = self.FakeFox()
+        self.assertIsNone(foxctl.ensure_base_schedule(self.cfg, fox, self.snap([], read_ok=False)))
+        self.assertEqual(fox.calls, [])
+
+    def test_preserves_other_groups_when_restoring(self):
+        other = {"startHour": 15, "startMinute": 3, "endHour": 16, "endMinute": 0,
+                 "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100, "fdPwr": 10500, "enable": 1}
+        fox = self.FakeFox()
+        foxctl.ensure_base_schedule(self.cfg, fox, self.snap([dict(other)]))
+        _, body = fox.calls[-1]
+        self.assertEqual(len(body["groups"]), 2)
+        self.assertEqual(body["groups"][0], other)
+
+    def test_guard_can_be_disabled(self):
+        self.cfg["strategy"]["base_schedule_guard"] = False
+        fox = self.FakeFox()
+        self.assertIsNone(foxctl.ensure_base_schedule(self.cfg, fox, self.snap([])))
+        self.assertEqual(fox.calls, [])
+
+
 class AttributeEvKwTest(unittest.TestCase):
     """Draw on the shared plug only counts as the car while the car's relay is ON
     (2026-07-11: outdoor heater on the spare socket tripped the floor-guard all evening)."""

@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.70.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.71.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -327,10 +327,12 @@ class FoxESS:
         the first enabled group regardless of clock (what's programmed)."""
         r = raw or {}
         active = segment = None
+        enabled_groups = []
         if r.get("enable"):
             for g in r.get("groups", []):
                 if not g.get("enable") or g.get("workMode") in (None, "Invalid"):
                     continue
+                enabled_groups.append(g)
                 seg = {"mode": g.get("workMode"),
                        "window": "%02d:%02d-%02d:%02d" % (g.get("startHour") or 0, g.get("startMinute") or 0,
                                                           g.get("endHour") or 0, g.get("endMinute") or 0),
@@ -342,7 +344,8 @@ class FoxESS:
                 if start <= now_minutes < end:
                     active = seg
                     break
-        return {"enabled": bool(r.get("enable")), "active": active, "segment": segment}
+        return {"enabled": bool(r.get("enable")), "active": active, "segment": segment,
+                "groups": enabled_groups, "read_ok": bool(raw)}
 
     def disable_scheduler(self) -> dict:
         """Stop any active schedule -> inverter reverts to its plain WorkMode.
@@ -2718,6 +2721,46 @@ def manual_tick(cfg, snap):
     return msg
 
 
+def ensure_base_schedule(cfg, fox, snap):
+    """USER AUTHORIZATION (2026-07-13): the free-window base fill group belongs to the user,
+    but the FoxESS cloud has silently eaten it twice — if a HEALTHY scheduler read shows it
+    missing, foxctl may put it back. The restored group is registered as a USER group (never
+    ours to clear); window/cap/power track the active tariff + strategy. Never acts on a
+    flaky read. Disable with strategy.base_schedule_guard=false."""
+    strat = cfg.get("strategy") or {}
+    if not strat.get("base_schedule_guard", True):
+        return None
+    free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+    fs, fe = free.get("start"), free.get("end")
+    if not isinstance(fs, (int, float)) or not isinstance(fe, (int, float)):
+        return None
+    sch = snap.get("scheduler") or {}
+    if not sch.get("read_ok"):
+        return None                                     # flaky read — never act blind
+    groups = sch.get("groups") or []
+    for g in groups:
+        gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
+        ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
+        if g.get("workMode") == "ForceCharge" and gs < fe and ge > fs:
+            return None     # base group present, or another FC group already intersects the
+                            # window (e.g. foxctl's own rolling fill) — don't risk an overlap
+    base = _sched_group((int(fs), 0), (int(fe), 0), "ForceCharge",
+                        int(strat.get("inverter_min_soc", 10)),
+                        min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
+                        float(strat.get("force_charge_power_kw", 10.5)))
+    fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": groups + [base]})
+    _sched_load(cfg)
+    ug = _SCHED.get("user_groups") or []
+    if _group_key(base) not in [_group_key(g) for g in ug]:
+        ug.append(base)
+    _SCHED["user_groups"] = ug
+    _sched_save(cfg)
+    m = (f"base fill group was MISSING — restored {int(fs):02d}:00–{int(fe):02d}:00 ForceCharge "
+         f"(user-authorized 2026-07-13)")
+    log_event("base_schedule", m)
+    return m
+
+
 def apply_and_record(cfg: dict, snap: dict) -> str:
     """Apply the recommendation and persist the outcome into the shared LAST snapshot so the dashboard
     header reflects what just happened (instead of the stale value from the previous evaluate)."""
@@ -2742,6 +2785,13 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     # Charge cap for force-charge windows: the tariff profile's max SoC (free-window fill target).
     eff_target = (snap.get("dynamic") or {}).get("target_soc") or strat.get("max_soc", 90)
     sch = snap.get("scheduler") or {}
+    if ctrl.get("set_force_charge"):
+        try:
+            bm = ensure_base_schedule(cfg, fox, snap)
+            if bm:
+                msgs.append(bm)
+        except Exception as e:
+            print(f"base-schedule guard failed: {e}", file=sys.stderr)
     already_charging = bool(sch.get("enabled") and sch.get("active")
                             and sch["active"].get("mode") == "ForceCharge")
     already_selling = bool(sch.get("enabled") and sch.get("active")
