@@ -1,0 +1,30 @@
+{
+  "_comment": "Fiat 500e / Abarth 500e (2020+ new platform, Stellantis). Derived from a Car Scanner adapter log 2026-07-13 (VIN ZFAEFA265R...). Bus: ISO 15765-4 CAN 29-bit 500k (ATSP7, ATCP18). SoC source: DID 0x019E on ECU 0x42 (req 18DA42F1, resp 18DAF142) — displayed SoC, scale x0.1%. Verified live: 0x0358 = 85.6% and decaying while awake. NOTE: polling keeps the car awake (DC-DC on, ~0.4%/25min HV drain) — poll sparsely when not charging.",
+  "car_model": "Fiat 500e (2020+) / Abarth 500e",
+  "init": "ATST64;ATSP7;ATCP18;ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;ATFCSD300000;ATFCSM1;",
+  "pids": [
+    {
+      "pid": "22019E",
+      "pid_init": "ATSHDA42F1;ATCRA18DAF142;",
+      "parameters": [
+        {
+          "name": "soc",
+          "expression": "([B3]*256+[B4])/10",
+          "unit": "%"
+        }
+      ]
+    },
+    {
+      "pid": "22A029",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;ATFCSH18DA44F1;",
+      "parameters": [
+        {
+          "name": "soh_capacity_ah",
+          "expression": "([B5]*256+[B6])/10",
+          "unit": "Ah",
+          "_comment": "current capacity ~117.6Ah vs 120.0Ah new -> SoH ~98%. Byte offsets to verify on first live read."
+        }
+      ]
+    }
+  ]
+}
