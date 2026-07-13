@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.70.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.70.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -3224,6 +3224,22 @@ def chart_caption(snap: dict) -> str:
             f'next 24h forecast: solar peak {max(fsol):.1f} kW · usage peak {max(fuse):.1f} kW')
 
 
+def _socket_line(snap):
+    """One unambiguous line about the PHYSICAL car socket: relay state + actual draw
+    (user feedback 2026-07-13: 'good time to charge' gave no hint whether the switch
+    was actually on)."""
+    st = snap.get("ev_switch_state")
+    kw = snap.get("ev_kw")
+    drawing = isinstance(kw, (int, float)) and kw >= 0.3
+    if st == "on" and drawing:
+        return f'<span style="color:#2e9e5b;font-weight:600">socket ON · car drawing {kw:.1f} kW</span>'
+    if st == "on":
+        return '<span style="color:#c8860a;font-weight:600">socket ON · no draw</span> — car full, unplugged or waking'
+    if st == "off":
+        return '<span style="color:#888;font-weight:600">socket OFF</span> — no power to the charger'
+    return f'<span style="color:#b23c3c;font-weight:600">socket {st or "unknown"}</span> — relay state unreadable'
+
+
 def chart_stats_html(snap: dict) -> str:
     """The 'what is this forecast built from' panel under the chart: data provenance + day counts +
     headline totals for usage, solar and the car free-window charge. Answers the obvious questions
@@ -3281,6 +3297,7 @@ def chart_stats_html(snap: dict) -> str:
         f"tomorrow: {kwh(sf.get('tomorrow'))}",
     ])
     src = car.get("power_source") or "—"
+    sock_line = _socket_line(snap)
     today_kwh, charging = car.get("today_kwh"), car.get("charging")
     if charging:
         live_line = f'<span style="color:#2e9e5b">● charging now</span> · {kwh(today_kwh)} today'
@@ -3290,6 +3307,7 @@ def chart_stats_html(snap: dict) -> str:
         live_line = "no charge yet today"
     carc = card("Car (free window)", [
         car_txt,
+        sock_line,
         live_line,
         f"meter: {src}",
         ("auto-excluded from usage" if meas_ok else "tune via ev_charge_kw / ev_expected_kwh"),
@@ -3437,6 +3455,7 @@ def render(snap: dict, cfg: dict) -> str:
                   f' (window {int(pdb.get("window_start_hour", 10)):02d}:00)')
 
     # Charge advisor — is now a good time to put the car on? Colour-coded good/ok/avoid.
+    sock_line = _socket_line(snap)
     adv = snap.get("charge_advisor") or {}
     _ac = {"good": ("#2e9e5b", "#eaf7ef", "🔌 Good time to charge"),
            "ok":   ("#c8860a", "#fdf6e8", "🔌 OK to charge"),
@@ -3446,7 +3465,8 @@ def render(snap: dict, cfg: dict) -> str:
         f'<div class=card style="border-color:{ac_col};background:{ac_bg}">'
         f'<small style="color:{ac_col};font-weight:600">{ac_hdr}</small>'
         f'<div style="font-size:1rem;font-weight:600;margin:.2rem 0;color:#333">{adv.get("reason") or "—"}</div>'
-        f'<small style="color:#666">🔌 {_n(snap.get("ev_kw"))} kW now · meter: {snap.get("ev_power_source") or "—"}{pd_txt}</small></div>'
+        f'<small>{sock_line}</small><br>'
+        f'<small style="color:#666">meter: {snap.get("ev_power_source") or "—"}{pd_txt}</small></div>'
     ) if adv else ""
 
     # Money — today's real electricity cost + what the solar/battery saved vs buying everything from grid.
@@ -3482,6 +3502,7 @@ def render(snap: dict, cfg: dict) -> str:
         advisor_card if advisor_card else (
             f'<div class="card{" warn" if ev_on else ""}"><small>Car charging</small>'
             f'<div class=big>🔌 {_n(snap.get("ev_kw"))} <small>kW</small></div>'
+            f'<small>{sock_line}</small><br>'
             f'<small>{ev_status}{pd_txt}</small><br><small style="opacity:.6">meter: {snap.get("ev_power_source") or "—"}</small></div>'),
         f'<div class=card><small>Weather &amp; solar</small><div class=big>{_n(sf.get("today_total"))} <small>kWh today</small></div>'
         f'<small>{snap.get("weather") or "—"}{temp_txt} · {_n(sf.get("remaining_today"))} kWh left · tomorrow {_n(sf.get("tomorrow"))} kWh'

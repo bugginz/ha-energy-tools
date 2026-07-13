@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.70.3 — the car socket's PHYSICAL state is always on the card
+
+"Good time to charge" never said whether the relay was actually on. Every car card
+variant now leads with an unambiguous socket line: "socket ON · car drawing X kW" /
+"socket ON · no draw — car full, unplugged or waking" / "socket OFF — no power to the
+charger" / "socket unavailable — relay state unreadable".
+
 ## 1.70.2 — fast-guard: battery-only rule is clock-aware
 
 At the free-window open, the guard's 5-min-stale snapshot still said "pre-dawn active"
