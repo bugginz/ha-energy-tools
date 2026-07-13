@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.70.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.70.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -3803,6 +3803,8 @@ def fast_guard_loop(cfg):
     ev = cfg.get("ev_divert") or {}
     cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
     stop_kw = float(ev.get("predawn_import_stop_kw", 0.5) or 0.0)
+    strat = cfg.get("strategy") or {}
+    free_win = ((strat.get("tariffs") or {}).get(str(strat.get("tariff_profile") or "")) or {}).get("free") or {}
     hits = 0
     while True:
         time.sleep(FAST_GUARD_POLL_S)
@@ -3818,7 +3820,12 @@ def fast_guard_loop(cfg):
                 hits = 0
                 continue
             over_cap = cap_kw > 0 and kw > cap_kw
-            over_predawn = (predawn_active and stop_kw > 0 and kw > stop_kw
+            # The battery-only rule never applies inside the free window BY CLOCK — at the
+            # 10:00 boundary the stale LAST snap still said "pre-dawn active" while the
+            # import was the window fill itself starting (2026-07-13).
+            nowdt = datetime.now()
+            in_free_now = _in_window(free_win, nowdt.hour + nowdt.minute / 60.0)
+            over_predawn = (predawn_active and not in_free_now and stop_kw > 0 and kw > stop_kw
                             and time.time() >= _EV.get("override_until", 0.0))
             hits = hits + 1 if (over_cap or over_predawn) else 0
             if hits < 2:

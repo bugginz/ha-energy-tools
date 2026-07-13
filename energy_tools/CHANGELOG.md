@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.70.2 — fast-guard: battery-only rule is clock-aware
+
+At the free-window open, the guard's 5-min-stale snapshot still said "pre-dawn active"
+and it cut the car for "importing" when the import was the window fill itself starting.
+The pre-dawn battery-only rule now checks the free window by clock; the supply-cap rule
+is unchanged.
+
 ## 1.70.1 — four4free free window back to 10:00–14:00
 
 GloBird confirmed 10:00–14:00 (2026-07-13) — the 11:00–15:00 advice of 07-10 was wrong,
