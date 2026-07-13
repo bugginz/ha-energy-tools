@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.71.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.71.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -768,6 +768,16 @@ def _sched_group(start_hm, end_hm, mode, min_soc, fd_soc, power_kw):
             "fdPwr": int(power_kw * 1000), "enable": 1}
 
 
+def _is_filler(g):
+    """The FoxESS APP pads its schedule with a cosmetic SelfUse 00:00-23:59 fdPwr=0 group.
+    It IS the inverter's default behaviour, but the OpenAPI rejects any write whose groups
+    overlap it (errno 42023) — the app writes it through a channel with laxer validation.
+    So API writes must drop it or nothing can ever be written (2026-07-13 wedge)."""
+    span_h = ((g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
+              - (g.get("startHour") or 0) - (g.get("startMinute") or 0) / 60.0)
+    return g.get("workMode") == "SelfUse" and int(g.get("fdPwr") or 0) == 0 and span_h >= 23
+
+
 def _group_key(g):
     return [g.get("startHour"), g.get("startMinute"), g.get("endHour"), g.get("endMinute"),
             g.get("workMode"), int(g.get("fdSoc") or 0), int(g.get("fdPwr") or 0)]
@@ -800,7 +810,8 @@ def _read_user_groups(cfg, fox):
     groups = [g for g in (raw.get("groups") or []) if g.get("workMode") not in (None, "Invalid")]
     if not groups and not raw:
         return None, _SCHED.get("user_groups") or []    # flake → cache
-    user = [g for g in groups if _group_key(g) != _SCHED.get("mine_key")]
+    user = [g for g in groups
+            if _group_key(g) != _SCHED.get("mine_key") and not _is_filler(g)]
     _SCHED["user_groups"] = user
     return groups, user
 
@@ -812,7 +823,11 @@ def scheduler_write_own(cfg, fox, group):
     groups, user = _read_user_groups(cfg, fox)
     if groups is None:
         return None
-    r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user + [group]})
+    try:
+        r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user + [group]})
+    except Exception as e:
+        print(f"scheduler_write_own failed: {e}", file=sys.stderr)
+        return None
     _SCHED["mine_key"] = _group_key(group)
     _sched_save(cfg)
     return r
@@ -827,10 +842,14 @@ def scheduler_clear_own(cfg, fox):
         return None                                     # flake + empty cache → refuse to act blind
     if _SCHED.get("mine_key") is None and groups is not None and len(user) == len(groups):
         return None                                     # nothing of ours on the inverter
-    if user:
-        r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user})
-    else:
-        r = fox.call("/op/v0/device/scheduler/set/flag", {"deviceSN": fox.sn, "enable": 0})
+    try:
+        if user:
+            r = fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": user})
+        else:
+            r = fox.call("/op/v0/device/scheduler/set/flag", {"deviceSN": fox.sn, "enable": 0})
+    except Exception as e:
+        print(f"scheduler_clear_own failed: {e}", file=sys.stderr)
+        return None
     _SCHED["mine_key"] = None
     _sched_save(cfg)
     return r
@@ -2741,7 +2760,7 @@ def ensure_base_schedule(cfg, fox, snap):
     sch = snap.get("scheduler") or {}
     if not sch.get("read_ok"):
         return None                                     # flaky read — never act blind
-    groups = sch.get("groups") or []
+    groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
     for g in groups:
         gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
         ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
@@ -2752,7 +2771,11 @@ def ensure_base_schedule(cfg, fox, snap):
                         int(strat.get("inverter_min_soc", 10)),
                         min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
                         float(strat.get("force_charge_power_kw", 10.5)))
-    fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": groups + [base]})
+    try:
+        fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": groups + [base]})
+    except Exception as e:
+        print(f"base-schedule restore failed: {e}", file=sys.stderr)
+        return None
     _sched_load(cfg)
     ug = _SCHED.get("user_groups") or []
     if _group_key(base) not in [_group_key(g) for g in ug]:

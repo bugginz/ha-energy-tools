@@ -561,6 +561,19 @@ class BaseScheduleGuardTest(unittest.TestCase):
         self.assertEqual(len(body["groups"]), 2)
         self.assertEqual(body["groups"][0], other)
 
+    FILLER = {"startHour": 0, "startMinute": 0, "endHour": 23, "endMinute": 59,
+              "workMode": "SelfUse", "minSocOnGrid": 10, "fdSoc": 10, "fdPwr": 0, "enable": 1}
+
+    def test_filler_dropped_from_restore_write(self):
+        # The app's all-day SelfUse filler makes any FC write bounce (errno 42023) — the
+        # restore must write WITHOUT it (2026-07-13 wedge: guardian retried forever).
+        fox = self.FakeFox()
+        msg = foxctl.ensure_base_schedule(self.cfg, fox, self.snap([dict(self.FILLER)]))
+        self.assertIn("restored", msg)
+        _, body = fox.calls[-1]
+        self.assertEqual(len(body["groups"]), 1)
+        self.assertEqual(body["groups"][0]["workMode"], "ForceCharge")
+
     def test_guard_can_be_disabled(self):
         self.cfg["strategy"]["base_schedule_guard"] = False
         fox = self.FakeFox()

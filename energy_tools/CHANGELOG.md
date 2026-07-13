@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.71.2 — unwedge: scheduler writes can't kill the loop; app filler dropped from writes
+
+Two stacked failures (2026-07-13 evening): the cloud ate the user's FC group a 4th time,
+and the guardian's restore bounced forever on errno 42023 — the app's cosmetic SelfUse
+00:00-23:59 filler overlaps ANY ForceCharge group and the OpenAPI rejects what the app
+itself writes. Meanwhile an unhandled scheduler-write exception killed run_once mid-cycle
+for 2½ h, freezing the published SoC at 99% while the battery was at 94%. Fixes: all
+scheduler write/clear/restore helpers are no-raise (log + defer, never crash the loop),
+and API writes carry only REAL user groups — the filler (functionally the inverter's
+default anyway) is dropped, which is the only way any API write can succeed.
+
 ## 1.71.1 — foxctl stops writing windows during the free window; flaky reads defer writes
 
 Root cause of the user's schedule being repeatedly clobbered: on a flaky scheduler read
