@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.73.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.73.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2604,8 +2604,8 @@ def gather_and_decide(cfg: dict) -> dict:
         print(f"today actuals failed: {e}", file=sys.stderr)
     yk = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     ya = _FCAST["days"].get(yk) or {}
-    today_act = {"load": ta.get("load"), "solar": ta.get("solar")}
-    yest_act = {"load": ya.get("load"), "solar": ya.get("solar")}
+    today_act = {"load": ta.get("load"), "solar": ta.get("solar"), "soc": ta.get("soc")}
+    yest_act = {"load": ya.get("load"), "solar": ya.get("solar"), "soc": ya.get("soc")}
 
     load_ov(cfg)
     strat = cfg["strategy"]
@@ -3194,7 +3194,37 @@ def _chart_series(snap: dict):
         past_use.append(u if u is not None else _hod(prof, ch))
     fut_solar = [bell_kw(o) for o in range(0, 25)]          # 0..24 (forecast)
     fut_use = [_hod(prof, (H + o) % 24) for o in range(0, 25)]
-    return {"H": H, "past_solar": past_solar, "past_use": past_use,
+    # Battery SoC: past = measured hourly averages (FoxESS history), future = a simple
+    # projection — free-window force-charge toward the target, otherwise the battery absorbs
+    # solar-minus-usage (~93% round trip), clamped to [10%, target].
+    today_soc, yest_soc = _arr24(ta.get("soc")), _arr24(ya.get("soc"))
+    past_soc = []
+    for o in range(-24, 1):
+        idx = H + o
+        past_soc.append((today_soc if idx >= 0 else yest_soc)(idx % 24))
+    soc_now = snap.get("soc")
+    if isinstance(soc_now, (int, float)):
+        past_soc[-1] = soc_now
+    dyn = snap.get("dynamic") or {}
+    freew = (dyn.get("tariff") or {}).get("free") or {}
+    tgt = dyn.get("target_soc") or dyn.get("max_soc") or 100
+    cap = (snap.get("battery") or {}).get("capacity_kwh") or 41.44
+    fill_pct_h = 10.5 / cap * 100.0
+    v = past_soc[-1] if isinstance(past_soc[-1], (int, float)) else None
+    fut_soc = [v]
+    for o in range(1, 25):
+        if v is None:
+            fut_soc.append(None)
+            continue
+        ch = (H + o) % 24
+        if freew and _in_window(freew, ch):
+            v = min(float(tgt), v + fill_pct_h)
+        else:
+            v = v + (fut_solar[o] - fut_use[o]) / cap * 100.0 * 0.93
+            v = max(10.0, min(float(tgt), v))
+        fut_soc.append(round(v, 1))
+    return {"H": H, "past_soc": past_soc, "fut_soc": fut_soc,
+            "past_solar": past_solar, "past_use": past_use,
             "fut_solar": fut_solar, "fut_use": fut_use, "measured": measured,
             "n_bells": len(bells), "n_prof": len(prof)}
 
@@ -3320,7 +3350,10 @@ def chart_svg(snap: dict) -> str:
         dh = (ss.get("end", 0) - ss.get("start", 0)) / 3600.0
         akw = (ss.get("kwh", 0.0) / dh) if dh > 0.02 else (ss.get("peak_kw") or 0.0)
         act_blocks.append((max(a, -24.0), min(b, 0.0), akw))
-    W, Ht, pL, pR, pT, pB = 720, 300, 44, 16, 40, 30   # pT fits two legend rows at 15px text
+    psoc, fsoc = s.get("past_soc") or [], s.get("fut_soc") or []
+    has_soc = any(isinstance(v, (int, float)) for v in psoc + fsoc)
+    W, Ht, pL, pT, pB = 720, 300, 44, 40, 30   # pT fits two legend rows at 15px text
+    pR = 46 if has_soc else 16                 # room for the SoC right axis
     iw, ih = W - pL - pR, Ht - pT - pB
     peak_act = max([k for *_, k in act_blocks], default=0.0)
     ymax = max(max(sol_all), max(use_all), car_kw, peak_act, 1.0) * 1.15
@@ -3387,6 +3420,27 @@ def chart_svg(snap: dict) -> str:
     out.append(poly(fsol, 0, "#e0a800", True))
     out.append(poly(puse, -24, "#8e44ad", False))
     out.append(poly(fuse, 0, "#8e44ad", True))
+    if has_soc:
+        Ysoc = lambda v: pT + ih * (1 - max(0.0, min(100.0, v)) / 100.0)
+        def soc_poly(vals, o0, dash):
+            segs, cur = [], []
+            for k, vv in enumerate(vals):
+                if isinstance(vv, (int, float)):
+                    cur.append(f"{X(o0 + k):.1f},{Ysoc(vv):.1f}")
+                elif cur:
+                    segs.append(cur)
+                    cur = []
+            if cur:
+                segs.append(cur)
+            da = ' stroke-dasharray="5 4"' if dash else ''
+            return "".join(f'<polyline points="{" ".join(sg)}" fill="none" stroke="{_SOC_COLOUR}" '
+                           f'stroke-width="2"{da}/>' for sg in segs if len(sg) > 1)
+        out.append(soc_poly(psoc, -24, False))
+        out.append(soc_poly(fsoc, 0, True))
+        for f2 in (0, .5, 1):
+            y2 = pT + ih * (1 - f2)
+            out.append(f'<text x="{W-pR+7}" y="{y2+4:.1f}" font-size="14" fill="{_SOC_COLOUR}" '
+                       f'text-anchor="start">{int(f2*100)}%</text>')
     out.append(f'<rect x="{pL+4}" y="4" width="12" height="12" fill="#e0a800"/>'
                f'<text x="{pL+20}" y="14" font-size="15" fill="#666666">Solar</text>')
     out.append(f'<rect x="{pL+80}" y="4" width="12" height="12" fill="#8e44ad"/>'
@@ -3395,6 +3449,9 @@ def chart_svg(snap: dict) -> str:
         lbl = "Car (solid = charged · dashed = planned)" if act_blocks else "Car (planned free window)"
         out.append(f'<rect x="{pL+160}" y="4" width="12" height="12" fill="#2e9e5b" fill-opacity="0.5"/>'
                    f'<text x="{pL+176}" y="14" font-size="15" fill="#666666">{lbl}</text>')
+    if has_soc:
+        out.append(f'<rect x="{pL+4}" y="22" width="12" height="12" fill="{_SOC_COLOUR}"/>'
+                   f'<text x="{pL+20}" y="32" font-size="15" fill="#666666">Battery SoC (right axis)</text>')
     out.append(f'<text x="{W-pR}" y="32" font-size="14" fill="#999999" text-anchor="end">'
                f'solid = measured · dashed = forecast</text>')
     out.append('</svg>')

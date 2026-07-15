@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.73.1 — battery SoC on the 48-hour timeline
+
+The main −24h→+24h chart gains a battery SoC line on a right-hand 0–100% axis: the past
+half is measured hourly SoC (FoxESS history, anchored to the live reading at NOW), the
+future half is a projection — free-window force-charge toward the target, otherwise the
+battery absorbs solar-minus-usage (~93%% round trip), clamped to [10%%, target].
+
 ## 1.73.0 — smart fill window: real solar stats on sunny days
 
 User-authorized dynamic management of the base fill group: inside the free window, once
