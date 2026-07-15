@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.72.0 — curtailed days no longer poison the solar calibration
+
+With the battery full the inverter curtails PV (seen live: SoC 100%, PV 0.02 kW with
+7.5 kWh still forecast, house importing) — those days' "actuals" are fake-low and were
+dragging the Solcast bias down. `note_solar_curtailment` marks such days (SoC ≥99.5%,
+PV ~0, no export, ≥1 kWh still forecast, 09:00–15:00) and `update_solar_cal` excludes
+them from forecast-vs-actual samples. Event-logged when detected.
+
 ## 1.71.2 — unwedge: scheduler writes can't kill the loop; app filler dropped from writes
 
 Two stacked failures (2026-07-13 evening): the cloud ate the user's FC group a 4th time,

@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.71.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.72.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1207,6 +1207,7 @@ def load_scal(cfg):
     try:
         d = json.loads(_SOLAR_CAL["path"].read_text())
         _SOLAR_CAL["fc"], _SOLAR_CAL["samples"] = d.get("fc", {}), d.get("samples", [])
+        _SOLAR_CAL["curtailed"] = d.get("curtailed", [])
     except Exception:
         pass
     _SOLAR_CAL["loaded"] = True
@@ -1215,9 +1216,36 @@ def load_scal(cfg):
 def save_scal(cfg):
     try:
         _SOLAR_CAL["path"].parent.mkdir(parents=True, exist_ok=True)
-        _SOLAR_CAL["path"].write_text(json.dumps({"fc": _SOLAR_CAL["fc"], "samples": _SOLAR_CAL["samples"][-60:]}))
+        _SOLAR_CAL["path"].write_text(json.dumps({"fc": _SOLAR_CAL["fc"], "samples": _SOLAR_CAL["samples"][-60:],
+                                                  "curtailed": _SOLAR_CAL.get("curtailed", [])[-45:]}))
     except Exception as e:
         print(f"solar cal persist failed: {e}", file=sys.stderr)
+
+
+def note_solar_curtailment(cfg, soc, pv_kw, feedin_kw, remaining_kwh):
+    """Mark today as a CURTAILED day when the battery is full and PV reads ~zero in hours the
+    forecast says should produce — the inverter is suppressing harvest (seen live 2026-07-15:
+    SoC 100%, PV 0.02 kW, forecast 7.5 kWh remaining, house importing). Such days must not
+    become forecast-vs-actual calibration samples: their 'actual' is fake-low and drags the
+    Solcast bias down, poisoning every downstream plan."""
+    h = datetime.now().hour
+    if not (9 <= h <= 15):
+        return False
+    if not (isinstance(soc, (int, float)) and soc >= 99.5):
+        return False
+    if not (isinstance(remaining_kwh, (int, float)) and remaining_kwh >= 1.0):
+        return False
+    if (pv_kw or 0.0) > 0.3 or (feedin_kw or 0.0) > 0.1:
+        return False
+    load_scal(cfg)
+    today = datetime.now().strftime("%Y-%m-%d")
+    cur = _SOLAR_CAL.setdefault("curtailed", [])
+    if today not in cur:
+        cur.append(today)
+        save_scal(cfg)
+        log_event("solar_cal", f"curtailment detected (soc {soc:.0f}%, pv {pv_kw:.2f}kW, "
+                               f"{remaining_kwh:.1f}kWh still forecast) — today excluded from calibration")
+    return True
 
 
 def update_solar_cal(cfg, today_forecast_total):
@@ -1230,10 +1258,13 @@ def update_solar_cal(cfg, today_forecast_total):
     if isinstance(today_forecast_total, (int, float)) and today_forecast_total >= 0:
         _SOLAR_CAL["fc"][today] = round(float(today_forecast_total), 2)
     have = {s["d"] for s in _SOLAR_CAL["samples"]}
+    curtailed = set(_SOLAR_CAL.get("curtailed", []))
     changed = False
     for d, fc in list(_SOLAR_CAL["fc"].items()):
         if d == today or d in have or not fc or fc <= 0:
             continue
+        if d in curtailed:
+            continue      # battery-full curtailment suppressed the day's actual — not a valid sample
         day = _FCAST["days"].get(d)
         if day and isinstance(day.get("solar"), list):
             act = round(sum(x for x in day["solar"] if isinstance(x, (int, float))), 2)
@@ -2474,6 +2505,10 @@ def gather_and_decide(cfg: dict) -> dict:
             solar_remaining = round(solar_remaining * solar_cal["bias"], 2)
         if isinstance(solar_tomorrow, (int, float)):
             solar_tomorrow = round(solar_tomorrow * solar_cal["bias"], 2)
+    try:
+        note_solar_curtailment(cfg, soc, pv, feedin_power, solar_remaining)
+    except Exception as e:
+        print(f"curtailment check failed: {e}", file=sys.stderr)
     try:
         sa = ha._state("sun.sun")["attributes"]
         sun_rise, sun_set = sa.get("next_rising"), sa.get("next_setting")
