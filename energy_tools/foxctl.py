@@ -39,7 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.72.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.73.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1246,6 +1246,55 @@ def note_solar_curtailment(cfg, soc, pv_kw, feedin_kw, remaining_kwh):
         log_event("solar_cal", f"curtailment detected (soc {soc:.0f}%, pv {pv_kw:.2f}kW, "
                                f"{remaining_kwh:.1f}kWh still forecast) — today excluded from calibration")
     return True
+
+
+def smart_fill_tick(cfg, fox, snap):
+    """USER AUTH 2026-07-15 (v1.73.0): manage the base fill group DYNAMICALLY inside the free
+    window. When the battery is FULL, remove the base ForceCharge group so the inverter drops
+    to SelfUse — the MPPT wakes, PV covers the house and exports, and solar stats are REAL —
+    instead of curtailing until window-end. The guardian restores the group when SoC dips
+    below smart_fill_rearm_soc in-window (free top-up), and re-plants it after the window as
+    always. Skips while the CAR is drawing (ForceCharge keeps the car on free grid; removing
+    would cycle the battery). All writes flake-safe; returns a message or None."""
+    strat = cfg.get("strategy") or {}
+    if not strat.get("smart_fill", True):
+        return None
+    free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+    fs, fe = free.get("start"), free.get("end")
+    if not isinstance(fs, (int, float)) or not isinstance(fe, (int, float)):
+        return None
+    now = datetime.now()
+    if not _in_window(free, now.hour + now.minute / 60.0):
+        return None
+    soc = snap.get("soc")
+    full = min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100)))
+    if not (isinstance(soc, (int, float)) and soc >= full):
+        return None
+    ev_kw = snap.get("ev_kw")
+    if isinstance(ev_kw, (int, float)) and ev_kw >= 0.3:
+        return None                                     # car charging on free grid — leave it
+    sch = snap.get("scheduler") or {}
+    if not sch.get("read_ok"):
+        return None
+    groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
+    keep = [g for g in groups
+            if not (g.get("workMode") == "ForceCharge" and g.get("startHour") == int(fs)
+                    and (g.get("startMinute") or 0) == 0 and g.get("endHour") == int(fe)
+                    and (g.get("endMinute") or 0) == 0)]
+    if len(keep) == len(groups):
+        return None                                     # base group not present
+    try:
+        if keep:
+            fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": keep})
+        else:
+            fox.call("/op/v0/device/scheduler/set/flag", {"deviceSN": fox.sn, "enable": 0})
+    except Exception as e:
+        print(f"smart_fill remove failed: {e}", file=sys.stderr)
+        return None
+    m = (f"smart-fill: battery full — {int(fs):02d}:00\u2013{int(fe):02d}:00 base group parked; "
+         f"SelfUse (real PV/export) until SoC < {strat.get('smart_fill_rearm_soc', 98):g}%")
+    log_event("smart_fill", m)
+    return m
 
 
 def update_solar_cal(cfg, today_forecast_total):
@@ -2792,6 +2841,13 @@ def ensure_base_schedule(cfg, fox, snap):
     fs, fe = free.get("start"), free.get("end")
     if not isinstance(fs, (int, float)) or not isinstance(fe, (int, float)):
         return None
+    if strat.get("smart_fill", True):
+        nowh = datetime.now()
+        if _in_window(free, nowh.hour + nowh.minute / 60.0):
+            soc = snap.get("soc")
+            rearm = float(strat.get("smart_fill_rearm_soc", 98))
+            if isinstance(soc, (int, float)) and soc >= rearm:
+                return None     # smart-fill parked the base group on purpose (battery full)
     sch = snap.get("scheduler") or {}
     if not sch.get("read_ok"):
         return None                                     # flaky read — never act blind
@@ -2854,6 +2910,12 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
                 msgs.append(bm)
         except Exception as e:
             print(f"base-schedule guard failed: {e}", file=sys.stderr)
+        try:
+            sm = smart_fill_tick(cfg, fox, snap)
+            if sm:
+                msgs.append(sm)
+        except Exception as e:
+            print(f"smart-fill tick failed: {e}", file=sys.stderr)
     already_charging = bool(sch.get("enabled") and sch.get("active")
                             and sch["active"].get("mode") == "ForceCharge")
     already_selling = bool(sch.get("enabled") and sch.get("active")

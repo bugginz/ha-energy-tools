@@ -581,6 +581,99 @@ class BaseScheduleGuardTest(unittest.TestCase):
         self.assertEqual(fox.calls, [])
 
 
+class SmartFillTest(unittest.TestCase):
+    """v1.73.0 (user-authorized): in-window, battery full -> park the base group (SelfUse,
+    real PV); guardian re-arms below smart_fill_rearm_soc; car-drawing and flaky reads skip."""
+
+    BASE = {"startHour": 10, "startMinute": 0, "endHour": 14, "endMinute": 0,
+            "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100, "fdPwr": 10500, "enable": 1}
+
+    class FakeFox:
+        sn = "SN"
+        def __init__(self):
+            self.calls = []
+        def call(self, path, body):
+            self.calls.append((path, body))
+            return {"ok": 1}
+
+    def setUp(self):
+        import tempfile
+        self.cfg = {"state_dir": tempfile.mkdtemp(),
+                    "strategy": {"smart_fill": True, "smart_fill_rearm_soc": 98,
+                                 "base_schedule_guard": True, "charge_target_soc": 100,
+                                 "max_soc": 100, "inverter_min_soc": 10,
+                                 "force_charge_power_kw": 10.5}}
+        foxctl._SCHED.update({"loaded": True, "mine_key": None, "user_groups": []})
+
+    def tearDown(self):
+        foxctl._SCHED.update({"loaded": False, "mine_key": None, "user_groups": []})
+
+    def snap(self, soc, groups, ev_kw=0.0, read_ok=True):
+        return {"soc": soc, "ev_kw": ev_kw,
+                "dynamic": {"tariff": {"free": {"start": 10, "end": 14}}},
+                "scheduler": {"enabled": bool(groups), "groups": groups, "read_ok": read_ok}}
+
+    def tick(self, snap, hour=12):
+        import datetime as _d
+        with mock.patch.object(foxctl, "datetime", _FakeDT(_d.datetime(2026, 7, 15, hour, 0))), \
+             mock.patch.object(foxctl, "log_event"):
+            return foxctl.smart_fill_tick(self.cfg, self.FakeFox_last(), snap)
+
+    def FakeFox_last(self):
+        self.fox = self.FakeFox()
+        return self.fox
+
+    def test_full_battery_parks_base_group(self):
+        out = self.tick(self.snap(100, [dict(self.BASE)]))
+        self.assertIn("base group parked", out)
+        path, body = self.fox.calls[-1]
+        self.assertIn("set/flag", path)                # only group was base -> master off
+        self.assertEqual(body["enable"], 0)
+
+    def test_not_full_no_action(self):
+        self.assertIsNone(self.tick(self.snap(97, [dict(self.BASE)])))
+        self.assertEqual(self.fox.calls, [])
+
+    def test_car_drawing_skips_removal(self):
+        self.assertIsNone(self.tick(self.snap(100, [dict(self.BASE)], ev_kw=2.4)))
+        self.assertEqual(self.fox.calls, [])
+
+    def test_outside_window_no_action(self):
+        self.assertIsNone(self.tick(self.snap(100, [dict(self.BASE)]), hour=15))
+        self.assertEqual(self.fox.calls, [])
+
+    def test_flaky_read_skips(self):
+        self.assertIsNone(self.tick(self.snap(100, [dict(self.BASE)], read_ok=False)))
+        self.assertEqual(self.fox.calls, [])
+
+    def test_other_groups_preserved_on_removal(self):
+        other = {"startHour": 15, "startMinute": 3, "endHour": 16, "endMinute": 0,
+                 "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100, "fdPwr": 10500, "enable": 1}
+        self.tick(self.snap(100, [dict(self.BASE), dict(other)]))
+        path, body = self.fox.calls[-1]
+        self.assertIn("scheduler/enable", path)
+        self.assertEqual(body["groups"], [other])
+
+    def test_guardian_respects_parked_state_when_full(self):
+        import datetime as _d
+        with mock.patch.object(foxctl, "datetime", _FakeDT(_d.datetime(2026, 7, 15, 12, 30))):
+            fox = self.FakeFox()
+            s = self.snap(99, [])                       # base absent, soc above rearm
+            self.assertIsNone(foxctl.ensure_base_schedule(self.cfg, fox, s))
+            self.assertEqual(fox.calls, [])
+
+    def test_guardian_rearms_below_threshold(self):
+        import datetime as _d
+        with mock.patch.object(foxctl, "datetime", _FakeDT(_d.datetime(2026, 7, 15, 12, 30))), \
+             mock.patch.object(foxctl, "log_event"):
+            fox = self.FakeFox()
+            s = self.snap(96, [])                       # dipped below rearm 98 -> restore
+            out = foxctl.ensure_base_schedule(self.cfg, fox, s)
+            self.assertIn("restored", out)
+            _, body = fox.calls[-1]
+            self.assertEqual(body["groups"][-1]["startHour"], 10)
+
+
 class AttributeEvKwTest(unittest.TestCase):
     """Draw on the shared plug only counts as the car while the car's relay is ON
     (2026-07-11: outdoor heater on the spare socket tripped the floor-guard all evening)."""

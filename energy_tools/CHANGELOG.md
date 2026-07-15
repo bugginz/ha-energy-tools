@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.73.0 — smart fill window: real solar stats on sunny days
+
+User-authorized dynamic management of the base fill group: inside the free window, once
+the battery is FULL, foxctl parks the 10:00–14:00 ForceCharge group so the inverter drops
+to SelfUse — the MPPT wakes, PV covers the house and exports, and solar production data is
+real instead of curtailed-to-zero. The guardian re-arms the group if SoC dips below
+`smart_fill_rearm_soc` (98) in-window, and re-plants it after the window as always (the
+overnight/morning belt-and-braces protection is unchanged). Skips while the car is drawing
+(it charges on free grid under ForceCharge). Options: smart_fill (true),
+smart_fill_rearm_soc (98).
+
+
 ## 1.72.0 — curtailed days no longer poison the solar calibration
 
 With the battery full the inverter curtails PV (seen live: SoC 100%, PV 0.02 kW with

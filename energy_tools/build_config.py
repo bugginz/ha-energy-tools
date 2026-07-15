@@ -34,6 +34,8 @@ for k in ("weather_entity", "ac_climate_entity", "ac_comp_entity", "ac_fan_entit
 if opt.get("ac_kw_per_hz"):
     fc["strategy"]["ac_kw_per_hz"] = float(opt["ac_kw_per_hz"])
 fc["strategy"]["base_schedule_guard"] = bool(opt.get("base_schedule_guard", True))
+fc["strategy"]["smart_fill"] = bool(opt.get("smart_fill", True))
+fc["strategy"]["smart_fill_rearm_soc"] = int(opt.get("smart_fill_rearm_soc", 98))
 # Solar diversion to a car-charger power point (needs allow_control). switch="" disables.
 fc["ev_divert"] = {
     "switch": opt.get("ev_charger_switch", ""),
