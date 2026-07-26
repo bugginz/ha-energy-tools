@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.73.2 — car charger switch is now the Meross inline switch
+
+The cloud-Tuya outdoor power point died; the car charger GPO is now fed through a Meross
+inline smart switch (local, meross_lan). Default `ev_charger_switch` is now
+`switch.smart_switch_25073106040295580705c4e7ae1ea0ef_outlet`, and the `ev_power_entity`
+default catches up with the 2026-07-23 live change to the EM16P CT-clamp channel 18
+(`sensor.em16p_…_power_18`). No code changes — all ev_divert / outlook / free-window
+automation drives the new switch unchanged.
+
 ## 1.73.1 — battery SoC on the 48-hour timeline
 
 The main −24h→+24h chart gains a battery SoC line on a right-hand 0–100% axis: the past
