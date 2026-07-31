@@ -53,6 +53,32 @@ with a FoxESS inverter + battery:
 | `dynamic_policy` | `true` | let the LLM tune `charge_start_price` + `target_soc` each interval, clamped to the foundation |
 | `allow_control` / `auto_apply` / `set_work_mode` / `set_force_charge` | `true` | control switches |
 
+## Deploying
+
+This host runs **HA Container**, not HAOS — there is no add-on store, and
+`/opt/stack/energy_tools/src` on the Pi is a plain copied tree, not a git clone.
+**`git push` alone deploys nothing.** Use the script, which pushes, rsyncs and
+rebuilds in one step so the repo and the running container cannot drift apart:
+
+```sh
+./deploy.sh              # push + rsync + docker compose build/up + verify
+./deploy.sh --dry-run    # show what would sync, change nothing
+./deploy.sh --no-push    # rsync + rebuild only
+```
+
+It refuses to run on a dirty working tree, checks that `config.yaml` and
+`foxctl.py` agree on the version, pins the compose `image:` tag to that version,
+backs up the live `options.json`, and tails the startup log when it is done.
+
+New Python modules must be added to the `COPY` line in `energy_tools/Dockerfile`
+— it copies named files, not the directory. New options only need adding to
+`/opt/stack/energy_tools/data/options.json`; `run.sh` regenerates the runtime
+config from it on every start.
+
+Note that `log_event` writes the structured timeline to
+`data/foxctl/events.jsonl`, **not** stdout — `docker logs` will look empty of
+ev_divert / fill_plan / base_schedule activity even when plenty is happening.
+
 ## Notes
 
 - foxctl uses the Supervisor proxy (`http://supervisor/core`) + `SUPERVISOR_TOKEN`
