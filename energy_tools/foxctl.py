@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.74.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.75.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -143,7 +143,9 @@ DEFAULT_CONFIG = {
         "set_force_charge": False,  # may push grid force-charge windows (more invasive)
     },
     # Push notifications when a decision is worth a human look (via HA notify service).
-    "notify": {"enabled": False, "service": "notify.mobile_app_phoney"},
+    "notify": {"enabled": False, "service": "notify.mobile_app_phoney",
+               "min_gap_min": 180,      # per-notice rate limit (was configured but unread)
+               "on_car_target": True},
     # Solar diversion: turn a car-charger power point ON when export is too cheap to bother to sell,
     # OFF otherwise. Needs control.allow_control. switch="" disables. Tracked via ev_power_entity.
     "ev_divert": {"switch": "", "feedin_max": 0.10, "allow_grid": True,
@@ -177,7 +179,11 @@ DEFAULT_CONFIG = {
                   # Car SoC target: reach target_soc by weekday/hour (Mon=0..Sun=6) if plugged in.
                   # Informational — it drives a notification, never the free-window power split.
                   "soc_entity": "", "battery_kwh": 42.0, "target_soc": 80.0,
-                  "target_weekday": 5, "target_hour": 8},
+                  "target_weekday": 5, "target_hour": 8,
+                  # WiCAN reports over OBD only while the car's ECU is awake: readings arrive
+                  # in bursts, then sit still for hours. Older than this and the SoC is treated
+                  # as unknown rather than believed.
+                  "soc_max_age_min": 180},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -416,6 +422,23 @@ class HAClient:
             return float(self._state(entity)["state"])
         except Exception:
             return None
+
+    def get_num_age(self, entity: str):
+        """(numeric state, seconds since HA last updated it) — (None, None) if unreadable.
+        For sensors that update sporadically, where a value's age changes what it means."""
+        if not entity:
+            return None, None
+        try:
+            st = self._state(entity)
+            val = float(st["state"])
+            upd = str(st.get("last_updated") or "")
+            age = None
+            if upd:
+                ts = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+                age = (datetime.now(ts.tzinfo) - ts).total_seconds()
+            return val, (round(age, 1) if age is not None else None)
+        except Exception:
+            return None, None
 
     def get_state(self, entity: str):
         """Raw HA state string or None."""
@@ -1481,7 +1504,8 @@ def _solar_bells(rise_iso, set_iso, kwh_tomorrow, kwh_remaining):
 
 
 _NOTIFY = {"stale_count": 0, "stale_notified": False, "last_selling": False,
-           "car_behind_notified": False}
+           "sent": {}, "loaded": False,   # sent: dedupe key -> epoch of the last page
+           "outage_seq": 0, "sell_seq": 0}
 
 _EV = {"on": None, "last_change": 0.0, "override_until": 0.0, "lowdraw_since": 0.0,
        "session_day": None, "session_start_kwh": None, "capped": False,
@@ -1802,18 +1826,63 @@ def ha_notify(cfg, title, message):
         print(f"notify failed: {e}", file=sys.stderr)
 
 
+def notify_due(sent, key, now, gap_s):
+    """Has `key` been quiet long enough to page again? gap_s <= 0 disables rate limiting."""
+    if gap_s <= 0:
+        return True
+    return (now - float(sent.get(key) or 0.0)) >= gap_s
+
+
+def _notify_load(cfg):
+    """Restore the sent-notification map. Without this a container restart re-arms every
+    notice, which is how a once-per-deadline car warning paged five times in one morning."""
+    if _NOTIFY["loaded"]:
+        return
+    try:
+        d = json.loads((_state_dir(cfg) / "notify.json").read_text())
+        _NOTIFY["sent"] = {k: float(v) for k, v in (d.get("sent") or {}).items()}
+        _NOTIFY["outage_seq"] = int(d.get("outage_seq") or 0)
+        _NOTIFY["sell_seq"] = int(d.get("sell_seq") or 0)
+    except Exception:
+        pass
+    _NOTIFY["loaded"] = True
+
+
+def _notify_save(cfg):
+    try:
+        p = _state_dir(cfg)
+        p.mkdir(parents=True, exist_ok=True)
+        # Drop entries older than a week so the file cannot grow without bound.
+        cutoff = time.time() - 7 * 86400
+        keep = {k: v for k, v in _NOTIFY["sent"].items() if v >= cutoff}
+        _NOTIFY["sent"] = keep
+        (p / "notify.json").write_text(json.dumps(
+            {"sent": keep, "outage_seq": _NOTIFY.get("outage_seq", 0),
+             "sell_seq": _NOTIFY.get("sell_seq", 0)}))
+    except Exception as e:
+        print(f"notify state save failed: {e}", file=sys.stderr)
+
+
 def maybe_notify(cfg, snap):
-    """Ping the phone when a decision is worth a human look. Edge-triggered, de-duped."""
+    """Ping the phone when a decision is worth a human look. Edge-triggered, de-duped, and
+    rate limited per dedupe key by notify.min_gap_min (which was configured but never read
+    until 2026-07-31 — every notice could fire on every 5-minute cycle)."""
     nc = cfg.get("notify", {})
     if not nc.get("enabled"):
         return
+    _notify_load(cfg)
     rec = snap.get("recommendation", {})
-    out = []
+    out = []                                  # (title, message, dedupe key, gap seconds or None)
     selling = bool(rec.get("force_discharge"))
+    # Edge-triggered notices carry a sequence number in their dedupe key, so the rate limit
+    # blocks repeat pages for the SAME episode without swallowing a genuinely new one.
     if nc.get("on_sell", True) and selling and not _NOTIFY["last_selling"]:
         out.append(("💰 foxctl auto-selling",
                     f"Exporting battery to grid at {snap.get('feedin_power')}kW down to "
-                    f"{rec.get('sell_floor')}% (overnight buffer kept)."))
+                    f"{rec.get('sell_floor')}% (overnight buffer kept).",
+                    f"sell:{_NOTIFY.get('sell_seq', 0)}", None))
+    if _NOTIFY["last_selling"] and not selling:
+        _NOTIFY["sell_seq"] = _NOTIFY.get("sell_seq", 0) + 1
     _NOTIFY["last_selling"] = selling
     stale = "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or "")
     # A single failed poll self-heals (control already holds for that cycle), so only
@@ -1821,29 +1890,40 @@ def maybe_notify(cfg, snap):
     if stale:
         _NOTIFY["stale_count"] += 1
     else:
+        if _NOTIFY["stale_notified"]:      # outage cleared — the next one is a new episode
+            _NOTIFY["outage_seq"] = _NOTIFY.get("outage_seq", 0) + 1
         _NOTIFY["stale_count"] = 0
         _NOTIFY["stale_notified"] = False
     if (nc.get("on_stale", True) and not _NOTIFY["stale_notified"]
             and _NOTIFY["stale_count"] >= int(nc.get("stale_cycles", 3))):
         out.append(("⚠️ foxctl telemetry stale",
                     f"FoxESS telemetry unavailable for {_NOTIFY['stale_count']} consecutive cycles — "
-                    "control on safety hold until data recovers."))
+                    "control on safety hold until data recovers.",
+                    f"stale:{_NOTIFY.get('outage_seq', 0)}", None))
         _NOTIFY["stale_notified"] = True
-    # Car behind its weekly SoC target: the free-window hours left before the deadline cannot
-    # deliver the kWh it still needs. Edge-triggered so it pages on the transition, not every cycle.
+    # Car behind its weekly SoC target. Keyed by the deadline date and given a week-long gap, so
+    # it says "the car won't make Saturday" ONCE rather than on every cycle. `on_track` is None
+    # when the car's SoC is unreadable (WiCAN only reports while the ECU is awake) — that is not
+    # a recovery, so it must neither notify nor re-arm the notice.
     ct = ((snap.get("car") or {}).get("target") or {})
-    behind = ct.get("on_track") is False
-    if nc.get("on_car_target", True) and behind and not _NOTIFY.get("car_behind_notified"):
+    if nc.get("on_car_target", True) and ct.get("on_track") is False:
         out.append(("🚗 car won't reach its target",
                     f"Car at {ct.get('soc')}% needs {ct.get('kwh_needed')}kWh "
                     f"(~{ct.get('hours_needed')}h) to hit {ct.get('target_soc'):.0f}%, but only "
                     f"{ct.get('chargeable_hours')}h of free window remain before the deadline. "
-                    "Plug in now, or top up on shoulder power."))
-        _NOTIFY["car_behind_notified"] = True
-    if not behind:
-        _NOTIFY["car_behind_notified"] = False
-    for t, m in out:
+                    "Plug in now, or top up on shoulder power.",
+                    f"car_target:{ct.get('deadline_date')}", 7 * 86400))
+    now = time.time()
+    gap_default = float(nc.get("min_gap_min", 180) or 0) * 60
+    fired = False
+    for t, m, key, gap in out:
+        if not notify_due(_NOTIFY["sent"], key, now, gap_default if gap is None else float(gap)):
+            continue
         ha_notify(cfg, t, m)
+        _NOTIFY["sent"][key] = now
+        fired = True
+    if fired:
+        _notify_save(cfg)
 
 
 def append_log(snap: dict):
@@ -2559,7 +2639,14 @@ def gather_and_decide(cfg: dict) -> dict:
                                  "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
     # Actual car-charge session log (when + how much), from the live EV draw + cumulative EV kWh.
     car_sessions = track_charge_session(cfg, ev_kw, (energy or {}).get("ev"))
-    car_soc = ha.get_num((cfg.get("ev_divert") or {}).get("soc_entity") or "")
+    # The car's SoC comes from WiCAN over OBD, which only reports while the ECU is awake —
+    # readings arrive in bursts and can then sit untouched for hours. A stale value is worse
+    # than none for the target projection, so age it out rather than trusting the last number.
+    _evd = cfg.get("ev_divert") or {}
+    car_soc, car_soc_age = ha.get_num_age(_evd.get("soc_entity") or "")
+    car_soc_max_age_s = float(_evd.get("soc_max_age_min", 180) or 0) * 60
+    car_soc_stale = (car_soc is not None and car_soc_age is not None
+                     and car_soc_max_age_s > 0 and car_soc_age > car_soc_max_age_s)
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -2710,12 +2797,15 @@ def gather_and_decide(cfg: dict) -> dict:
     _hrs = fillplan.hours_until_weekly(nowl, int(evc.get("target_weekday", 5)),
                                        int(evc.get("target_hour", 8)))
     car_target = fillplan.car_deadline_status(
-        car_soc, float(evc.get("battery_kwh", 42.0) or 0.0), float(evc.get("target_soc", 80.0) or 0.0),
+        None if car_soc_stale else car_soc,
+        float(evc.get("battery_kwh", 42.0) or 0.0), float(evc.get("target_soc", 80.0) or 0.0),
         chargeable_hours=fillplan.free_window_hours_before(
             nowl, nowl + timedelta(hours=_hrs), _fw.get("start", 10), _fw.get("end", 14)),
         charge_kw=_car_draw_est({"car": {"sessions": car_sessions.get("sessions")}}))
     car_target.update({"soc": car_soc, "target_soc": float(evc.get("target_soc", 80.0) or 0.0),
-                       "hours_to_deadline": _hrs})
+                       "hours_to_deadline": _hrs, "stale": car_soc_stale,
+                       "soc_age_min": round(car_soc_age / 60.0, 1) if car_soc_age else None,
+                       "deadline_date": (nowl + timedelta(hours=_hrs)).date().isoformat()})
 
     # Load forecast for the dashboard (learned hour-of-day profile, phased from the current hour).
     have_profile = consumption.get("profile_days", 0) >= 2 and bool(consumption.get("hour_profile"))

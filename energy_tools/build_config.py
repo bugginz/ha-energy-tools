@@ -76,6 +76,7 @@ fc["ev_divert"] = {
     "target_soc": float(opt.get("ev_target_soc", 80)),
     "target_weekday": int(opt.get("ev_target_weekday", 5)),
     "target_hour": int(opt.get("ev_target_hour", 8)),
+    "soc_max_age_min": int(opt.get("ev_soc_max_age_min", 180)),
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),
@@ -119,6 +120,7 @@ N["on_stale"] = bool(opt.get("notify_on_stale", True))
 N["stale_cycles"] = int(opt.get("notify_stale_cycles", 3))
 N["on_sell"] = bool(opt.get("notify_on_sell", True))
 N["min_gap_min"] = int(opt.get("notify_min_gap_min", 180))
+N["on_car_target"] = bool(opt.get("notify_on_car_target", True))
 
 json.dump(fc, open("/data/.config/foxctl/config.json", "w"), indent=2)
 

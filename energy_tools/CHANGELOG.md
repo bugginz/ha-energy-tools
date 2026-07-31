@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.75.0 — notifications: rate limited, restart-proof, and honest about a sleeping car
+
+`notify_min_gap_min` (set to 180) had never been read by foxctl — it was written into the
+config and ignored, so any notice could fire on every 5-minute cycle. Notifications are now
+rate limited per dedupe key by that setting, and the sent map is persisted to
+`notify.json` in the state dir so a container restart no longer re-arms every notice.
+
+The car-target warning is keyed by its deadline date with a week-long gap: it says "the car
+won't make Saturday" once, not once per poll. Edge-triggered notices (sell, telemetry stale)
+carry an episode counter in their key, so the rate limit blocks repeats of the same episode
+without swallowing a genuinely new one.
+
+Car SoC is read with its age (`ev_soc_max_age_min`, default 180). WiCAN reports over OBD only
+while the car's ECU is awake — readings arrive in bursts then sit still for hours — so a stale
+value is now treated as unknown rather than believed. An unknown SoC yields `on_track: None`,
+which neither notifies nor counts as a recovery; treating None as "back on track" is what let
+the warning re-fire each time the reading returned.
+
+Options: notify_on_car_target (true), ev_soc_max_age_min (180).
+
 ## 1.74.3 — fill planner: cross-check house load against the live grid clamp
 
 The house-load figure came from the FoxESS cloud `load_power`, which lags ~5 minutes. On the

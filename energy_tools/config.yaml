@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.74.3"
+version: "1.75.0"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -58,6 +58,7 @@ options:
   ev_target_soc: 80
   ev_target_weekday: 5
   ev_target_hour: 8
+  ev_soc_max_age_min: 180
   ev_charge_kw: 7.0
   ev_expected_kwh: 7.5
   weather_entity: "weather.forecast_home"
@@ -92,6 +93,7 @@ options:
   notify_on_sell: true
   notify_stale_cycles: 3
   notify_min_gap_min: 180
+  notify_on_car_target: true
 schema:
   foxess_token: str
   foxess_sn: str
@@ -138,6 +140,7 @@ schema:
   ev_target_soc: float
   ev_target_weekday: int
   ev_target_hour: int
+  ev_soc_max_age_min: int
   ev_charge_kw: float
   ev_expected_kwh: float
   weather_entity: str?
@@ -172,3 +175,4 @@ schema:
   notify_on_sell: bool
   notify_stale_cycles: int(1,12)
   notify_min_gap_min: int(15,1440)
+  notify_on_car_target: bool
