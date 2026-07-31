@@ -76,6 +76,9 @@ Two constraints shape the design, both established by probing the live instance:
   sized its picture-elements off an invisible 20:10 SVG, which is why alignment depended on
   the iPad.
 
+`TILE_H` is the single knob for tile height: with `rows: "auto"` a picture-elements card
+takes its image's aspect ratio, so the SVG viewBox height *is* the card height.
+
 Picture-elements images cannot be templated, so state-driven variation swaps between
 pre-rendered variants using `visibility` conditions: battery charging/discharging/idle,
 house load under 2 kW / 2-4 / over 4, and the A/C arrow by hvac mode.

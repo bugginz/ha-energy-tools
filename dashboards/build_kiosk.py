@@ -33,6 +33,12 @@ GREEN, AMBER, RED = "#22c55e", "#f59e0b", "#ef4444"
 BLUE, CYAN, VIOLET = "#38bdf8", "#22d3ee", "#a78bfa"
 ORANGE = "#fb923c"
 
+# Tile artwork height, in the SVG's own units against a 300-wide viewBox. With rows:"auto"
+# a picture-elements card takes its image's aspect ratio, so this IS the card height knob.
+# Raised from 150 (2:1) on 2026-07-31 so the tiles read from across the room; 250 was too
+# tall on the real iPad, so settled at 200. This is the one knob for tile height.
+TILE_H = 200
+
 SOC = "sensor.foxess_foxctl_battery_soc"
 LOAD = "sensor.foxess_foxctl_house_load"
 SOLAR = "sensor.foxess_foxctl_solar_power"
@@ -63,7 +69,8 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
         chevs = []
         for i in range(7):
             x = 34 + i * 39
-            d = (f"M{x} 118 l9 -9 l9 9" if pulse == "up" else f"M{x} 109 l9 9 l9 -9")
+            cy = TILE_H - 46
+            d = (f"M{x} {cy + 9} l9 -9 l9 9" if pulse == "up" else f"M{x} {cy} l9 9 l9 -9")
             chevs.append(
                 f"<path d='{d}' fill='none' stroke='{accent}' stroke-width='3.4' "
                 f"stroke-linecap='round' stroke-linejoin='round' opacity='0' "
@@ -72,19 +79,20 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
                 f"45%{{opacity:.95;transform:translateY(0)}}"
                 f"100%{{opacity:0;transform:translateY({7 * dirn}px)}}}}</style>"
                 + "".join(chevs))
-    glyph_el = (f"<text x='274' y='38' font-family='system-ui,sans-serif' font-size='26' "
+    h = TILE_H
+    glyph_el = (f"<text x='274' y='42' font-family='system-ui,sans-serif' font-size='28' "
                 f"text-anchor='end' fill='{accent}' opacity='.9'>{glyph}</text>") if glyph else ""
-    sub_el = (f"<text x='26' y='134' font-family='system-ui,sans-serif' font-size='15' "
+    sub_el = (f"<text x='26' y='{h - 20}' font-family='system-ui,sans-serif' font-size='16' "
               f"fill='{MUTED}'>{sub}</text>") if sub else ""
-    return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 150'>
+    return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 {h}'>
 <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
 <stop offset='0' stop-color='{BG1}'/><stop offset='1' stop-color='{BG0}'/></linearGradient>
 <linearGradient id='a' x1='0' y1='0' x2='1' y2='0'>
 <stop offset='0' stop-color='{accent}' stop-opacity='.95'/>
 <stop offset='1' stop-color='{accent}' stop-opacity='.15'/></linearGradient></defs>
-<rect x='2' y='2' width='296' height='146' rx='18' fill='url(#g)' stroke='{accent}' stroke-opacity='.28'/>
+<rect x='2' y='2' width='296' height='{h - 4}' rx='18' fill='url(#g)' stroke='{accent}' stroke-opacity='.28'/>
 <rect x='2' y='2' width='296' height='5' rx='2.5' fill='url(#a)'/>
-<text x='26' y='40' font-family='system-ui,sans-serif' font-size='19' font-weight='600'
+<text x='26' y='44' font-family='system-ui,sans-serif' font-size='20' font-weight='600'
  letter-spacing='2.5' fill='{accent}'>{label}</text>
 {glyph_el}{sub_el}{anim}</svg>"""
 
@@ -292,8 +300,6 @@ def build(card_mod=False):
                   "visibility": vis_state(AC, "off")})
 
     controls = [
-        {"type": "tile", "entity": "timer.wallpanel_presence_hold", "name": "Screensaver in",
-         "color": "amber", "grid_options": {"columns": HALF, "rows": 2}},
         {"type": "tile", "entity": "input_boolean.hide_header", "name": "Edit",
          "icon": "mdi:pencil", "color": "grey", "hide_state": True,
          "tap_action": {"action": "toggle"}, "grid_options": {"columns": HALF, "rows": 2}},
