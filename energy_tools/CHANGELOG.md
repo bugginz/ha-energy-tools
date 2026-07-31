@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.74.3 — fill planner: cross-check house load against the live grid clamp
+
+The house-load figure came from the FoxESS cloud `load_power`, which lags ~5 minutes. On the
+first live cycles it read equal to the car draw — an apparent 0 kW house — so the planner
+sized the fill at 10.1 kW and grid import climbed to 14.15 kW, 0.35 kW off the trip point.
+House load is now the HIGHER of the cloud estimate and (live grid − commanded fill − car),
+since underestimating the house is precisely what breaches the cap. The base group is
+located before planning so its commanded power is available for that derivation.
+
 ## 1.74.2 — fill planner: read the deadline in local time
 
 `_solar_after_deadline_kwh` built the 14:00 deadline from a UTC `now`, so "14:00" landed at

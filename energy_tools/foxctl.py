@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.74.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.74.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2908,18 +2908,28 @@ def manual_tick(cfg, snap):
     return msg
 
 
-def _fill_house_kw(snap):
+def _fill_house_kw(snap, fill_now_kw=None):
     """House load excluding the car and the battery fill (kW) — what the planner must reserve
-    before dividing the rest between the fill and the car. Falls back high, not low: guessing
-    the house small is what lets the total breach the supply cap."""
-    load, ev = snap.get("load_kw"), snap.get("ev_kw")
+    before dividing the rest between the fill and the car.
+
+    Two independent estimates: the FoxESS cloud load reading (up to ~5 min stale) and the local
+    grid clamp minus the battery's commanded fill and the car (seconds-fresh, but only usable
+    when the current fill power is known). Take the HIGHER — underestimating the house is what
+    lets the total breach the supply cap, and a stale-low cloud reading did exactly that on
+    2026-07-31, planning a 10.1 kW fill into an apparently 0 kW house.
+    """
+    ev = snap.get("ev_kw")
     ev = ev if isinstance(ev, (int, float)) and ev > 0 else 0.0
+    ests = []
+    load = snap.get("load_kw")
     if isinstance(load, (int, float)):
-        return max(0.0, load - ev)
-    gp, bat = _gp_now(snap), snap.get("bat_charge_power")
-    if isinstance(gp, (int, float)) and isinstance(bat, (int, float)):
-        return max(0.0, gp - bat - ev)
-    return 2.0
+        ests.append(load - ev)
+    gp = _gp_now(snap)
+    if isinstance(gp, (int, float)) and isinstance(fill_now_kw, (int, float)):
+        ests.append(gp - ev - float(fill_now_kw))
+    if not ests:
+        return 2.0
+    return max(0.3, max(ests))
 
 
 def _solar_after_deadline_kwh(snap, deadline_h):
@@ -2962,6 +2972,19 @@ def free_window_fill_tick(cfg, fox, snap):
     if not _in_window(free, now_h):
         _FILL["plan"] = None
         return None
+    # Locate the base group first: its commanded power is what lets the live grid clamp be
+    # turned into a house-load figure, which the plan then depends on.
+    sch = snap.get("scheduler") or {}
+    read_ok = bool(sch.get("read_ok"))
+    groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)] if read_ok else []
+    base = None
+    for g in groups:
+        gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
+        ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
+        if g.get("workMode") == "ForceCharge" and gs < fe and ge > fs:
+            base = g
+            break
+    cur_kw = float(base.get("fdPwr") or 0) / 1000.0 if base else None
     deadline_h = float(strat.get("fill_deadline_hour", 14) or 14)
     plan = fillplan.plan_fill(
         soc=snap.get("soc"),
@@ -2970,7 +2993,7 @@ def free_window_fill_tick(cfg, fox, snap):
         deadline_soc=float(strat.get("fill_deadline_soc", 90)),
         max_soc_cap=min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
         solar_after_deadline_kwh=_solar_after_deadline_kwh(snap, deadline_h),
-        house_kw=_fill_house_kw(snap),
+        house_kw=_fill_house_kw(snap, cur_kw),
         car_kw_est=_car_draw_est(snap),
         supply_cap_kw=float(ev.get("supply_cap_kw", 14.5) or 14.5),
         max_fill_kw=float(strat.get("force_charge_power_kw", 10.5)),
@@ -2983,20 +3006,10 @@ def free_window_fill_tick(cfg, fox, snap):
     _FILL["plan"] = plan
     if _FILL["trim_kw"] > 0:                     # a clean cycle walks the fast-guard backoff off
         _FILL["trim_kw"] = max(0.0, _FILL["trim_kw"] - _FILL_TRIM_DECAY_KW)
-    sch = snap.get("scheduler") or {}
-    if not sch.get("read_ok"):
+    if not read_ok:
         return None                              # flaky read — never act blind
-    groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
-    base = None
-    for g in groups:
-        gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
-        ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
-        if g.get("workMode") == "ForceCharge" and gs < fe and ge > fs:
-            base = g
-            break
     if base is None:
         return None                              # no base group yet — the guardian plants it
-    cur_kw = float(base.get("fdPwr") or 0) / 1000.0
     if abs(cur_kw - plan["fill_kw"]) < float(strat.get("fill_power_step_kw", 1.0)):
         return None
     if time.time() - _FILL["last_write"] < float(strat.get("fill_rewrite_gap_s", 240)):

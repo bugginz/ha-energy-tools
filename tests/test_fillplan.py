@@ -301,11 +301,11 @@ def tick_cfg():
             "control": {"allow_control": True, "set_force_charge": True}}
 
 
-def tick_snap(soc=49.0, load_kw=2.2, ev_kw=0.0, fd_pwr=10500, read_ok=True):
+def tick_snap(soc=49.0, load_kw=2.2, ev_kw=0.0, fd_pwr=10500, read_ok=True, grid_live=None):
     base = {"startHour": 10, "startMinute": 0, "endHour": 14, "endMinute": 0,
             "workMode": "ForceCharge", "minSocOnGrid": 10, "fdSoc": 100,
             "fdPwr": fd_pwr, "enable": 1}
-    return {"soc": soc, "load_kw": load_kw, "ev_kw": ev_kw,
+    return {"soc": soc, "load_kw": load_kw, "ev_kw": ev_kw, "grid_power_live": grid_live,
             "dynamic": {"tariff": {"free": {"start": 10, "end": 14}}},
             "solar_forecast": {"remaining_today": 12.0},
             "sun": {"set": "2026-07-31T17:00:00+10:00"},
@@ -388,6 +388,20 @@ class FillTickTest(unittest.TestCase):
             foxctl.free_window_fill_tick(tick_cfg(), fox, tick_snap())
         self.assertEqual(fox.writes, [])
         self.assertIsNone(foxctl._FILL["plan"])
+
+    def test_stale_cloud_load_does_not_produce_an_over_cap_fill(self):
+        # The 2026-07-31 11:32 regression: cloud load == car draw (apparent 0 kW house) while
+        # the live clamp showed 14.1 kW against a 7.5 kW fill. The old estimate planned 10.1 kW.
+        fox = FakeFox()
+        with _frozen(11, 32):
+            foxctl.free_window_fill_tick(tick_cfg(), fox,
+                                         tick_snap(soc=65.0, load_kw=3.6, ev_kw=3.6,
+                                                   fd_pwr=7500, grid_live=14.1))
+        plan = foxctl._FILL["plan"]
+        self.assertGreater(plan["fill_kw"], 0.0)
+        # House is really ~3.0 kW, so the fill plus house plus car must still clear the cap.
+        self.assertLessEqual(plan["fill_kw"] + 3.0 + 3.6, 14.5 + 1e-9)
+        self.assertLess(plan["fill_kw"], 10.0)
 
     def test_plan_is_published_for_the_car_decision(self):
         fox = FakeFox()
@@ -502,3 +516,30 @@ class SolarAfterDeadlineTest(unittest.TestCase):
         with _frozen(19, 0):
             got = foxctl._solar_after_deadline_kwh(self._snap(sunset="2026-08-01T07:14:00+00:00"), 14)
         self.assertEqual(got, 0.0)
+
+
+class HouseLoadEstimateTest(unittest.TestCase):
+    """The FoxESS cloud load reading lags ~5 min; the local grid clamp is seconds-fresh.
+    Underestimating the house is what breaches the supply cap, so take the higher estimate."""
+
+    def test_live_grid_wins_when_the_cloud_load_is_stale_low(self):
+        # Observed 2026-07-31 11:32: cloud load == the car draw, implying a 0 kW house, while
+        # the live clamp showed grid 14.1 kW against a 7.5 kW fill and a 3.4 kW car.
+        snap = {"load_kw": 3.6, "ev_kw": 3.6, "grid_power_live": 14.1}
+        self.assertAlmostEqual(foxctl._fill_house_kw(snap, fill_now_kw=7.5), 3.0, places=6)
+
+    def test_cloud_load_used_when_it_is_the_higher_estimate(self):
+        snap = {"load_kw": 5.0, "ev_kw": 0.0, "grid_power_live": 8.0}
+        self.assertAlmostEqual(foxctl._fill_house_kw(snap, fill_now_kw=7.5), 5.0, places=6)
+
+    def test_grid_estimate_ignored_when_the_current_fill_is_unknown(self):
+        # Without knowing the battery's draw, grid − car would count the fill as house load.
+        snap = {"load_kw": 2.2, "ev_kw": 0.0, "grid_power_live": 13.0}
+        self.assertAlmostEqual(foxctl._fill_house_kw(snap, fill_now_kw=None), 2.2, places=6)
+
+    def test_falls_back_high_when_nothing_is_readable(self):
+        self.assertEqual(foxctl._fill_house_kw({}, fill_now_kw=None), 2.0)
+
+    def test_never_returns_a_zero_house(self):
+        snap = {"load_kw": 3.6, "ev_kw": 3.6, "grid_power_live": 11.0}
+        self.assertGreaterEqual(foxctl._fill_house_kw(snap, fill_now_kw=11.0), 0.3)
