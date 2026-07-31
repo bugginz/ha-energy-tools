@@ -86,8 +86,8 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None, h=None):
                 + "".join(chevs))
     glyph_el = (f"<text x='274' y='42' font-family='system-ui,sans-serif' font-size='28' "
                 f"text-anchor='end' fill='{accent}' opacity='.9'>{glyph}</text>") if glyph else ""
-    sub_el = (f"<text x='26' y='{h - 20}' font-family='system-ui,sans-serif' font-size='16' "
-              f"fill='{MUTED}'>{sub}</text>") if sub else ""
+    sub_el = (f"<text x='26' y='{int(h * 0.76)}' font-family='system-ui,sans-serif' "
+              f"font-size='16' fill='{MUTED}'>{sub}</text>") if sub else ""
     return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 {h}'>
 <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
 <stop offset='0' stop-color='{BG1}'/><stop offset='1' stop-color='{BG0}'/></linearGradient>
@@ -120,7 +120,7 @@ def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None
 <rect x='2' y='2' width='{TEMP_W - 4}' height='{h - 4}' rx='18' fill='url(#g)'
  stroke='{VIOLET}' stroke-opacity='.25'/>
 <rect x='12' y='16' width='9' height='{h - 32}' rx='4.5' fill='url(#s)'/>
-<text x='30' y='52' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+<text x='30' y='84' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
  letter-spacing='2' fill='{ORANGE}'>INSIDE</text>
 {seg}
 <text x='30' y='{h - 22}' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
@@ -172,7 +172,7 @@ def idle_bar_svg(accent):
 
 
 def value(entity, *, attribute=None, suffix=None, prefix=None,
-          size="min(58px, 5vw)", top="62%", color=INK):
+          size="min(58px, 5vw)", top="52%", color=INK):
     """Live value overlaid on the tile artwork.
 
     A state-label already appends the entity's unit_of_measurement, so adding a suffix
@@ -205,8 +205,8 @@ POWER = 9            # V4: 6 + 9 + 9 = 24, so the power cards tile 2x2 beside it
 # A card spanning R rows is 64R-8 px tall, so two stacked 3-row cards (2*184 + 8 gap = 376)
 # equal ONE 6-row card. The gap is already inside the arithmetic — adding one for it makes the
 # temperature column overshoot by a row.
-POWER_ROWS_DAY = 3
-POWER_ROWS_EVE = 5
+POWER_ROWS_DAY = 6
+POWER_ROWS_EVE = 6
 # With an explicit row span the card box is a fixed pixel height, so the artwork's aspect has
 # to be drawn to match or the image letterboxes inside it. A row is 64px less an 8px gap, and
 # a V4 power card is 9/24 of the section, so these track the row spans above.
@@ -217,8 +217,11 @@ POWER_ROWS_EVE = 5
 #   TILE_H = 300 * box_h / box_w  ->  300 * 184/382 = 145   (day)
 #                                     300 * 312/382 = 245   (evening, 5 rows)
 # These are specific to a ~1180px-wide display. On a very different screen they want redoing.
-TILE_H_DAY = 145
-TILE_H_EVE = 245
+# 6 rows -> a 382x376 power box on the kiosk, so TILE_H = 300 * 376/382 = 295. Two such rows
+# (760px) plus the band and padding overflow a ~820px screen, which is the point: the Edit
+# card is pushed below the fold rather than sitting in valuable real estate.
+TILE_H_DAY = 295
+TILE_H_EVE = 295
 
 
 def temp_rows(power_rows):
@@ -383,8 +386,8 @@ def build(card_mod=False, v4=False):
 
     if v4:
         cards = (build_v4_cards(POWER_ROWS_DAY, mode=DAY)
-                 + build_v4_cards(POWER_ROWS_EVE, vsize="min(88px, 7.4vw)",
-                                  tsize="min(56px, 4.6vw)", show_bar=False, mode=EVENING,
+                 + build_v4_cards(POWER_ROWS_EVE, vsize="min(96px, 8vw)",
+                                  tsize="min(64px, 5.4vw)", show_bar=False, mode=EVENING,
                                   th=TILE_H_EVE))
 
     controls = [
@@ -419,7 +422,7 @@ def ac_marker_css(accent):
     return ("hui-state-label-element:nth-of-type(3){"
             "top:{% if " + SETPOINT_J + " > " + INSIDE_J + " %}9%"
             "{% elif " + SETPOINT_J + " > " + OUTSIDE_J + " %}55%"
-            "{% else %}93%{% endif %} !important;"
+            "{% else %}88%{% endif %} !important;"
             f"border-top:2px dashed {accent};padding-top:5px;"
             "}")
 
@@ -456,8 +459,8 @@ def battery_band_cards():
     return out
 
 
-def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(58px, 5vw)",
-                   tsize="min(40px, 3.4vw)", show_bar=True, mode=None, th=TILE_H_DAY):
+def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(76px, 6.4vw)",
+                   tsize="min(52px, 4.4vw)", show_bar=True, mode=None, th=TILE_H_DAY):
     """Temperature column on the left, the four halves of the energy equation on the right.
 
     Solar in, battery store, house draw and grid exchange are one system, so they get equal
