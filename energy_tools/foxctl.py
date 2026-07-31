@@ -39,7 +39,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Lock, Thread
 
-VERSION = "1.73.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+import fillplan
+
+VERSION = "1.74.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -115,6 +117,15 @@ DEFAULT_CONFIG = {
         # tune per_c once temp↔load history accumulates. mild_c is the no-nudge baseline temperature.
         "temp_mild_c": 20.0, "temp_hot_c": 28.0, "temp_cold_c": 12.0,
         "temp_per_c_hot": 0.015, "temp_per_c_cold": 0.020, "temp_nudge_max": 0.40,
+        # Free-window fill planner (2026-07-31): size the base group's charge power to what the
+        # battery actually needs to reach fill_deadline_soc by fill_deadline_hour, so the leftover
+        # supply headroom can carry the car instead of the fill hogging it. PV is curtailed while
+        # ForceCharge runs, so solar is credited only AFTER the deadline — a poor afternoon raises
+        # the deadline target instead of lowering the fill.
+        "fill_planner": True, "fill_deadline_soc": 90, "fill_deadline_hour": 14,
+        "fill_min_kw": 1.0, "fill_margin": 1.1, "fill_charge_eff": 0.95,
+        "fill_power_step_kw": 1.0,   # hysteresis: rewrite the group only on a change this big
+        "fill_rewrite_gap_s": 240,   # and at most this often (every write risks the user's schedule)
         "ac_kw_per_hz": 0.02,       # AC draw ≈ compressor Hz × this (self-calibrates from load over time)
         "min_soc_on_grid": 10,
         # The ONLY min-SoC foxctl ever writes to the inverter — a constant safety floor, never a
@@ -157,7 +168,16 @@ DEFAULT_CONFIG = {
                   # (UI force-charge override is the one exemption). predawn_import_stop_kw aborts a
                   # dump that starts pulling from the meter; guard_grace_min spaces repeat guard cuts.
                   "predawn_dump": True, "predawn_floor_soc": 30, "predawn_start_hour": 4,
-                  "floor_guard": True, "predawn_import_stop_kw": 0.5, "guard_grace_min": 10},
+                  "floor_guard": True, "predawn_import_stop_kw": 0.5, "guard_grace_min": 10,
+                  # Anti-flap (2026-07-31): headroom_guard_kw is the slack the car must leave under
+                  # the supply cap to START (a zero-margin test let an A/C compressor push the total
+                  # over seconds later); guard_cooloff_min holds it off after a fast-guard trip long
+                  # enough for a re-planned fill power to take effect.
+                  "headroom_guard_kw": 0.8, "guard_cooloff_min": 3,
+                  # Car SoC target: reach target_soc by weekday/hour (Mon=0..Sun=6) if plugged in.
+                  # Informational — it drives a notification, never the free-window power split.
+                  "soc_entity": "", "battery_kwh": 42.0, "target_soc": 80.0,
+                  "target_weekday": 5, "target_hour": 8},
     "poll_seconds": 300,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
@@ -1460,11 +1480,18 @@ def _solar_bells(rise_iso, set_iso, kwh_tomorrow, kwh_remaining):
 
 
 
-_NOTIFY = {"stale_count": 0, "stale_notified": False, "last_selling": False}
+_NOTIFY = {"stale_count": 0, "stale_notified": False, "last_selling": False,
+           "car_behind_notified": False}
 
 _EV = {"on": None, "last_change": 0.0, "override_until": 0.0, "lowdraw_since": 0.0,
        "session_day": None, "session_start_kwh": None, "capped": False,
        "import_hits": 0, "guard_cut_ts": 0.0, "predawn_parked_day": None}   # + pre-dawn dump/guard
+
+# Free-window fill planner state. trim_kw is the fast-guard backoff: a cap breach observed
+# between planning cycles is subtracted from the next plan, decaying once things stay clean.
+_FILL = {"plan": None, "last_write": 0.0, "written_kw": None, "trim_kw": 0.0}
+_FILL_TRIM_MAX_KW = 4.0
+_FILL_TRIM_DECAY_KW = 0.5
 
 
 def ha_call_service(cfg, domain, service, entity_id):
@@ -1562,10 +1589,30 @@ def ev_divert_decision(snap, ev):
             # inside grid_power, so adding the estimate again would double-count it.
             running = _EV.get("on") or (isinstance(snap.get("ev_kw"), (int, float))
                                         and snap["ev_kw"] >= 0.3)
+            # Anti-flap (2026-07-31): after a fast-guard trip, hold off long enough for the
+            # re-planned fill power to reach the inverter. Restarting into an unchanged fill is
+            # what produced the 10-minute on/off cycle.
+            cool_s = float(ev.get("guard_cooloff_min", 3) or 0) * 60
+            since_cut = time.time() - _EV.get("guard_cut_ts", 0.0)
+            if not running and cool_s > 0 and since_cut < cool_s:
+                return False, (f"free window: cooling off {int((cool_s - since_cut) / 60) + 1}min after a "
+                               f"supply-cap cut — waiting for the fill to step down")
+            # The planner has already reserved house + guard margin and decided whether the car
+            # fits under the cap. Prefer its verdict; the raw comparison below is the fallback
+            # for when no fresh plan exists (planner disabled, or outside a planned cycle).
+            plan = _FILL.get("plan")
+            if plan and time.time() - (plan.get("ts") or 0) < 600:
+                if not plan.get("car_ok") and not running:
+                    return False, (f"free window: fill needs {plan.get('must_kw', 0):.1f}kW to reach "
+                                   f"{plan.get('target_soc', 90):.0f}% by the deadline — no headroom for the car")
+                if plan.get("car_ok"):
+                    return True, (f"free window · car + battery together ({fl} · fill "
+                                  f"{plan.get('fill_kw', 0):.1f}kW)")
             if cap_kw > 0 and isinstance(gp, (int, float)):
+                guard = float(ev.get("headroom_guard_kw", 0.8) or 0.0)
                 if running and gp > cap_kw:
                     return False, f"free window: import {gp:.1f}kW over the {cap_kw:g}kW supply cap — car pauses"
-                if not running and gp + _car_draw_est(snap) > cap_kw:
+                if not running and gp + _car_draw_est(snap) + guard > cap_kw:
                     return False, (f"free window: battery+house importing {gp:.1f}kW — no headroom "
                                    f"for the car under the {cap_kw:g}kW supply cap")
             return True, f"free window · car + battery together ({fl})"
@@ -1782,6 +1829,19 @@ def maybe_notify(cfg, snap):
                     f"FoxESS telemetry unavailable for {_NOTIFY['stale_count']} consecutive cycles — "
                     "control on safety hold until data recovers."))
         _NOTIFY["stale_notified"] = True
+    # Car behind its weekly SoC target: the free-window hours left before the deadline cannot
+    # deliver the kWh it still needs. Edge-triggered so it pages on the transition, not every cycle.
+    ct = ((snap.get("car") or {}).get("target") or {})
+    behind = ct.get("on_track") is False
+    if nc.get("on_car_target", True) and behind and not _NOTIFY.get("car_behind_notified"):
+        out.append(("🚗 car won't reach its target",
+                    f"Car at {ct.get('soc')}% needs {ct.get('kwh_needed')}kWh "
+                    f"(~{ct.get('hours_needed')}h) to hit {ct.get('target_soc'):.0f}%, but only "
+                    f"{ct.get('chargeable_hours')}h of free window remain before the deadline. "
+                    "Plug in now, or top up on shoulder power."))
+        _NOTIFY["car_behind_notified"] = True
+    if not behind:
+        _NOTIFY["car_behind_notified"] = False
     for t, m in out:
         ha_notify(cfg, t, m)
 
@@ -2499,6 +2559,7 @@ def gather_and_decide(cfg: dict) -> dict:
                                  "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
     # Actual car-charge session log (when + how much), from the live EV draw + cumulative EV kWh.
     car_sessions = track_charge_session(cfg, ev_kw, (energy or {}).get("ev"))
+    car_soc = ha.get_num((cfg.get("ev_divert") or {}).get("soc_entity") or "")
     # work mode rarely changes externally — refresh it every Nth cycle, cache otherwise, to save API calls
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
@@ -2641,6 +2702,21 @@ def gather_and_decide(cfg: dict) -> dict:
     survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
     rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc, solar_remaining)
 
+    # Car SoC target: can the car reach target_soc by its weekly deadline on the free-window hours
+    # left before then? Informational only — it never changes the free-window power split, because
+    # making room for the car would mean filling the battery slower than its own deadline needs.
+    evc = cfg.get("ev_divert") or {}
+    _fw = profile.get("free") or {}
+    _hrs = fillplan.hours_until_weekly(nowl, int(evc.get("target_weekday", 5)),
+                                       int(evc.get("target_hour", 8)))
+    car_target = fillplan.car_deadline_status(
+        car_soc, float(evc.get("battery_kwh", 42.0) or 0.0), float(evc.get("target_soc", 80.0) or 0.0),
+        chargeable_hours=fillplan.free_window_hours_before(
+            nowl, nowl + timedelta(hours=_hrs), _fw.get("start", 10), _fw.get("end", 14)),
+        charge_kw=_car_draw_est({"car": {"sessions": car_sessions.get("sessions")}}))
+    car_target.update({"soc": car_soc, "target_soc": float(evc.get("target_soc", 80.0) or 0.0),
+                       "hours_to_deadline": _hrs})
+
     # Load forecast for the dashboard (learned hour-of-day profile, phased from the current hour).
     have_profile = consumption.get("profile_days", 0) >= 2 and bool(consumption.get("hour_profile"))
     hrs_to_midnight = 24 - hh
@@ -2693,6 +2769,8 @@ def gather_and_decide(cfg: dict) -> dict:
                            "remaining_today_raw": solar_remaining_raw, "tomorrow_raw": solar_tomorrow_raw},
         "solar_cal": solar_cal,
         "solar_bells": solar_bells,
+        "sun": {"rise": sun_rise, "set": sun_set},   # the fill planner needs sunset to split
+                                                     # remaining solar either side of the deadline
         "dynamic": {"source": "zerohero", "mode": "tariff",
                     "tariff_label": profile.get("label"),
                     "tariff": {"free": profile.get("free"), "peak": profile.get("peak"),
@@ -2718,7 +2796,9 @@ def gather_and_decide(cfg: dict) -> dict:
                 "power_source": ev_power_source,
                 "today_kwh": car_sessions.get("today_kwh"),
                 "charging": car_sessions.get("active"),
+                "soc": car_soc, "target": car_target,
                 "sessions": car_sessions.get("sessions")},
+        "fill_plan": _FILL.get("plan"),
         "grid_power": round(grid_power, 2),
         "grid_power_live": gp_live, "grid_power_live_age_s": gp_live_age,
         "feedin_power": round(feedin_power, 2),
@@ -2828,6 +2908,117 @@ def manual_tick(cfg, snap):
     return msg
 
 
+def _fill_house_kw(snap):
+    """House load excluding the car and the battery fill (kW) — what the planner must reserve
+    before dividing the rest between the fill and the car. Falls back high, not low: guessing
+    the house small is what lets the total breach the supply cap."""
+    load, ev = snap.get("load_kw"), snap.get("ev_kw")
+    ev = ev if isinstance(ev, (int, float)) and ev > 0 else 0.0
+    if isinstance(load, (int, float)):
+        return max(0.0, load - ev)
+    gp, bat = _gp_now(snap), snap.get("bat_charge_power")
+    if isinstance(gp, (int, float)) and isinstance(bat, (int, float)):
+        return max(0.0, gp - bat - ev)
+    return 2.0
+
+
+def _solar_after_deadline_kwh(snap, deadline_h):
+    """Forecast solar landing after the fill deadline — the energy that can finish the top-up
+    once ForceCharge stops curtailing the MPPT. None means unknown (no sunset or forecast
+    reading), which the planner treats differently from a known zero."""
+    sun_set = _parse_t((snap.get("sun") or {}).get("set"))
+    rem = (snap.get("solar_forecast") or {}).get("remaining_today")
+    if not sun_set or not isinstance(rem, (int, float)):
+        return None
+    now = datetime.now(sun_set.tzinfo)
+    if sun_set.date() != now.date():
+        return 0.0                       # sun already down; next_setting is tomorrow's
+    deadline = now.replace(hour=int(deadline_h), minute=0, second=0, microsecond=0)
+    return fillplan.solar_kwh_between(sun_set, rem, deadline, sun_set)
+
+
+def free_window_fill_tick(cfg, fox, snap):
+    """Size the base group's charge power to what the battery needs to reach fill_deadline_soc
+    by fill_deadline_hour, leaving the rest of the supply cap for the car (spec 2026-07-31).
+
+    Writes ONLY the power field of the user's base group, only on a healthy scheduler read,
+    only when the change clears fill_power_step_kw, and at most once per fill_rewrite_gap_s —
+    every write to that group is a chance to clobber a schedule the user owns.
+    """
+    strat = cfg.get("strategy") or {}
+    ev = cfg.get("ev_divert") or {}
+    if not strat.get("fill_planner", True):
+        return None
+    free = ((snap.get("dynamic") or {}).get("tariff") or {}).get("free") or {}
+    fs, fe = free.get("start"), free.get("end")
+    if not isinstance(fs, (int, float)) or not isinstance(fe, (int, float)):
+        return None
+    now = datetime.now()
+    now_h = now.hour + now.minute / 60.0
+    if not _in_window(free, now_h):
+        _FILL["plan"] = None
+        return None
+    deadline_h = float(strat.get("fill_deadline_hour", 14) or 14)
+    plan = fillplan.plan_fill(
+        soc=snap.get("soc"),
+        capacity_kwh=float(strat.get("battery_capacity_kwh", 41.44)),
+        now_h=now_h, deadline_h=deadline_h,
+        deadline_soc=float(strat.get("fill_deadline_soc", 90)),
+        max_soc_cap=min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
+        solar_after_deadline_kwh=_solar_after_deadline_kwh(snap, deadline_h),
+        house_kw=_fill_house_kw(snap),
+        car_kw_est=_car_draw_est(snap),
+        supply_cap_kw=float(ev.get("supply_cap_kw", 14.5) or 14.5),
+        max_fill_kw=float(strat.get("force_charge_power_kw", 10.5)),
+        min_fill_kw=float(strat.get("fill_min_kw", 1.0)),
+        guard_kw=float(ev.get("headroom_guard_kw", 0.8)),
+        trim_kw=_FILL["trim_kw"],
+        charge_eff=float(strat.get("fill_charge_eff", 0.95)),
+        margin=float(strat.get("fill_margin", 1.1)))
+    plan["ts"] = time.time()
+    _FILL["plan"] = plan
+    if _FILL["trim_kw"] > 0:                     # a clean cycle walks the fast-guard backoff off
+        _FILL["trim_kw"] = max(0.0, _FILL["trim_kw"] - _FILL_TRIM_DECAY_KW)
+    sch = snap.get("scheduler") or {}
+    if not sch.get("read_ok"):
+        return None                              # flaky read — never act blind
+    groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
+    base = None
+    for g in groups:
+        gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
+        ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
+        if g.get("workMode") == "ForceCharge" and gs < fe and ge > fs:
+            base = g
+            break
+    if base is None:
+        return None                              # no base group yet — the guardian plants it
+    cur_kw = float(base.get("fdPwr") or 0) / 1000.0
+    if abs(cur_kw - plan["fill_kw"]) < float(strat.get("fill_power_step_kw", 1.0)):
+        return None
+    if time.time() - _FILL["last_write"] < float(strat.get("fill_rewrite_gap_s", 240)):
+        return None
+    new = dict(base)
+    new["fdPwr"] = int(round(plan["fill_kw"] * 1000))
+    others = [g for g in groups if g is not base]
+    try:
+        fox.call("/op/v0/device/scheduler/enable", {"deviceSN": fox.sn, "groups": others + [new]})
+    except Exception as e:
+        print(f"fill planner write failed: {e}", file=sys.stderr)
+        return None
+    _FILL["last_write"], _FILL["written_kw"] = time.time(), plan["fill_kw"]
+    # Keep the user-group cache in step so the base group is still recognised as the user's.
+    _sched_load(cfg)
+    ug = [g for g in (_SCHED.get("user_groups") or []) if _group_key(g) != _group_key(base)]
+    ug.append(new)
+    _SCHED["user_groups"] = ug
+    _sched_save(cfg)
+    soc_txt = f"{snap.get('soc'):.0f}%" if isinstance(snap.get("soc"), (int, float)) else "?"
+    m = (f"free-window fill {cur_kw:.1f}kW → {plan['fill_kw']:.1f}kW — {plan['reason']} "
+         f"(SoC {soc_txt}, target {plan['target_soc']:.0f}% by {int(deadline_h):02d}:00)")
+    log_event("fill_plan", m)
+    return m
+
+
 def ensure_base_schedule(cfg, fox, snap):
     """USER AUTHORIZATION (2026-07-13): the free-window base fill group belongs to the user,
     but the FoxESS cloud has silently eaten it twice — if a HEALTHY scheduler read shows it
@@ -2910,6 +3101,12 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
                 msgs.append(bm)
         except Exception as e:
             print(f"base-schedule guard failed: {e}", file=sys.stderr)
+        try:
+            fm = free_window_fill_tick(cfg, fox, snap)
+            if fm:
+                msgs.append(fm)
+        except Exception as e:
+            print(f"fill planner failed: {e}", file=sys.stderr)
         try:
             sm = smart_fill_tick(cfg, fox, snap)
             if sm:
@@ -4101,6 +4298,13 @@ def fast_guard_loop(cfg):
                    else f"fast-guard: pre-dawn dump importing {kw:.1f}kW > {stop_kw:g}kW — battery-only rule")
             ha_call_service(cfg, "switch", "turn_off", sw)
             _EV["on"], _EV["last_change"] = False, time.time()
+            _EV["guard_cut_ts"] = time.time()       # starts the anti-flap cooloff
+            if over_cap and in_free_now:
+                # The breach happened between planning cycles (a house spike the 5-minute plan
+                # could not see). Carry the overshoot into the next plan so the fill steps down
+                # instead of the car being cut again on the next attempt.
+                _FILL["trim_kw"] = min(_FILL_TRIM_MAX_KW,
+                                       _FILL["trim_kw"] + (kw - cap_kw) + 0.3)
             log_event("ev_divert", f"{why} → car off (local clamp, {FAST_GUARD_POLL_S}s poll)")
             with LAST_LOCK:
                 if LAST:

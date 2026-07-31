@@ -36,6 +36,15 @@ if opt.get("ac_kw_per_hz"):
 fc["strategy"]["base_schedule_guard"] = bool(opt.get("base_schedule_guard", True))
 fc["strategy"]["smart_fill"] = bool(opt.get("smart_fill", True))
 fc["strategy"]["smart_fill_rearm_soc"] = int(opt.get("smart_fill_rearm_soc", 98))
+# Free-window fill planner (spec 2026-07-31): adaptive base-group charge power.
+fc["strategy"]["fill_planner"] = bool(opt.get("fill_planner", True))
+fc["strategy"]["fill_deadline_soc"] = int(opt.get("fill_deadline_soc", 90))
+fc["strategy"]["fill_deadline_hour"] = int(opt.get("fill_deadline_hour", 14))
+fc["strategy"]["fill_min_kw"] = float(opt.get("fill_min_kw", 1.0))
+fc["strategy"]["fill_margin"] = float(opt.get("fill_margin", 1.1))
+fc["strategy"]["fill_charge_eff"] = float(opt.get("fill_charge_eff", 0.95))
+fc["strategy"]["fill_power_step_kw"] = float(opt.get("fill_power_step_kw", 1.0))
+fc["strategy"]["fill_rewrite_gap_s"] = int(opt.get("fill_rewrite_gap_s", 240))
 # Solar diversion to a car-charger power point (needs allow_control). switch="" disables.
 fc["ev_divert"] = {
     "switch": opt.get("ev_charger_switch", ""),
@@ -59,6 +68,14 @@ fc["ev_divert"] = {
     "predawn_import_stop_kw": float(opt.get("ev_predawn_import_stop_kw", 0.5)),
     "guard_grace_min": int(opt.get("ev_guard_grace_min", 10)),
     "supply_cap_kw": float(opt.get("ev_supply_cap_kw", 14.5)),
+    # Anti-flap + car SoC target (spec 2026-07-31).
+    "headroom_guard_kw": float(opt.get("ev_headroom_guard_kw", 0.8)),
+    "guard_cooloff_min": int(opt.get("ev_guard_cooloff_min", 3)),
+    "soc_entity": opt.get("ev_soc_entity", ""),
+    "battery_kwh": float(opt.get("ev_battery_kwh", 42.0)),
+    "target_soc": float(opt.get("ev_target_soc", 80)),
+    "target_weekday": int(opt.get("ev_target_weekday", 5)),
+    "target_hour": int(opt.get("ev_target_hour", 8)),
 }
 # foxctl is the single FoxESS poller: publish telemetry to MQTT for the dashboards.
 fc["mqtt"] = {"publish": bool(opt.get("publish_telemetry", True)),

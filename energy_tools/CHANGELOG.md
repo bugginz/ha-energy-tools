@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.74.0 — free-window fill planner: the car stops flapping
+
+The 10:00–14:00 base ForceCharge group filled the battery at a fixed
+`force_charge_power_kw` (10.5 kW). House + car did not fit under the 14.5 kW supply cap at
+that rate, so the fast-guard cut the car, the divert loop restarted it ten minutes later,
+and it cut again — observed twice on 2026-07-31 (`importing 14.7kW > 14.5kW supply cap`).
+
+The fill power is now planned each cycle from what the battery actually needs: enough to
+reach `fill_deadline_soc` (90%) by `fill_deadline_hour` (14:00), and no more, so the rest
+of the supply cap carries the house and the car. Because PV is curtailed while ForceCharge
+runs, the solar forecast is not credited against the fill — it only decides whether 90% is
+a sufficient deadline target or whether a poor afternoon means buying closer to 100%. An
+unknown forecast leaves the target at 90% rather than assuming zero sun.
+
+The battery's deadline is never traded away for the car: its required power is the floor of
+the fill rate. When the battery is already at target the fill simply absorbs whatever the
+house and car leave, so free energy is not wasted.
+
+Anti-flap, in four layers: the planner reserves house load plus a `headroom_guard_kw`
+(0.8 kW) margin; the car's start test now requires that margin instead of comparing against
+the cap exactly; a fast-guard trip starts a `guard_cooloff_min` (3 min) hold so the car
+cannot restart before the re-planned power reaches the inverter; and the observed overshoot
+is carried into the next plan as a decaying trim, which absorbs house spikes that land
+between planning cycles.
+
+Writes touch only the power field of the user's base group, only on a healthy scheduler
+read, only when the change clears `fill_power_step_kw` (1 kW), and at most once per
+`fill_rewrite_gap_s` (240 s). `fill_planner: false` restores the old fixed-power behaviour.
+
+Also new: car SoC tracking via `ev_soc_entity` (`sensor.wican_soc_real`). foxctl projects
+whether the car reaches `ev_target_soc` (80%) by `ev_target_weekday`/`ev_target_hour`
+(Saturday 08:00) on the free-window hours left before then, and notifies when it will not.
+This is informational only — it never changes the free-window power split, because the only
+room it could claim would come from filling the battery slower than its own deadline needs.
+
+Options: fill_planner, fill_deadline_soc, fill_deadline_hour, fill_min_kw, fill_margin,
+fill_charge_eff, fill_power_step_kw, fill_rewrite_gap_s, ev_headroom_guard_kw,
+ev_guard_cooloff_min, ev_soc_entity, ev_battery_kwh, ev_target_soc, ev_target_weekday,
+ev_target_hour.
+
 ## 1.73.2 — car charger switch is now the Meross inline switch
 
 The cloud-Tuya outdoor power point died; the car charger GPO is now fed through a Meross

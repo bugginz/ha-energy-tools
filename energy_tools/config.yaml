@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.73.2"
+version: "1.74.0"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -51,6 +51,13 @@ options:
   ev_predawn_import_stop_kw: 0.5
   ev_guard_grace_min: 10
   ev_supply_cap_kw: 14.5
+  ev_headroom_guard_kw: 0.8
+  ev_guard_cooloff_min: 3
+  ev_soc_entity: "sensor.wican_soc_real"
+  ev_battery_kwh: 42.0
+  ev_target_soc: 80
+  ev_target_weekday: 5
+  ev_target_hour: 8
   ev_charge_kw: 7.0
   ev_expected_kwh: 7.5
   weather_entity: "weather.forecast_home"
@@ -58,6 +65,14 @@ options:
   base_schedule_guard: true
   smart_fill: true
   smart_fill_rearm_soc: 98
+  fill_planner: true
+  fill_deadline_soc: 90
+  fill_deadline_hour: 14
+  fill_min_kw: 1.0
+  fill_margin: 1.1
+  fill_charge_eff: 0.95
+  fill_power_step_kw: 1.0
+  fill_rewrite_gap_s: 240
   ac_climate_entity: "climate.living_room_ac_mqtt_hvac"
   ac_comp_entity: "sensor.living_room_ac_comp"
   ac_fan_entity: "sensor.living_room_ac_fanfreq"
@@ -116,6 +131,13 @@ schema:
   ev_predawn_import_stop_kw: float
   ev_guard_grace_min: int
   ev_supply_cap_kw: float
+  ev_headroom_guard_kw: float
+  ev_guard_cooloff_min: int
+  ev_soc_entity: str?
+  ev_battery_kwh: float
+  ev_target_soc: float
+  ev_target_weekday: int
+  ev_target_hour: int
   ev_charge_kw: float
   ev_expected_kwh: float
   weather_entity: str?
@@ -123,6 +145,14 @@ schema:
   base_schedule_guard: bool
   smart_fill: bool
   smart_fill_rearm_soc: int
+  fill_planner: bool
+  fill_deadline_soc: int
+  fill_deadline_hour: int
+  fill_min_kw: float
+  fill_margin: float
+  fill_charge_eff: float
+  fill_power_step_kw: float
+  fill_rewrite_gap_s: int
   ac_climate_entity: str?
   ac_comp_entity: str?
   ac_fan_entity: str?
