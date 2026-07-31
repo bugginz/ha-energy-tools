@@ -39,6 +39,8 @@ ORANGE = "#fb923c"
 # tall on the real iPad, so settled at 200. This is the one knob for tile height.
 TILE_H = 200
 
+EV_POWER = "sensor.foxess_foxctl_ev_charger_power"
+EV_STATE = "sensor.foxess_foxctl_ev_charger_state"
 GRID_IN = "sensor.foxess_foxctl_grid_import"
 GRID_OUT = "sensor.foxess_foxctl_grid_export"
 SOC = "sensor.foxess_foxctl_battery_soc"
@@ -108,11 +110,7 @@ TEMP_W = 160
 def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None):
     h = int(round((tile_h or TILE_H) * 1.6))
     mid = h // 2
-    seg = (f"<line x1='30' y1='{mid}' x2='{TEMP_W - 18}' y2='{mid}' stroke='{ac_accent}' "
-           f"stroke-width='2' stroke-dasharray='6 5' opacity='.85'/>"
-           f"<text x='30' y='{mid - 10}' font-family='system-ui,sans-serif' font-size='11' "
-           f"font-weight='600' letter-spacing='1.6' fill='{ac_accent}'>A/C {ac_word.upper()}</text>"
-           ) if setpoint else ""
+    seg = ""   # the A/C marker is positioned by card-mod, not drawn here
     return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {TEMP_W} {h}'>
 <defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
 <stop offset='0' stop-color='{BG1}'/><stop offset='1' stop-color='{BG0}'/></linearGradient>
@@ -122,17 +120,26 @@ def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None
 <rect x='2' y='2' width='{TEMP_W - 4}' height='{h - 4}' rx='18' fill='url(#g)'
  stroke='{VIOLET}' stroke-opacity='.25'/>
 <rect x='12' y='16' width='9' height='{h - 32}' rx='4.5' fill='url(#s)'/>
-<text x='30' y='34' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+<text x='30' y='64' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
  letter-spacing='2' fill='{ORANGE}'>INSIDE</text>
 {seg}
 <text x='30' y='{h - 22}' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
  letter-spacing='2' fill='{CYAN}'>OUTSIDE</text></svg>"""
 
 
-def soc_bar_svg(accent, pulse):
-    """Full-width flow band under the SoC bar. The core tile draws the bar's true length;
-    this carries the direction the bar itself cannot animate — a wave travelling across it
-    plus chevrons pointing the way the charge is going."""
+def soc_bar_svg(accent, pulse, word=None):
+    """The battery status band — now the only battery bar, the tile above it having been
+    dropped as redundant. Colour carries meaning: green while charging or full, and while
+    DISCHARGING the colour comes from the coast-to-10am health helper, so an amber or red
+    band means the battery is not on track to reach the next free window. pulse=None draws
+    it steady (full or idle); otherwise the wave and chevrons run with the current."""
+    if pulse is None:
+        return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1040 86'>
+<rect x='2' y='2' width='1036' height='82' rx='18' fill='{BG0}' stroke='{accent}'
+ stroke-opacity='.45'/>
+<rect x='24' y='12' width='992' height='62' rx='9' fill='{accent}' opacity='.28'/>
+<text x='520' y='80' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+ letter-spacing='4' text-anchor='middle' fill='{accent}' opacity='.85'>{word}</text></svg>"""
     up = pulse == "up"
     n = 24
     els = []
@@ -148,7 +155,7 @@ def soc_bar_svg(accent, pulse):
             f"<path d='{d}' fill='none' stroke='{BG0}' stroke-width='3' stroke-linecap='round' "
             f"stroke-linejoin='round' opacity='.55' "
             f"style='animation:bp 1.8s ease-in-out {delay:.2f}s infinite'/>")
-    word = "CHARGING" if up else "DISCHARGING"
+    word = word or ("CHARGING" if up else "DISCHARGING")
     return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1040 86'>
 <style>@keyframes bp{{0%{{opacity:.12}}45%{{opacity:1}}100%{{opacity:.12}}}}</style>
 <rect x='2' y='2' width='1036' height='82' rx='18' fill='{BG0}' stroke='{accent}' stroke-opacity='.35'/>
@@ -164,7 +171,8 @@ def idle_bar_svg(accent):
  letter-spacing='5' text-anchor='middle' fill='{MUTED}'>BATTERY IDLE</text></svg>"""
 
 
-def value(entity, *, attribute=None, suffix=None, size="min(58px, 5vw)", top="62%", color=INK):
+def value(entity, *, attribute=None, suffix=None, prefix=None,
+          size="min(58px, 5vw)", top="62%", color=INK):
     """Live value overlaid on the tile artwork.
 
     A state-label already appends the entity's unit_of_measurement, so adding a suffix
@@ -178,6 +186,8 @@ def value(entity, *, attribute=None, suffix=None, size="min(58px, 5vw)", top="62
         el["attribute"] = attribute
     if suffix:
         el["suffix"] = suffix
+    if prefix:
+        el["prefix"] = prefix
     return el
 
 
@@ -244,6 +254,7 @@ def vis_band(entity, above, below):
 # House load colour thresholds (kW), per the 2026-07-31 request: orange over 2, red over 4.
 LOAD_WARN_KW, LOAD_ALERT_KW = 2, 4
 
+FULL_SOC = 98.5
 CHARGING = [{"condition": "numeric_state", "entity": CHG, "above": 0.05}]
 DISCHARGING = [{"condition": "numeric_state", "entity": DIS, "above": 0.05}]
 IDLE = [{"condition": "numeric_state", "entity": CHG, "below": 0.05},
@@ -297,7 +308,10 @@ def soc_tile_cardmod():
         "features": [{"type": "bar-gauge"}],
         "grid_options": {"rows": "auto", "columns": "full"},
         "card_mod": {"style": {
-            ".": _CARD_CSS,
+            # The icon and "Battery 100%" caption duplicate the BATTERY card below, so the
+            # tile is reduced to the bar itself.
+            ".": _CARD_CSS + "ha-tile-icon,ha-tile-info{display:none!important;}"
+                             "ha-tile-container{padding:6px 12px!important;}",
             "hui-card-features": {"$": {"hui-card-feature": {"$": {
                 "hui-bar-gauge-card-feature": {"$": _BAR_CSS}}}}},
         }},
@@ -386,6 +400,50 @@ def build(card_mod=False, v4=False):
     }
 
 
+INSIDE_J = "states('" + INSIDE + "')|float(-99)"
+OUTSIDE_J = "states('" + OUTSIDE + "')|float(-99)"
+SETPOINT_J = "state_attr('" + AC + "','temperature')|float(-99)"
+
+
+def ac_marker_css(accent):
+    """Order the A/C setpoint against the readings instead of pinning it mid-bar: above the
+    inside temperature when it is set higher, below the outside one when set lower, between
+    them otherwise. The bar then reads top-to-bottom as warmest-to-coolest."""
+    return ("hui-state-label-element:nth-of-type(3){"
+            "top:{% if " + SETPOINT_J + " > " + INSIDE_J + " %}12%"
+            "{% elif " + SETPOINT_J + " > " + OUTSIDE_J + " %}55%"
+            "{% else %}93%{% endif %} !important;"
+            f"border-top:2px dashed {accent};padding-top:5px;"
+            "}")
+
+
+def battery_band_cards():
+    """Charging, discharging (coloured by coast health), full and idle."""
+    not_full = {"condition": "numeric_state", "entity": SOC, "below": FULL_SOC}
+    full = {"condition": "numeric_state", "entity": SOC, "above": FULL_SOC}
+    out = [{**pe(soc_bar_svg(GREEN, None, "BATTERY FULL"), [], "full"), "visibility": [full]},
+           {**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING + [not_full]}]
+    for colour, health in ((GREEN, "green"), (AMBER, "orange"), (RED, "red")):
+        out.append({**pe(soc_bar_svg(colour, "down"), [], "full"),
+                    "visibility": DISCHARGING + vis_state(HEALTH, health)})
+    out.append({**pe(idle_bar_svg(MUTED), [], "full"), "visibility": IDLE + [not_full]})
+    # Car readout rides on every band variant, shown only while the charger is actually
+    # pulling — the Meross relay can be on with the car full or unplugged.
+    car = {"type": "conditional",
+           "conditions": [{"condition": "state", "entity": EV_STATE, "state": "on"},
+                          {"condition": "numeric_state", "entity": EV_POWER, "above": 0.3}],
+           "elements": [{"type": "state-label", "entity": EV_POWER, "prefix": "\U0001F697 ",
+                         "style": {"top": "50%", "left": "88%", "font-size": "min(22px, 1.9vw)",
+                                   "font-weight": "400", "white-space": "nowrap",
+                                   "color": CYAN}}]}
+    soc_lbl = {"type": "state-label", "entity": SOC,
+               "style": {"top": "50%", "left": "8%", "font-size": "min(30px, 2.6vw)",
+                         "font-weight": "300", "white-space": "nowrap", "color": INK}}
+    for c in out:
+        c["elements"] = [soc_lbl, car]
+    return out
+
+
 def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(58px, 5vw)",
                    tsize="min(40px, 3.4vw)", show_bar=True, mode=None, th=TILE_H_DAY):
     """Temperature column on the left, the four halves of the energy equation on the right.
@@ -394,29 +452,17 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(58px, 5vw)",
     weight in a 2x2 block. The A/C setpoint moves onto the temperature bar as a marker line
     rather than occupying a tile of its own.
     """
-    cards = []
-    if show_bar:
-        # After dark the SoC bar and flow band are dropped: the BATTERY card already carries
-        # level and direction, and the space buys height for the cards that must read at range.
-        if CARD_MOD:
-            cards.append(soc_tile_cardmod())
-        else:
-            for colour, health in (("green", "green"), ("orange", "orange"), ("red", "red")):
-                cards.append({"type": "tile", "entity": SOC, "color": colour, "name": "Battery",
-                              "features": [{"type": "bar-gauge"}],
-                              "grid_options": {"rows": "auto", "columns": "full"},
-                              "visibility": vis_state(HEALTH, health)})
-        cards.append({**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING})
-        cards.append({**pe(soc_bar_svg(AMBER, "down"), [], "full"), "visibility": DISCHARGING})
-        cards.append({**pe(idle_bar_svg(MUTED), [], "full"), "visibility": IDLE})
+    cards = list(battery_band_cards())
 
     # Temperature column: inside on top, outside at the foot, A/C setpoint as the line between.
     def temp_card(setpoint, accent, word, vis):
-        els = [value(INSIDE, size=tsize, top="20%"), value(OUTSIDE, size=tsize, top="80%")]
+        els = [value(INSIDE, size=tsize, top="27%"), value(OUTSIDE, size=tsize, top="80%")]
         if setpoint:
-            els.append(value(AC, attribute="temperature", suffix="°",
+            els.append(value(AC, attribute="temperature", suffix="°", prefix="A/C ",
                              size="min(26px, 2.2vw)", top="55%", color=accent))
         c = pe(temp_bar_svg(setpoint, accent, word, th), els, QUARTER, temp_rows(rows))
+        if setpoint:
+            c["card_mod"] = {"style": ac_marker_css(accent)}
         return {**c, "visibility": vis} if vis else c
 
     for accent, word, state in ((RED, "heating to", "heat"), (BLUE, "cooling to", "cool"),

@@ -28,35 +28,62 @@
      "column_span": 2,
      "cards": [
       {
-       "type": "tile",
-       "entity": "sensor.foxess_foxctl_battery_soc",
-       "name": "Battery",
-       "features": [
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.45%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%27992%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.28%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.85%27%3EBATTERY%20FULL%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
         {
-         "type": "bar-gauge"
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
         }
        ],
        "grid_options": {
-        "rows": "auto",
-        "columns": "full"
-       },
-       "card_mod": {
-        "style": {
-         ".": "ha-card{--tile-color:{% if states('sensor.foxess_foxctl_battery_soc')|float(0) < 30 %}#ef4444{% elif states('sensor.foxess_foxctl_battery_soc')|float(0) < 60 %}#f59e0b{% else %}#22c55e{% endif %} !important;}",
-         "hui-card-features": {
-          "$": {
-           "hui-card-feature": {
-            "$": {
-             "hui-bar-gauge-card-feature": {
-              "$": "@keyframes socSweep{0%{background-position:-140% 0}100%{background-position:240% 0}}@keyframes socGlow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}div:first-of-type{background-image:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.65) 50%,rgba(255,255,255,0) 100%);background-size:38% 100%;background-repeat:no-repeat;box-shadow:0 0 16px var(--tile-color);{% if states('sensor.foxess_foxctl_battery_charge_power')|float(0) > 0.05 %}animation:socSweep 1.9s linear infinite, socGlow 1.9s ease-in-out infinite;{% elif states('sensor.foxess_foxctl_battery_discharge_power')|float(0) > 0.05 %}animation:socSweep 1.9s linear infinite reverse, socGlow 1.9s ease-in-out infinite;{% else %}animation:none;box-shadow:none;{% endif %}}"
-             }
-            }
-           }
-          }
-         }
-        }
+        "columns": "full",
+        "rows": "auto"
        },
        "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "above": 98.5
+        },
         {
          "condition": "state",
          "entity": "sun.sun",
@@ -67,7 +94,50 @@
       {
        "type": "picture-elements",
        "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.75%27%3ECHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
-       "elements": [],
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
        "grid_options": {
         "columns": "full",
         "rows": "auto"
@@ -77,6 +147,80 @@
          "condition": "numeric_state",
          "entity": "sensor.foxess_foxctl_battery_charge_power",
          "above": 0.05
+        },
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "below": 98.5
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "above_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "green"
         },
         {
          "condition": "state",
@@ -88,7 +232,50 @@
       {
        "type": "picture-elements",
        "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%23f59e0b%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
-       "elements": [],
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
        "grid_options": {
         "columns": "full",
         "rows": "auto"
@@ -101,6 +288,80 @@
         },
         {
          "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "orange"
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "above_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%23ef4444%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "red"
+        },
+        {
+         "condition": "state",
          "entity": "sun.sun",
          "state": "above_horizon"
         }
@@ -109,7 +370,50 @@
       {
        "type": "picture-elements",
        "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2394a3b8%27%20stroke-opacity%3D%27.22%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2750%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2720%27%20font-weight%3D%27600%27%20letter-spacing%3D%275%27%20text-anchor%3D%27middle%27%20fill%3D%27%2394a3b8%27%3EBATTERY%20IDLE%3C%2Ftext%3E%3C%2Fsvg%3E",
-       "elements": [],
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
        "grid_options": {
         "columns": "full",
         "rows": "auto"
@@ -126,6 +430,11 @@
          "below": 0.05
         },
         {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "below": 98.5
+        },
+        {
          "condition": "state",
          "entity": "sun.sun",
          "state": "above_horizon"
@@ -134,13 +443,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27152%27%20x2%3D%27142%27%20y2%3D%27152%27%20stroke%3D%27%23ef4444%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27142%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%23ef4444%27%3EA%2FC%20HEATING%20TO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(40px, 3.4vw)",
           "font-weight": "300",
@@ -175,12 +484,16 @@
           "color": "#ef4444"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 6
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #ef4444;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -197,13 +510,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27152%27%20x2%3D%27142%27%20y2%3D%27152%27%20stroke%3D%27%2338bdf8%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27142%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%2338bdf8%27%3EA%2FC%20COOLING%20TO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(40px, 3.4vw)",
           "font-weight": "300",
@@ -238,12 +551,16 @@
           "color": "#38bdf8"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 6
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #38bdf8;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -260,13 +577,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27152%27%20x2%3D%27142%27%20y2%3D%27152%27%20stroke%3D%27%23a78bfa%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27142%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%23a78bfa%27%3EA%2FC%20AUTO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(40px, 3.4vw)",
           "font-weight": "300",
@@ -301,12 +618,16 @@
           "color": "#a78bfa"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 6
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #a78bfa;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -323,13 +644,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20304%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27300%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27272%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27282%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(40px, 3.4vw)",
           "font-weight": "300",
@@ -687,13 +1008,427 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27248%27%20x2%3D%27142%27%20y2%3D%27248%27%20stroke%3D%27%23ef4444%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27238%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%23ef4444%27%3EA%2FC%20HEATING%20TO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.45%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%27992%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.28%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.85%27%3EBATTERY%20FULL%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "above": 98.5
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2052%20l8%20-9%20l8%209%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.75%27%3ECHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_charge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "below": 98.5
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2322c55e%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%2322c55e%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "green"
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%23f59e0b%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%23f59e0b%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "orange"
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Cstyle%3E%40keyframes%20bp%7B0%25%7Bopacity%3A.12%7D45%25%7Bopacity%3A1%7D100%25%7Bopacity%3A.12%7D%7D%3C%2Fstyle%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%23ef4444%27%20stroke-opacity%3D%27.35%27%2F%3E%20%3Crect%20x%3D%2724%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Cpath%20d%3D%27M30%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.72s%20infinite%27%2F%3E%3Crect%20x%3D%2766%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Cpath%20d%3D%27M72%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.65s%20infinite%27%2F%3E%3Crect%20x%3D%27108%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Cpath%20d%3D%27M114%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.57s%20infinite%27%2F%3E%3Crect%20x%3D%27150%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Cpath%20d%3D%27M156%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.50s%20infinite%27%2F%3E%3Crect%20x%3D%27192%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Cpath%20d%3D%27M198%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.43s%20infinite%27%2F%3E%3Crect%20x%3D%27234%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Cpath%20d%3D%27M240%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.35s%20infinite%27%2F%3E%3Crect%20x%3D%27276%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Cpath%20d%3D%27M282%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.27s%20infinite%27%2F%3E%3Crect%20x%3D%27318%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Cpath%20d%3D%27M324%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.20s%20infinite%27%2F%3E%3Crect%20x%3D%27360%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Cpath%20d%3D%27M366%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.12s%20infinite%27%2F%3E%3Crect%20x%3D%27402%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Cpath%20d%3D%27M408%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%201.05s%20infinite%27%2F%3E%3Crect%20x%3D%27444%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Cpath%20d%3D%27M450%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.97s%20infinite%27%2F%3E%3Crect%20x%3D%27486%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Cpath%20d%3D%27M492%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.90s%20infinite%27%2F%3E%3Crect%20x%3D%27528%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Cpath%20d%3D%27M534%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.82s%20infinite%27%2F%3E%3Crect%20x%3D%27570%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Cpath%20d%3D%27M576%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.75s%20infinite%27%2F%3E%3Crect%20x%3D%27612%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Cpath%20d%3D%27M618%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.67s%20infinite%27%2F%3E%3Crect%20x%3D%27654%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Cpath%20d%3D%27M660%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.60s%20infinite%27%2F%3E%3Crect%20x%3D%27696%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Cpath%20d%3D%27M702%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.53s%20infinite%27%2F%3E%3Crect%20x%3D%27738%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Cpath%20d%3D%27M744%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.45s%20infinite%27%2F%3E%3Crect%20x%3D%27780%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Cpath%20d%3D%27M786%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.38s%20infinite%27%2F%3E%3Crect%20x%3D%27822%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Cpath%20d%3D%27M828%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.30s%20infinite%27%2F%3E%3Crect%20x%3D%27864%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Cpath%20d%3D%27M870%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.22s%20infinite%27%2F%3E%3Crect%20x%3D%27906%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Cpath%20d%3D%27M912%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.15s%20infinite%27%2F%3E%3Crect%20x%3D%27948%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Cpath%20d%3D%27M954%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.07s%20infinite%27%2F%3E%3Crect%20x%3D%27990%27%20y%3D%2712%27%20width%3D%2728%27%20height%3D%2762%27%20rx%3D%279%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.16%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%3Cpath%20d%3D%27M996%2034%20l8%209%20l8%20-9%27%20fill%3D%27none%27%20stroke%3D%27%23171b21%27%20stroke-width%3D%273%27%20stroke-linecap%3D%27round%27%20stroke-linejoin%3D%27round%27%20opacity%3D%27.55%27%20style%3D%27animation%3Abp%201.8s%20ease-in-out%200.00s%20infinite%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2780%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%274%27%20text-anchor%3D%27middle%27%20fill%3D%27%23ef4444%27%20opacity%3D%27.75%27%3EDISCHARGING%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "above": 0.05
+        },
+        {
+         "condition": "state",
+         "entity": "sensor.kiosk_battery_soc_health",
+         "state": "red"
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201040%2086%27%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%271036%27%20height%3D%2782%27%20rx%3D%2718%27%20fill%3D%27%23171b21%27%20stroke%3D%27%2394a3b8%27%20stroke-opacity%3D%27.22%27%2F%3E%20%3Ctext%20x%3D%27520%27%20y%3D%2750%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2720%27%20font-weight%3D%27600%27%20letter-spacing%3D%275%27%20text-anchor%3D%27middle%27%20fill%3D%27%2394a3b8%27%3EBATTERY%20IDLE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "8%",
+          "font-size": "min(30px, 2.6vw)",
+          "font-weight": "300",
+          "white-space": "nowrap",
+          "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "conditional",
+         "conditions": [
+          {
+           "condition": "state",
+           "entity": "sensor.foxess_foxctl_ev_charger_state",
+           "state": "on"
+          },
+          {
+           "condition": "numeric_state",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "above": 0.3
+          }
+         ],
+         "elements": [
+          {
+           "type": "state-label",
+           "entity": "sensor.foxess_foxctl_ev_charger_power",
+           "prefix": "\ud83d\ude97 ",
+           "style": {
+            "top": "50%",
+            "left": "88%",
+            "font-size": "min(22px, 1.9vw)",
+            "font-weight": "400",
+            "white-space": "nowrap",
+            "color": "#22d3ee"
+           }
+          }
+         ]
+        }
+       ],
+       "grid_options": {
+        "columns": "full",
+        "rows": "auto"
+       },
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_charge_power",
+         "below": 0.05
+        },
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_discharge_power",
+         "below": 0.05
+        },
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "below": 98.5
+        },
+        {
+         "condition": "state",
+         "entity": "sun.sun",
+         "state": "below_horizon"
+        }
+       ]
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(56px, 4.6vw)",
           "font-weight": "300",
@@ -728,12 +1463,16 @@
           "color": "#ef4444"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 10
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #ef4444;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -750,13 +1489,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27248%27%20x2%3D%27142%27%20y2%3D%27248%27%20stroke%3D%27%2338bdf8%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27238%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%2338bdf8%27%3EA%2FC%20COOLING%20TO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(56px, 4.6vw)",
           "font-weight": "300",
@@ -791,12 +1530,16 @@
           "color": "#38bdf8"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 10
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #38bdf8;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -813,13 +1556,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Cline%20x1%3D%2730%27%20y1%3D%27248%27%20x2%3D%27142%27%20y2%3D%27248%27%20stroke%3D%27%23a78bfa%27%20stroke-width%3D%272%27%20stroke-dasharray%3D%276%205%27%20opacity%3D%27.85%27%2F%3E%3Ctext%20x%3D%2730%27%20y%3D%27238%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2711%27%20font-weight%3D%27600%27%20letter-spacing%3D%271.6%27%20fill%3D%27%23a78bfa%27%3EA%2FC%20AUTO%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(56px, 4.6vw)",
           "font-weight": "300",
@@ -854,12 +1597,16 @@
           "color": "#a78bfa"
          },
          "attribute": "temperature",
-         "suffix": "\u00b0"
+         "suffix": "\u00b0",
+         "prefix": "A/C "
         }
        ],
        "grid_options": {
         "columns": 6,
         "rows": 10
+       },
+       "card_mod": {
+        "style": "hui-state-label-element:nth-of-type(3){top:{% if state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.timmerflotte_temp_hmd_sensor_temperature')|float(-99) %}12%{% elif state_attr('climate.living_room_ac_mqtt_hvac','temperature')|float(-99) > states('sensor.living_room_ac_outside')|float(-99) %}55%{% else %}93%{% endif %} !important;border-top:2px dashed #a78bfa;padding-top:5px;}"
        },
        "visibility": [
         {
@@ -876,13 +1623,13 @@
       },
       {
        "type": "picture-elements",
-       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2734%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
+       "image": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20160%20496%27%3E%20%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23232935%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23171b21%27%2F%3E%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%27s%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%270%27%20y2%3D%271%27%3E%20%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23fb923c%27%2F%3E%3Cstop%20offset%3D%27.5%27%20stop-color%3D%27%23a78bfa%27%20stop-opacity%3D%27.6%27%2F%3E%20%3Cstop%20offset%3D%271%27%20stop-color%3D%27%2322d3ee%27%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%20%3Crect%20x%3D%272%27%20y%3D%272%27%20width%3D%27156%27%20height%3D%27492%27%20rx%3D%2718%27%20fill%3D%27url%28%23g%29%27%20stroke%3D%27%23a78bfa%27%20stroke-opacity%3D%27.25%27%2F%3E%20%3Crect%20x%3D%2712%27%20y%3D%2716%27%20width%3D%279%27%20height%3D%27464%27%20rx%3D%274.5%27%20fill%3D%27url%28%23s%29%27%2F%3E%20%3Ctext%20x%3D%2730%27%20y%3D%2764%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%23fb923c%27%3EINSIDE%3C%2Ftext%3E%20%3Ctext%20x%3D%2730%27%20y%3D%27474%27%20font-family%3D%27system-ui%2Csans-serif%27%20font-size%3D%2715%27%20font-weight%3D%27600%27%20letter-spacing%3D%272%27%20fill%3D%27%2322d3ee%27%3EOUTSIDE%3C%2Ftext%3E%3C%2Fsvg%3E",
        "elements": [
         {
          "type": "state-label",
          "entity": "sensor.timmerflotte_temp_hmd_sensor_temperature",
          "style": {
-          "top": "20%",
+          "top": "27%",
           "left": "50%",
           "font-size": "min(56px, 4.6vw)",
           "font-weight": "300",

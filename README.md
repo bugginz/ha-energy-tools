@@ -94,6 +94,14 @@ column on the left with the A/C setpoint drawn as a marker line between the two 
 and the four halves of the energy equation — solar, battery, house load, grid — as a 2x2
 block beside it. Grid gets its own colour and word for import vs export.
 
+**The band is the battery indicator.** The SoC tile above it was dropped as redundant. The
+band shows SoC on the left, state in the centre and a car readout on the right, and its
+colour carries meaning: green while charging, steady green when full, and while discharging
+the colour comes from `sensor.kiosk_battery_soc_health` — the coast-to-10am helper (hours to
+10:00 x 3%/h drain + 12% buffer), so an amber or red band means the battery is not on track
+to reach the next free window. The car readout is a `conditional` element requiring both the
+charger state and real draw, since the Meross relay can be on with the car full or unplugged.
+
 **Distance-adaptive.** Walking past in daylight wants density; reading from the couch after
 dark wants fewer, larger things. Two full card sets are emitted and gated on `sun.sun`
 (`above_horizon` / `below_horizon`) — the only zero-hardware trigger available, since there
@@ -132,6 +140,13 @@ That first unclassed `div` is the fill — its inline width is the percentage; t
 `.bar-gauge-background` is the track. Two gotchas: `--tile-color` must be set with
 `!important` because HA sets it inline on `ha-card` and inline beats a stylesheet rule; and
 `--feature-height` is not settable this way, since the bar div carries its own height.
+
+**card-mod applies late, and sometimes not at all.** Its own console warning ("You may not be
+getting optimal performance") is the tell: without registering it in a theme it initialises
+lazily, so a templated style may miss a render — the A/C marker then falls back to its
+configured mid-bar position rather than the templated one. Everything is designed to degrade
+to something sensible for this reason. The documented fix is to add `card-mod-theme` to a
+theme so it loads before cards render.
 
 Cards occasionally paint without their SVG artwork on first load and come good on the next
 render — the same class of transient as the blank-iframe quirk on webpage dashboards.
