@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.75.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.75.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -3084,7 +3084,7 @@ def free_window_fill_tick(cfg, fox, snap):
         max_soc_cap=min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
         solar_after_deadline_kwh=_solar_after_deadline_kwh(snap, deadline_h),
         house_kw=_fill_house_kw(snap, cur_kw),
-        car_kw_est=_car_draw_est(snap),
+        car_kw_est=_car_draw_est(snap) if ev.get("switch") else 0.0,
         supply_cap_kw=float(ev.get("supply_cap_kw", 14.5) or 14.5),
         max_fill_kw=float(strat.get("force_charge_power_kw", 10.5)),
         min_fill_kw=float(strat.get("fill_min_kw", 1.0)),

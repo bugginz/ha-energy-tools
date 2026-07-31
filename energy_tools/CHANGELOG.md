@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.75.1 — no supply reservation for a de-configured car charger
+
+With `ev_charger_switch` cleared, the free-window planner kept reserving ~3.4 kW of supply
+headroom for a charger that can never draw, quietly under-filling the battery. The
+reservation is now conditional on a switch actually being configured. The deadline target was
+never at risk (the battery's required power is the floor of the fill rate) — only the free
+extra above it was being left on the table.
+
+Context: the car charger was de-configured on 2026-07-31 after the Meross inline switch
+raised its own over-temperature alert.
+
 ## 1.75.0 — notifications: rate limited, restart-proof, and honest about a sleeping car
 
 `notify_min_gap_min` (set to 180) had never been read by foxctl — it was written into the

@@ -297,7 +297,10 @@ def tick_cfg():
                          "fill_min_kw": 1.0, "fill_margin": 1.1, "fill_charge_eff": 0.95,
                          "fill_power_step_kw": 1.0, "fill_rewrite_gap_s": 240,
                          "charge_target_soc": 100, "max_soc": 100},
-            "ev_divert": {"supply_cap_kw": 14.5, "headroom_guard_kw": 0.8, "guard_cooloff_min": 3},
+            # A configured switch is what makes the planner reserve headroom for the car;
+            # with it cleared (as after the 2026-07-31 overheat) the reservation is dropped.
+            "ev_divert": {"switch": "switch.car", "supply_cap_kw": 14.5,
+                          "headroom_guard_kw": 0.8, "guard_cooloff_min": 3},
             "control": {"allow_control": True, "set_force_charge": True}}
 
 
@@ -402,6 +405,19 @@ class FillTickTest(unittest.TestCase):
         # House is really ~3.0 kW, so the fill plus house plus car must still clear the cap.
         self.assertLessEqual(plan["fill_kw"] + 3.0 + 3.6, 14.5 + 1e-9)
         self.assertLess(plan["fill_kw"], 10.0)
+
+    def test_no_switch_means_no_headroom_reserved_for_the_car(self):
+        cfg = tick_cfg()
+        cfg["ev_divert"]["switch"] = ""
+        fox = FakeFox()
+        with _frozen(11):
+            foxctl.free_window_fill_tick(cfg, fox, tick_snap())
+        with_car = foxctl._FILL["plan"]["fill_kw"]
+        foxctl._FILL.update({"plan": None, "last_write": 0.0, "trim_kw": 0.0})
+        fox2 = FakeFox()
+        with _frozen(11):
+            foxctl.free_window_fill_tick(tick_cfg(), fox2, tick_snap())
+        self.assertGreater(with_car, foxctl._FILL["plan"]["fill_kw"])
 
     def test_plan_is_published_for_the_car_decision(self):
         fox = FakeFox()
