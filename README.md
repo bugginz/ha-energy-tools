@@ -84,6 +84,30 @@ Edit dashboards over the **websocket** API (`tools/ha_dashboard.py`), never by e
 `.storage/lovelace.*` — a running HA holds that config in memory and will discard or
 overwrite direct edits.
 
+### Kiosk V3 (card-mod)
+
+`build_kiosk.py --card-mod` emits the V3 variant, which needs
+[card-mod](https://github.com/thomasloven/lovelace-card-mod) (installed via HACS with
+`tools/hacs_install.py`). It styles the SoC bar itself instead of relying on a separate
+flow band: the fill is coloured by level and carries a highlight sweep that runs
+left-to-right while charging and reversed while discharging, plus a brightness pulse.
+That also collapses V2's three pre-coloured SoC cards into one templated card.
+
+The shadow-DOM path to the bar, confirmed against the live DOM:
+
+```
+hui-tile-card $ ha-card > ha-tile-container > hui-card-features
+  $ hui-card-feature $ hui-bar-gauge-card-feature $ div:first-of-type
+```
+
+That first unclassed `div` is the fill — its inline width is the percentage; the sibling
+`.bar-gauge-background` is the track. Two gotchas: `--tile-color` must be set with
+`!important` because HA sets it inline on `ha-card` and inline beats a stylesheet rule; and
+`--feature-height` is not settable this way, since the bar div carries its own height.
+
+Cards occasionally paint without their SVG artwork on first load and come good on the next
+render — the same class of transient as the blank-iframe quirk on webpage dashboards.
+
 ## Deploying
 
 This host runs **HA Container**, not HAOS — there is no add-on store, and

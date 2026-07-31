@@ -11,6 +11,8 @@ Usage (run where HA is reachable; needs a long-lived token):
     ... python3 ha_dashboard.py get <url_path>            # prints config JSON
     ... python3 ha_dashboard.py save <url_path> <file>    # writes config from a JSON file
     ... python3 ha_dashboard.py create <url_path> <title> [icon]
+    ... python3 ha_dashboard.py resources                  # list Lovelace resources
+    ... python3 ha_dashboard.py add-resource <url> [type]  # register a JS module
 """
 import json
 import os
@@ -69,6 +71,21 @@ def main(argv):
             cfg = json.load(open(rest[1]))
             ha.cmd(type="lovelace/config/save", url_path=rest[0], config=cfg)
             print(f"saved {rest[1]} -> {rest[0]}")
+        elif action == "resources":
+            for r in ha.cmd(type="lovelace/resources"):
+                print(f"{r.get('id')}\t{r.get('type')}\t{r.get('url')}")
+        elif action == "add-resource":
+            # HACS downloads the files but does not always register the Lovelace resource;
+            # without this the JS is on disk and never loaded.
+            url = rest[0]
+            res_type = rest[1] if len(rest) > 1 else "module"
+            existing = [r for r in ha.cmd(type="lovelace/resources")
+                        if str(r.get("url", "")).split("?")[0] == url.split("?")[0]]
+            if existing:
+                print(f"already registered: {url}")
+            else:
+                ha.cmd(type="lovelace/resources/create", res_type=res_type, url=url)
+                print(f"registered {res_type}: {url}")
         elif action == "create":
             url_path, title = rest[0], rest[1]
             icon = rest[2] if len(rest) > 2 else "mdi:tablet-dashboard"

@@ -181,16 +181,76 @@ IDLE = [{"condition": "numeric_state", "entity": CHG, "below": 0.05},
         {"condition": "numeric_state", "entity": DIS, "below": 0.05}]
 
 
-def build():
+# ---------------------------------------------------------------- card-mod ----
+# v3 only. Shadow path confirmed by inspecting the live DOM:
+#   hui-tile-card $ ha-card > ha-tile-container > hui-card-features
+#     $ hui-card-feature $ hui-bar-gauge-card-feature $ div:first-of-type
+# That first unclassed div IS the fill (its inline width is the percentage); the sibling
+# .bar-gauge-background is the track. --tile-color drives the fill colour, so templating it
+# on ha-card collapses v2's three colour-variant cards into one.
+CHARGING_J = "states('" + CHG + "')|float(0) > 0.05"
+DISCHARGING_J = "states('" + DIS + "')|float(0) > 0.05"
+SOC_J = "states('" + SOC + "')|float(0)"
+
+_BAR_CSS = (
+    "@keyframes socSweep{0%{background-position:-140% 0}100%{background-position:240% 0}}"
+    "@keyframes socGlow{0%,100%{filter:brightness(1)}50%{filter:brightness(1.45)}}"
+    "div:first-of-type{"
+    "background-image:linear-gradient(90deg,rgba(255,255,255,0) 0%,"
+    "rgba(255,255,255,.65) 50%,rgba(255,255,255,0) 100%);"
+    "background-size:38% 100%;background-repeat:no-repeat;"
+    "box-shadow:0 0 16px var(--tile-color);"
+    # The sweep runs with the charge: left-to-right as the bar fills, reversed as it drains.
+    "{% if " + CHARGING_J + " %}"
+    "animation:socSweep 1.9s linear infinite, socGlow 1.9s ease-in-out infinite;"
+    "{% elif " + DISCHARGING_J + " %}"
+    "animation:socSweep 1.9s linear infinite reverse, socGlow 1.9s ease-in-out infinite;"
+    "{% else %}animation:none;box-shadow:none;{% endif %}"
+    "}"
+)
+
+# !important is required: HA sets --tile-color inline on ha-card, and an inline declaration
+# beats a stylesheet rule. Without it the template is silently ignored and the bar keeps HA's
+# stock green (verified in the live DOM). --feature-height is NOT settable this way — the bar
+# div carries its own height — so the bar stays at HA's standard 42px.
+_CARD_CSS = (
+    "ha-card{"
+    "--tile-color:{% if " + SOC_J + " < 30 %}" + RED +
+    "{% elif " + SOC_J + " < 60 %}" + AMBER + "{% else %}" + GREEN + "{% endif %} !important;"
+    "}"
+)
+
+
+def soc_tile_cardmod():
+    """One SoC tile whose bar is coloured by level and animated by charge direction."""
+    return {
+        "type": "tile", "entity": SOC, "name": "Battery",
+        "features": [{"type": "bar-gauge"}],
+        "grid_options": {"rows": "auto", "columns": "full"},
+        "card_mod": {"style": {
+            ".": _CARD_CSS,
+            "hui-card-features": {"$": {"hui-card-feature": {"$": {
+                "hui-bar-gauge-card-feature": {"$": _BAR_CSS}}}}},
+        }},
+    }
+
+
+def build(card_mod=False):
     cards = []
 
-    # --- SoC: the accurate bar is the core tile (colour by the existing health helper) ---
-    for colour, health in (("green", "green"), ("orange", "orange"), ("red", "red")):
-        cards.append({
-            "type": "tile", "entity": SOC, "color": colour, "name": "Battery",
-            "features": [{"type": "bar-gauge"}],
-            "grid_options": {"rows": "auto", "columns": "full"},
-            "visibility": vis_state(HEALTH, health)})
+    # --- SoC bar ---
+    if card_mod:
+        # v3: the bar itself carries the colour and the motion, so the flow band below is
+        # redundant decoration rather than the only way to show direction.
+        cards.append(soc_tile_cardmod())
+    else:
+        # v2: no card-mod, so colour needs one pre-coloured card per band.
+        for colour, health in (("green", "green"), ("orange", "orange"), ("red", "red")):
+            cards.append({
+                "type": "tile", "entity": SOC, "color": colour, "name": "Battery",
+                "features": [{"type": "bar-gauge"}],
+                "grid_options": {"rows": "auto", "columns": "full"},
+                "visibility": vis_state(HEALTH, health)})
 
     # --- direction banner: pulses up while charging, down while discharging ---
     cards.append({**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING})
@@ -254,4 +314,4 @@ def build():
 
 
 if __name__ == "__main__":
-    json.dump(build(), sys.stdout, indent=1)
+    json.dump(build(card_mod="--card-mod" in sys.argv), sys.stdout, indent=1)
