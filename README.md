@@ -110,6 +110,15 @@ remaining cards grow: the battery card already carries level and direction, so t
 buys height for what has to read at range. A zoned mmWave sensor would be a better trigger
 than sun position if one ever goes in.
 
+**V4's row spans are tuned to a ~1180px-wide display and must be verified at that width.**
+A row span is a fixed PIXEL height while the artwork's height is aspect-driven from the
+card's WIDTH, so a span that looks right in a narrow browser crops on a wider screen. Measured
+on the real kiosk geometry (viewport 1180, section 1032): a power card box is 382x184 and the
+temperature box 252x376, giving `TILE_H = 300 * box_h / box_w` = 145 (day) and 245 (evening),
+and a temperature viewBox 1.65x the tile height. Tuning these against an 884px browser
+produced exactly the reported fault: squat cards with the readings pushed outside the artwork
+and the bottom of the temperature column cut off.
+
 Two arithmetic traps in this layout, both of which produce silently wrong results:
 
 - A card spanning R rows is `64R - 8` px tall, so two stacked 3-row cards equal **one 6-row

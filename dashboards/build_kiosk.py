@@ -108,7 +108,7 @@ TEMP_W = 160
 
 
 def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None):
-    h = int(round((tile_h or TILE_H) * 1.6))
+    h = int(round((tile_h or TILE_H) * 1.65))
     mid = h // 2
     seg = ""   # the A/C marker is positioned by card-mod, not drawn here
     return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {TEMP_W} {h}'>
@@ -120,7 +120,7 @@ def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None
 <rect x='2' y='2' width='{TEMP_W - 4}' height='{h - 4}' rx='18' fill='url(#g)'
  stroke='{VIOLET}' stroke-opacity='.25'/>
 <rect x='12' y='16' width='9' height='{h - 32}' rx='4.5' fill='url(#s)'/>
-<text x='30' y='64' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+<text x='30' y='52' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
  letter-spacing='2' fill='{ORANGE}'>INSIDE</text>
 {seg}
 <text x='30' y='{h - 22}' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
@@ -210,8 +210,15 @@ POWER_ROWS_EVE = 5
 # With an explicit row span the card box is a fixed pixel height, so the artwork's aspect has
 # to be drawn to match or the image letterboxes inside it. A row is 64px less an 8px gap, and
 # a V4 power card is 9/24 of the section, so these track the row spans above.
-TILE_H_DAY = 190
-TILE_H_EVE = 310
+# Tuned against the kiosk's real geometry, measured in the browser at the iPad's 1180px
+# width: the section is 1032 wide, so a power card box is 382x184 and the temperature box
+# 252x376. The artwork must be drawn to those aspects or it crops — at 190 the bottom of the
+# temperature column was cut off and the tiles looked squat with their values pushed out.
+#   TILE_H = 300 * box_h / box_w  ->  300 * 184/382 = 145   (day)
+#                                     300 * 312/382 = 245   (evening, 5 rows)
+# These are specific to a ~1180px-wide display. On a very different screen they want redoing.
+TILE_H_DAY = 145
+TILE_H_EVE = 245
 
 
 def temp_rows(power_rows):
@@ -410,7 +417,7 @@ def ac_marker_css(accent):
     inside temperature when it is set higher, below the outside one when set lower, between
     them otherwise. The bar then reads top-to-bottom as warmest-to-coolest."""
     return ("hui-state-label-element:nth-of-type(3){"
-            "top:{% if " + SETPOINT_J + " > " + INSIDE_J + " %}12%"
+            "top:{% if " + SETPOINT_J + " > " + INSIDE_J + " %}9%"
             "{% elif " + SETPOINT_J + " > " + OUTSIDE_J + " %}55%"
             "{% else %}93%{% endif %} !important;"
             f"border-top:2px dashed {accent};padding-top:5px;"
@@ -419,14 +426,19 @@ def ac_marker_css(accent):
 
 def battery_band_cards():
     """Charging, discharging (coloured by coast health), full and idle."""
-    not_full = {"condition": "numeric_state", "entity": SOC, "below": FULL_SOC}
+    still = [{"condition": "numeric_state", "entity": CHG, "below": 0.05},
+             {"condition": "numeric_state", "entity": DIS, "below": 0.05}]
     full = {"condition": "numeric_state", "entity": SOC, "above": FULL_SOC}
-    out = [{**pe(soc_bar_svg(GREEN, None, "BATTERY FULL"), [], "full"), "visibility": [full]},
-           {**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING + [not_full]}]
+    not_full = {"condition": "numeric_state", "entity": SOC, "below": FULL_SOC}
+    # Mutually exclusive: full means full AND at rest, so a battery sitting at 100% while
+    # trickling out reads DISCHARGING rather than showing two bands at once.
+    out = [{**pe(soc_bar_svg(GREEN, None, "BATTERY FULL"), [], "full"),
+            "visibility": still + [full]},
+           {**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING}]
     for colour, health in ((GREEN, "green"), (AMBER, "orange"), (RED, "red")):
         out.append({**pe(soc_bar_svg(colour, "down"), [], "full"),
                     "visibility": DISCHARGING + vis_state(HEALTH, health)})
-    out.append({**pe(idle_bar_svg(MUTED), [], "full"), "visibility": IDLE + [not_full]})
+    out.append({**pe(idle_bar_svg(MUTED), [], "full"), "visibility": still + [not_full]})
     # Car readout rides on every band variant, shown only while the charger is actually
     # pulling — the Meross relay can be on with the car full or unplugged.
     car = {"type": "conditional",
@@ -456,7 +468,7 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(58px, 5vw)",
 
     # Temperature column: inside on top, outside at the foot, A/C setpoint as the line between.
     def temp_card(setpoint, accent, word, vis):
-        els = [value(INSIDE, size=tsize, top="27%"), value(OUTSIDE, size=tsize, top="80%")]
+        els = [value(INSIDE, size=tsize, top="33%"), value(OUTSIDE, size=tsize, top="77%")]
         if setpoint:
             els.append(value(AC, attribute="temperature", suffix="°", prefix="A/C ",
                              size="min(26px, 2.2vw)", top="55%", color=accent))
