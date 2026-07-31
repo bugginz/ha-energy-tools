@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.74.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.74.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2930,7 +2930,11 @@ def _solar_after_deadline_kwh(snap, deadline_h):
     rem = (snap.get("solar_forecast") or {}).get("remaining_today")
     if not sun_set or not isinstance(rem, (int, float)):
         return None
-    now = datetime.now(sun_set.tzinfo)
+    # HA reports sun.sun in UTC; foxctl's windows are naive LOCAL hours. Compare and build the
+    # deadline in local time — doing it in UTC put "14:00" at midnight local, which read as
+    # zero afternoon solar and pushed the fill target to 100% (caught live 2026-07-31).
+    sun_set = sun_set.astimezone()
+    now = datetime.now().astimezone()
     if sun_set.date() != now.date():
         return 0.0                       # sun already down; next_setting is tomorrow's
     deadline = now.replace(hour=int(deadline_h), minute=0, second=0, microsecond=0)
@@ -3077,6 +3081,9 @@ def apply_and_record(cfg: dict, snap: dict) -> str:
     with LAST_LOCK:
         if LAST:
             LAST["applied"] = msg
+            # The snapshot was built before the fill planner ran this cycle, so its copy of the
+            # plan is one cycle old. Refresh it here so the dashboard shows what was just decided.
+            LAST["fill_plan"] = _FILL.get("plan")
     return msg
 
 

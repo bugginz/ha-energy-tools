@@ -5,7 +5,9 @@ Stdlib unittest only (no pytest), same as tests/test_foxctl.py:
     python3 -m unittest tests.test_fillplan -v
 """
 
+import os
 import sys
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -460,3 +462,43 @@ class CarGateTest(unittest.TestCase):
         with _frozen(11):
             want, _ = foxctl.ev_divert_decision(self._snap(gp=11.0), self._ev())
         self.assertFalse(want)
+
+
+class SolarAfterDeadlineTest(unittest.TestCase):
+    """The deadline hour is a LOCAL clock hour; sun.sun arrives in UTC."""
+
+    def setUp(self):
+        self._tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Australia/Sydney"
+        time.tzset()
+
+    def tearDown(self):
+        if self._tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._tz
+        time.tzset()
+
+    def _snap(self, sunset="2026-07-31T07:14:44+00:00", remaining=17.06):
+        return {"sun": {"set": sunset}, "solar_forecast": {"remaining_today": remaining}}
+
+    def test_deadline_is_local_time_not_utc(self):
+        # Live 2026-07-31 values: sunset 17:14 AEST (07:14Z). Building "14:00" from a UTC
+        # `now` put the deadline at midnight AEST, past sunset, so this returned 0.0 and the
+        # planner raised its target to 100% and locked the car out.
+        with _frozen(11, 26):
+            got = foxctl._solar_after_deadline_kwh(self._snap(), 14)
+        self.assertIsNotNone(got)
+        self.assertGreater(got, 1.0)
+        self.assertLess(got, 17.06)
+
+    def test_missing_forecast_is_unknown_not_zero(self):
+        with _frozen(11, 26):
+            self.assertIsNone(foxctl._solar_after_deadline_kwh(self._snap(remaining=None), 14))
+            self.assertIsNone(foxctl._solar_after_deadline_kwh(self._snap(sunset=None), 14))
+
+    def test_after_sunset_is_a_known_zero(self):
+        # next_setting has rolled to tomorrow: there is genuinely no solar left today.
+        with _frozen(19, 0):
+            got = foxctl._solar_after_deadline_kwh(self._snap(sunset="2026-08-01T07:14:00+00:00"), 14)
+        self.assertEqual(got, 0.0)
