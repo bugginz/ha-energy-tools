@@ -1,12 +1,13 @@
 # Changelog
 
-## 1.74.1 — fill planner: read the deadline in local time
+## 1.74.2 — fill planner: read the deadline in local time
 
 `_solar_after_deadline_kwh` built the 14:00 deadline from a UTC `now`, so "14:00" landed at
 midnight local — past sunset. The planner therefore saw zero afternoon solar on its first
 live cycle, raised its target to 100%, and locked the car out. Caught on the 2026-07-31
 deploy. sun.sun is now converted to local time before the comparison. The dashboard's copy
-of the plan is also refreshed after the planner runs instead of lagging a cycle.
+of the plan is also refreshed after the planner runs instead of lagging a cycle (in
+run_once, which is the path the polling loop actually takes).
 
 ## 1.74.0 — free-window fill planner: the car stops flapping
 

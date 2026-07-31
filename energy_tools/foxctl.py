@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.74.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.74.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -3246,6 +3246,10 @@ def run_once(cfg: dict, do_apply: bool) -> dict:
         snap["applied"] = mo_msg
     elif do_apply:
         snap["applied"] = apply_recommendation(cfg, snap)
+    # The snapshot was assembled before the fill planner ran inside the apply, so its copy of the
+    # plan is a cycle old. Refresh it here, before LAST is replaced, so the dashboard and the
+    # /api/state readers see the plan that was actually just acted on.
+    snap["fill_plan"] = _FILL.get("plan")
     if do_apply:
         snap["ev_divert"] = ev_divert_tick(cfg, snap)   # solar diversion to the car charger (auto only)
     mqtt_publish(cfg, snap)
