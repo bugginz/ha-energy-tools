@@ -120,7 +120,7 @@ def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None
 <rect x='2' y='2' width='{TEMP_W - 4}' height='{h - 4}' rx='18' fill='url(#g)'
  stroke='{VIOLET}' stroke-opacity='.25'/>
 <rect x='12' y='16' width='9' height='{h - 32}' rx='4.5' fill='url(#s)'/>
-<text x='30' y='84' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+<text x='30' y='70' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
  letter-spacing='2' fill='{ORANGE}'>INSIDE</text>
 {seg}
 <text x='30' y='{h - 22}' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
@@ -205,8 +205,8 @@ POWER = 9            # V4: 6 + 9 + 9 = 24, so the power cards tile 2x2 beside it
 # A card spanning R rows is 64R-8 px tall, so two stacked 3-row cards (2*184 + 8 gap = 376)
 # equal ONE 6-row card. The gap is already inside the arithmetic — adding one for it makes the
 # temperature column overshoot by a row.
-POWER_ROWS_DAY = 6
-POWER_ROWS_EVE = 6
+POWER_ROWS_DAY = 5
+POWER_ROWS_EVE = 5
 # With an explicit row span the card box is a fixed pixel height, so the artwork's aspect has
 # to be drawn to match or the image letterboxes inside it. A row is 64px less an 8px gap, and
 # a V4 power card is 9/24 of the section, so these track the row spans above.
@@ -217,11 +217,11 @@ POWER_ROWS_EVE = 6
 #   TILE_H = 300 * box_h / box_w  ->  300 * 184/382 = 145   (day)
 #                                     300 * 312/382 = 245   (evening, 5 rows)
 # These are specific to a ~1180px-wide display. On a very different screen they want redoing.
-# 6 rows -> a 382x376 power box on the kiosk, so TILE_H = 300 * 376/382 = 295. Two such rows
-# (760px) plus the band and padding overflow a ~820px screen, which is the point: the Edit
-# card is pushed below the fold rather than sitting in valuable real estate.
-TILE_H_DAY = 295
-TILE_H_EVE = 295
+# 5 rows -> a 382x312 power box on the kiosk, so TILE_H = 300 * 312/382 = 245, and the
+# temperature column is 252x632. Content then ends at ~751px: it fits screens from about
+# 760px up, where 6 rows (ending at 879) was overflowing and cutting the bottom row.
+TILE_H_DAY = 245
+TILE_H_EVE = 245
 
 
 def temp_rows(power_rows):
@@ -386,8 +386,8 @@ def build(card_mod=False, v4=False):
 
     if v4:
         cards = (build_v4_cards(POWER_ROWS_DAY, mode=DAY)
-                 + build_v4_cards(POWER_ROWS_EVE, vsize="min(96px, 8vw)",
-                                  tsize="min(64px, 5.4vw)", show_bar=False, mode=EVENING,
+                 + build_v4_cards(POWER_ROWS_EVE, vsize="min(84px, 7vw)",
+                                  tsize="min(56px, 4.7vw)", show_bar=False, mode=EVENING,
                                   th=TILE_H_EVE))
 
     controls = [
@@ -459,8 +459,8 @@ def battery_band_cards():
     return out
 
 
-def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(76px, 6.4vw)",
-                   tsize="min(52px, 4.4vw)", show_bar=True, mode=None, th=TILE_H_DAY):
+def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
+                   tsize="min(46px, 3.9vw)", show_bar=True, mode=None, th=TILE_H_DAY):
     """Temperature column on the left, the four halves of the energy equation on the right.
 
     Solar in, battery store, house draw and grid exchange are one system, so they get equal
