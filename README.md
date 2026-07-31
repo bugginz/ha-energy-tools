@@ -53,6 +53,37 @@ with a FoxESS inverter + battery:
 | `dynamic_policy` | `true` | let the LLM tune `charge_start_price` + `target_soc` each interval, clamped to the foundation |
 | `allow_control` / `auto_apply` / `set_work_mode` / `set_force_charge` | `true` | control switches |
 
+## Kiosk V2 dashboard
+
+`dashboards/build_kiosk.py` generates the "Kiosk V2" Lovelace dashboard (url_path
+`kiosk-v2`). The original Kiosk dashboard is left untouched.
+
+```sh
+python3 dashboards/build_kiosk.py > dashboards/kiosk_v2.json
+HA_TOKEN=... python3 tools/ha_dashboard.py save kiosk-v2 dashboards/kiosk_v2.json
+```
+
+Two constraints shape the design, both established by probing the live instance:
+
+- **The markdown card strips all HTML** — inline styles, raw `<svg>` and `<img>` all
+  render blank. **`picture-elements` with a data-URI SVG works**, including CSS keyframe
+  animation inside the SVG. So each tile is a bespoke SVG (background, label, accent,
+  animation) with a `state-label` overlaying the live value. No card-mod or button-card is
+  installed, and none is needed.
+- **A section spanning two view columns exposes a 24-column grid, not 12.** A third of a row
+  is 8, not 4. Every card carries an explicit `grid_options` span so tiles align by
+  construction rather than by whatever width the display happens to be — the old dashboard
+  sized its picture-elements off an invisible 20:10 SVG, which is why alignment depended on
+  the iPad.
+
+Picture-elements images cannot be templated, so state-driven variation swaps between
+pre-rendered variants using `visibility` conditions: battery charging/discharging/idle,
+house load under 2 kW / 2-4 / over 4, and the A/C arrow by hvac mode.
+
+Edit dashboards over the **websocket** API (`tools/ha_dashboard.py`), never by editing
+`.storage/lovelace.*` — a running HA holds that config in memory and will discard or
+overwrite direct edits.
+
 ## Deploying
 
 This host runs **HA Container**, not HAOS — there is no add-on store, and

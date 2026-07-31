@@ -1,0 +1,71 @@
+{
+ "views": [
+  {
+   "title": "Probe",
+   "type": "sections",
+   "max_columns": 2,
+   "sections": [
+    {
+     "type": "grid",
+     "column_span": 2,
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "A markdown + styled span"
+      },
+      {
+       "type": "markdown",
+       "content": "<div style='text-align:center'><span style='font-size:64px;font-weight:300'>{{ states('sensor.timmerflotte_temp_hmd_sensor_temperature') }} \u00b0C</span></div>"
+      },
+      {
+       "type": "heading",
+       "heading": "B markdown + raw inline svg"
+      },
+      {
+       "type": "markdown",
+       "content": "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 18' style='width:100%'><rect x='0' y='0' width='60' height='18' rx='4' fill='#4caf50'/></svg>"
+      },
+      {
+       "type": "heading",
+       "heading": "C markdown + animated svg data uri"
+      },
+      {
+       "type": "markdown",
+       "content": "<img style='width:100%' src=\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 18'><style>@keyframes p{0%25{opacity:.3}50%25{opacity:1}100%25{opacity:.3}}.b{fill:%234caf50;animation:p 1.4s ease-in-out infinite}</style><rect class='b' x='0' y='0' width='78' height='18' rx='4'/></svg>\">"
+      },
+      {
+       "type": "heading",
+       "heading": "D picture-elements + animated svg data uri"
+      },
+      {
+       "type": "picture-elements",
+       "image": "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 18'><style>@keyframes p{0%25{opacity:.3}50%25{opacity:1}100%25{opacity:.3}}.b{fill:%234caf50;animation:p 1.4s ease-in-out infinite}</style><rect class='b' x='0' y='0' width='78' height='18' rx='4'/></svg>",
+       "elements": [
+        {
+         "type": "state-label",
+         "entity": "sensor.foxess_foxctl_battery_soc",
+         "style": {
+          "top": "50%",
+          "left": "50%",
+          "font-size": "28px"
+         }
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "E mushroom template"
+      },
+      {
+       "type": "custom:mushroom-template-card",
+       "primary": "Inside",
+       "secondary": "{{ states('sensor.timmerflotte_temp_hmd_sensor_temperature') }} \u00b0C",
+       "icon": "mdi:home-thermometer",
+       "icon_color": "orange"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
