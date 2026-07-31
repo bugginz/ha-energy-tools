@@ -87,6 +87,31 @@ Edit dashboards over the **websocket** API (`tools/ha_dashboard.py`), never by e
 `.storage/lovelace.*` — a running HA holds that config in memory and will discard or
 overwrite direct edits.
 
+### Kiosk V4 (`--v4 --card-mod`)
+
+Layout: SoC bar and flow band across the top, then a vertical inside/outside temperature
+column on the left with the A/C setpoint drawn as a marker line between the two readings,
+and the four halves of the energy equation — solar, battery, house load, grid — as a 2x2
+block beside it. Grid gets its own colour and word for import vs export.
+
+**Distance-adaptive.** Walking past in daylight wants density; reading from the couch after
+dark wants fewer, larger things. Two full card sets are emitted and gated on `sun.sun`
+(`above_horizon` / `below_horizon`) — the only zero-hardware trigger available, since there
+is no living-room presence sensor. After dark the SoC bar and flow band are dropped and the
+remaining cards grow: the battery card already carries level and direction, so the space
+buys height for what has to read at range. A zoned mmWave sensor would be a better trigger
+than sun position if one ever goes in.
+
+Two arithmetic traps in this layout, both of which produce silently wrong results:
+
+- A card spanning R rows is `64R - 8` px tall, so two stacked 3-row cards equal **one 6-row
+  card**, not 7 — the inter-row gap is already inside the arithmetic. Get it wrong and the
+  temperature column overshoots by a row.
+- With an explicit row span the card box is a fixed pixel height, so the SVG's aspect must be
+  drawn to match or the artwork letterboxes inside it. `TILE_H_DAY` / `TILE_H_EVE` track the
+  row spans for exactly this reason. (`rows: "auto"` avoids the letterbox but then the
+  temperature column cannot span two rows and the 2x2 never forms beside it.)
+
 ### Kiosk V3 (card-mod)
 
 `build_kiosk.py --card-mod` emits the V3 variant, which needs

@@ -39,6 +39,8 @@ ORANGE = "#fb923c"
 # tall on the real iPad, so settled at 200. This is the one knob for tile height.
 TILE_H = 200
 
+GRID_IN = "sensor.foxess_foxctl_grid_import"
+GRID_OUT = "sensor.foxess_foxctl_grid_export"
 SOC = "sensor.foxess_foxctl_battery_soc"
 LOAD = "sensor.foxess_foxctl_house_load"
 SOLAR = "sensor.foxess_foxctl_solar_power"
@@ -58,9 +60,10 @@ def data_uri(svg):
     return "data:image/svg+xml," + quote(" ".join(svg.split()), safe="")
 
 
-def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
+def tile_svg(label, accent, *, sub="", glyph="", pulse=None, h=None):
     """A stat tile: dark rounded panel, small-caps label, accent underline, room in the
     middle for the state-label overlay. `pulse` = 'up' | 'down' | None."""
+    h = h or TILE_H
     anim = ""
     if pulse:
         # Chevrons drifting up (charging) or down (discharging), staggered so the row reads
@@ -69,7 +72,7 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
         chevs = []
         for i in range(7):
             x = 34 + i * 39
-            cy = TILE_H - 46
+            cy = (h or TILE_H) - 46
             d = (f"M{x} {cy + 9} l9 -9 l9 9" if pulse == "up" else f"M{x} {cy} l9 9 l9 -9")
             chevs.append(
                 f"<path d='{d}' fill='none' stroke='{accent}' stroke-width='3.4' "
@@ -79,7 +82,6 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
                 f"45%{{opacity:.95;transform:translateY(0)}}"
                 f"100%{{opacity:0;transform:translateY({7 * dirn}px)}}}}</style>"
                 + "".join(chevs))
-    h = TILE_H
     glyph_el = (f"<text x='274' y='42' font-family='system-ui,sans-serif' font-size='28' "
                 f"text-anchor='end' fill='{accent}' opacity='.9'>{glyph}</text>") if glyph else ""
     sub_el = (f"<text x='26' y='{h - 20}' font-family='system-ui,sans-serif' font-size='16' "
@@ -95,6 +97,36 @@ def tile_svg(label, accent, *, sub="", glyph="", pulse=None):
 <text x='26' y='44' font-family='system-ui,sans-serif' font-size='20' font-weight='600'
  letter-spacing='2.5' fill='{accent}'>{label}</text>
 {glyph_el}{sub_el}{anim}</svg>"""
+
+
+# The temp bar is one tall card instead of two square ones: stacking inside above outside on a
+# single warm->cool strip makes which-is-which positional rather than something to read off an
+# icon. Height tracks TILE_H so it lines up with two rows of power cards beside it.
+TEMP_W = 160
+
+
+def temp_bar_svg(setpoint=True, ac_accent=RED, ac_word="heating to", tile_h=None):
+    h = int(round((tile_h or TILE_H) * 1.6))
+    mid = h // 2
+    seg = (f"<line x1='30' y1='{mid}' x2='{TEMP_W - 18}' y2='{mid}' stroke='{ac_accent}' "
+           f"stroke-width='2' stroke-dasharray='6 5' opacity='.85'/>"
+           f"<text x='30' y='{mid - 10}' font-family='system-ui,sans-serif' font-size='11' "
+           f"font-weight='600' letter-spacing='1.6' fill='{ac_accent}'>A/C {ac_word.upper()}</text>"
+           ) if setpoint else ""
+    return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {TEMP_W} {h}'>
+<defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>
+<stop offset='0' stop-color='{BG1}'/><stop offset='1' stop-color='{BG0}'/></linearGradient>
+<linearGradient id='s' x1='0' y1='0' x2='0' y2='1'>
+<stop offset='0' stop-color='{ORANGE}'/><stop offset='.5' stop-color='{VIOLET}' stop-opacity='.6'/>
+<stop offset='1' stop-color='{CYAN}'/></linearGradient></defs>
+<rect x='2' y='2' width='{TEMP_W - 4}' height='{h - 4}' rx='18' fill='url(#g)'
+ stroke='{VIOLET}' stroke-opacity='.25'/>
+<rect x='12' y='16' width='9' height='{h - 32}' rx='4.5' fill='url(#s)'/>
+<text x='30' y='34' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+ letter-spacing='2' fill='{ORANGE}'>INSIDE</text>
+{seg}
+<text x='30' y='{h - 22}' font-family='system-ui,sans-serif' font-size='15' font-weight='600'
+ letter-spacing='2' fill='{CYAN}'>OUTSIDE</text></svg>"""
 
 
 def soc_bar_svg(accent, pulse):
@@ -154,6 +186,35 @@ def value(entity, *, attribute=None, suffix=None, size="min(58px, 5vw)", top="62
 COLS_ROW = 24
 THIRD = COLS_ROW // 3
 HALF = COLS_ROW // 2
+QUARTER = 6          # V4: narrow left column for the vertical temperature bar
+POWER = 9            # V4: 6 + 9 + 9 = 24, so the power cards tile 2x2 beside it
+# Row spans must be EXPLICIT here. With rows:"auto" every card is one grid row tall, so the
+# tall temperature card simply made that row tall and the 2x2 never formed beside it. A
+# sections row is 56px with an 8px gap, so 6 rows (376px) is exactly two 3-row cards (184px)
+# plus the gap between them, and the columns line up.
+# A card spanning R rows is 64R-8 px tall, so two stacked 3-row cards (2*184 + 8 gap = 376)
+# equal ONE 6-row card. The gap is already inside the arithmetic — adding one for it makes the
+# temperature column overshoot by a row.
+POWER_ROWS_DAY = 3
+POWER_ROWS_EVE = 5
+# With an explicit row span the card box is a fixed pixel height, so the artwork's aspect has
+# to be drawn to match or the image letterboxes inside it. A row is 64px less an 8px gap, and
+# a V4 power card is 9/24 of the section, so these track the row spans above.
+TILE_H_DAY = 190
+TILE_H_EVE = 310
+
+
+def temp_rows(power_rows):
+    return power_rows * 2
+
+
+# Distance-adaptive: walking past in daylight wants density; from the couch after dark wants
+# fewer, larger things. sun.sun is the only zero-hardware trigger available — there is no
+# living-room presence sensor yet. Swapping whole card sets is the only way to change size,
+# since a picture-elements image cannot be templated.
+DAY = [{"condition": "state", "entity": "sun.sun", "state": "above_horizon"}]
+EVENING = [{"condition": "state", "entity": "sun.sun", "state": "below_horizon"}]
+CARD_MOD = False
 
 
 def pe(svg, elements, columns, rows="auto"):
@@ -243,7 +304,7 @@ def soc_tile_cardmod():
     }
 
 
-def build(card_mod=False):
+def build(card_mod=False, v4=False):
     cards = []
 
     # --- SoC bar ---
@@ -299,6 +360,12 @@ def build(card_mod=False):
     cards.append({**pe(tile_svg("A/C", MUTED, sub="off"), [], THIRD),
                   "visibility": vis_state(AC, "off")})
 
+    if v4:
+        cards = (build_v4_cards(POWER_ROWS_DAY, mode=DAY)
+                 + build_v4_cards(POWER_ROWS_EVE, vsize="min(88px, 7.4vw)",
+                                  tsize="min(56px, 4.6vw)", show_bar=False, mode=EVENING,
+                                  th=TILE_H_EVE))
+
     controls = [
         {"type": "tile", "entity": "input_boolean.hide_header", "name": "Edit",
          "icon": "mdi:pencil", "color": "grey", "hide_state": True,
@@ -319,5 +386,73 @@ def build(card_mod=False):
     }
 
 
+def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(58px, 5vw)",
+                   tsize="min(40px, 3.4vw)", show_bar=True, mode=None, th=TILE_H_DAY):
+    """Temperature column on the left, the four halves of the energy equation on the right.
+
+    Solar in, battery store, house draw and grid exchange are one system, so they get equal
+    weight in a 2x2 block. The A/C setpoint moves onto the temperature bar as a marker line
+    rather than occupying a tile of its own.
+    """
+    cards = []
+    if show_bar:
+        # After dark the SoC bar and flow band are dropped: the BATTERY card already carries
+        # level and direction, and the space buys height for the cards that must read at range.
+        if CARD_MOD:
+            cards.append(soc_tile_cardmod())
+        else:
+            for colour, health in (("green", "green"), ("orange", "orange"), ("red", "red")):
+                cards.append({"type": "tile", "entity": SOC, "color": colour, "name": "Battery",
+                              "features": [{"type": "bar-gauge"}],
+                              "grid_options": {"rows": "auto", "columns": "full"},
+                              "visibility": vis_state(HEALTH, health)})
+        cards.append({**pe(soc_bar_svg(GREEN, "up"), [], "full"), "visibility": CHARGING})
+        cards.append({**pe(soc_bar_svg(AMBER, "down"), [], "full"), "visibility": DISCHARGING})
+        cards.append({**pe(idle_bar_svg(MUTED), [], "full"), "visibility": IDLE})
+
+    # Temperature column: inside on top, outside at the foot, A/C setpoint as the line between.
+    def temp_card(setpoint, accent, word, vis):
+        els = [value(INSIDE, size=tsize, top="20%"), value(OUTSIDE, size=tsize, top="80%")]
+        if setpoint:
+            els.append(value(AC, attribute="temperature", suffix="°",
+                             size="min(26px, 2.2vw)", top="55%", color=accent))
+        c = pe(temp_bar_svg(setpoint, accent, word, th), els, QUARTER, temp_rows(rows))
+        return {**c, "visibility": vis} if vis else c
+
+    for accent, word, state in ((RED, "heating to", "heat"), (BLUE, "cooling to", "cool"),
+                                (VIOLET, "auto", "heat_cool")):
+        cards.append(temp_card(True, accent, word, vis_state(AC, state)))
+    cards.append(temp_card(False, MUTED, "off", vis_state(AC, "off")))
+
+    # Solar / battery / load / grid, 2x2.
+    cards.append(pe(tile_svg("SOLAR", VIOLET, sub="generating now", glyph="☀", h=th),
+                    [value(SOLAR, size=vsize)], POWER, rows))
+    cards.append({**pe(tile_svg("BATTERY", GREEN, sub="charging", glyph="▲", pulse="up", h=th),
+                       [value(SOC, size=vsize)], POWER, rows), "visibility": CHARGING})
+    cards.append({**pe(tile_svg("BATTERY", AMBER, sub="discharging", glyph="▼", pulse="down", h=th),
+                       [value(SOC, size=vsize)], POWER, rows), "visibility": DISCHARGING})
+    cards.append({**pe(tile_svg("BATTERY", MUTED, sub="idle", h=th), [value(SOC, size=vsize)], POWER, rows),
+                  "visibility": IDLE})
+    for accent, sub, band in ((GREEN, "normal", vis_band(LOAD, None, LOAD_WARN_KW)),
+                              (ORANGE, "high", vis_band(LOAD, LOAD_WARN_KW, LOAD_ALERT_KW)),
+                              (RED, "very high", vis_above(LOAD, LOAD_ALERT_KW))):
+        cards.append({**pe(tile_svg("HOUSE LOAD", accent, sub=sub, glyph="⌂", h=th),
+                           [value(LOAD, size=vsize)], POWER, rows), "visibility": band})
+    # Grid: exporting is a different event from importing, so it gets its own colour and word.
+    cards.append({**pe(tile_svg("GRID", CYAN, sub="exporting", glyph="↑", h=th),
+                       [value(GRID_OUT, size=vsize)], POWER, rows),
+                  "visibility": vis_above(GRID_OUT, 0.05)})
+    cards.append({**pe(tile_svg("GRID", AMBER, sub="importing", glyph="↓", h=th),
+                       [value(GRID_IN, size=vsize)], POWER, rows),
+                  "visibility": [{"condition": "numeric_state", "entity": GRID_OUT, "below": 0.05}]})
+    if mode:
+        # visibility is a list, evaluated as AND — appending the mode gate keeps each card's
+        # own condition intact.
+        for c in cards:
+            c["visibility"] = list(c.get("visibility") or []) + mode
+    return cards
+
+
 if __name__ == "__main__":
-    json.dump(build(card_mod="--card-mod" in sys.argv), sys.stdout, indent=1)
+    CARD_MOD = "--card-mod" in sys.argv
+    json.dump(build(card_mod=CARD_MOD, v4="--v4" in sys.argv), sys.stdout, indent=1)
