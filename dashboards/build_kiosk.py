@@ -164,6 +164,36 @@ def soc_bar_svg(accent, pulse, word=None):
  letter-spacing='4' text-anchor='middle' fill='{accent}' opacity='.75'>{word}</text></svg>"""
 
 
+def band_fill_svg(accent, pulse):
+    """V5 band: the animated bars ONLY, on a transparent background, so card-mod can clip
+    the image to the SoC percentage and the bar reads as a level rather than always looking
+    full. The track is the card's own dark background; the wording moved to a state-label
+    because HTML overlays are immune to the clip."""
+    if pulse is None:
+        return (f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1040 86'>"
+                f"<rect x='24' y='12' width='992' height='62' rx='9' fill='{accent}' "
+                f"opacity='.30'/></svg>")
+    up = pulse == "up"
+    n, els = 24, []
+    for i in range(n):
+        x = 24 + i * 42
+        delay = (i if up else n - 1 - i) * 0.075
+        els.append(f"<rect x='{x}' y='12' width='28' height='62' rx='9' fill='{accent}' "
+                   f"opacity='.16' style='animation:bp 1.8s ease-in-out {delay:.2f}s infinite'/>")
+        d = (f"M{x + 6} 52 l8 -9 l8 9" if up else f"M{x + 6} 34 l8 9 l8 -9")
+        els.append(f"<path d='{d}' fill='none' stroke='{BG0}' stroke-width='3' "
+                   f"stroke-linecap='round' stroke-linejoin='round' opacity='.55' "
+                   f"style='animation:bp 1.8s ease-in-out {delay:.2f}s infinite'/>")
+    return (f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1040 86'>"
+            f"<style>@keyframes bp{{0%{{opacity:.12}}45%{{opacity:1}}100%{{opacity:.12}}}}</style>"
+            f"{''.join(els)}</svg>")
+
+
+# Clip the band image to the SoC percentage. The label overlays are HTML and unaffected.
+BAND_CLIP = ("hui-image", "img{clip-path:inset(0 {{ (100 - (states('" + SOC +
+             "')|float(0))) | round(0) }}% 0 0);}")
+
+
 def idle_bar_svg(accent):
     return f"""<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1040 86'>
 <rect x='2' y='2' width='1036' height='82' rx='18' fill='{BG0}' stroke='{accent}' stroke-opacity='.22'/>
@@ -235,6 +265,7 @@ def temp_rows(power_rows):
 DAY = [{"condition": "state", "entity": "sun.sun", "state": "above_horizon"}]
 EVENING = [{"condition": "state", "entity": "sun.sun", "state": "below_horizon"}]
 CARD_MOD = False
+V5 = False
 
 
 def pe(svg, elements, columns, rows="auto"):
@@ -429,6 +460,8 @@ def ac_marker_css(accent):
 
 def battery_band_cards():
     """Charging, discharging (coloured by coast health), full and idle."""
+    if V5:
+        return battery_band_cards_v5()
     still = [{"condition": "numeric_state", "entity": CHG, "below": 0.05},
              {"condition": "numeric_state", "entity": DIS, "below": 0.05}]
     full = {"condition": "numeric_state", "entity": SOC, "above": FULL_SOC}
@@ -459,6 +492,41 @@ def battery_band_cards():
     return out
 
 
+def battery_band_cards_v5():
+    """As V4 but the bar length tracks SoC, and the state wording comes from a label so it
+    survives the clip. sensor.house_battery carries a `status` attribute ("charging 3.9kW")
+    which says more than the single word the artwork used to bake in."""
+    still = [{"condition": "numeric_state", "entity": CHG, "below": 0.05},
+             {"condition": "numeric_state", "entity": DIS, "below": 0.05}]
+    full = {"condition": "numeric_state", "entity": SOC, "above": FULL_SOC}
+    not_full = {"condition": "numeric_state", "entity": SOC, "below": FULL_SOC}
+    out = [{**pe(band_fill_svg(GREEN, None), [], "full"), "visibility": still + [full]},
+           {**pe(band_fill_svg(GREEN, "up"), [], "full"), "visibility": CHARGING}]
+    for colour, health in ((GREEN, "green"), (AMBER, "orange"), (RED, "red")):
+        out.append({**pe(band_fill_svg(colour, "down"), [], "full"),
+                    "visibility": DISCHARGING + vis_state(HEALTH, health)})
+    out.append({**pe(band_fill_svg(MUTED, None), [], "full"), "visibility": still + [not_full]})
+    car = {"type": "conditional",
+           "conditions": [{"condition": "state", "entity": EV_STATE, "state": "on"},
+                          {"condition": "numeric_state", "entity": EV_POWER, "above": 0.3}],
+           "elements": [{"type": "state-label", "entity": EV_POWER, "prefix": "\U0001F697 ",
+                         "style": {"top": "50%", "left": "89%", "font-size": "min(22px, 1.9vw)",
+                                   "font-weight": "400", "white-space": "nowrap",
+                                   "color": CYAN}}]}
+    soc_lbl = {"type": "state-label", "entity": SOC,
+               "style": {"top": "50%", "left": "7%", "font-size": "min(30px, 2.6vw)",
+                         "font-weight": "300", "white-space": "nowrap", "color": INK}}
+    status_lbl = {"type": "state-label", "entity": "sensor.house_battery",
+                  "attribute": "status",
+                  "style": {"top": "50%", "left": "45%", "font-size": "min(19px, 1.7vw)",
+                            "font-weight": "500", "letter-spacing": "2px",
+                            "white-space": "nowrap", "color": MUTED}}
+    for c in out:
+        c["elements"] = [soc_lbl, status_lbl, car]
+        c["card_mod"] = {"style": {BAND_CLIP[0]: {"$": BAND_CLIP[1]}}}
+    return out
+
+
 def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
                    tsize="min(46px, 3.9vw)", show_bar=True, mode=None, th=TILE_H_DAY):
     """Temperature column on the left, the four halves of the energy equation on the right.
@@ -486,8 +554,28 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
     cards.append(temp_card(False, MUTED, "off", vis_state(AC, "off")))
 
     # Solar / battery / load / grid, 2x2.
-    cards.append(pe(tile_svg("SOLAR", VIOLET, sub="generating now", glyph="☀", h=th),
-                    [value(SOLAR, size=vsize)], POWER, rows))
+    if V5:
+        # Daylight: solar. After dark: will the battery reach the 10:00 free window?
+        # The day/evening MODE is already gated on sun.sun, so adding a sun condition here
+        # too produced cards carrying both above_horizon and below_horizon — permanently
+        # invisible. Switch on the mode instead.
+        if mode is not EVENING:
+            cards.append(pe(tile_svg("SOLAR", VIOLET, sub="generating now", glyph="☀", h=th),
+                            [value(SOLAR, size=vsize)], POWER, rows))
+        else:
+            for accent, sub, band in (
+                    (GREEN, "to the 10:00 window", vis_above("sensor.battery_coast_margin", 10)),
+                    (AMBER, "tight to 10:00", vis_band("sensor.battery_coast_margin", 0, 10)),
+                    (RED, "short of 10:00", [{"condition": "numeric_state",
+                                              "entity": "sensor.battery_coast_margin",
+                                              "below": 0}])):
+                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=th),
+                                   [value("sensor.battery_coast_status",
+                                          size="min(38px, 3.2vw)")],
+                                   POWER, rows), "visibility": band})
+    else:
+        cards.append(pe(tile_svg("SOLAR", VIOLET, sub="generating now", glyph="☀", h=th),
+                        [value(SOLAR, size=vsize)], POWER, rows))
     cards.append({**pe(tile_svg("BATTERY", GREEN, sub="charging", glyph="▲", pulse="up", h=th),
                        [value(SOC, size=vsize)], POWER, rows), "visibility": CHARGING})
     cards.append({**pe(tile_svg("BATTERY", AMBER, sub="discharging", glyph="▼", pulse="down", h=th),
@@ -516,4 +604,5 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
 
 if __name__ == "__main__":
     CARD_MOD = "--card-mod" in sys.argv
-    json.dump(build(card_mod=CARD_MOD, v4="--v4" in sys.argv), sys.stdout, indent=1)
+    V5 = "--v5" in sys.argv
+    json.dump(build(card_mod=CARD_MOD, v4=("--v4" in sys.argv or V5)), sys.stdout, indent=1)
