@@ -266,6 +266,7 @@ DAY = [{"condition": "state", "entity": "sun.sun", "state": "above_horizon"}]
 EVENING = [{"condition": "state", "entity": "sun.sun", "state": "below_horizon"}]
 CARD_MOD = False
 V5 = False
+V6 = False
 
 
 def pe(svg, elements, columns, rows="auto"):
@@ -609,5 +610,6 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
 
 if __name__ == "__main__":
     CARD_MOD = "--card-mod" in sys.argv
-    V5 = "--v5" in sys.argv
+    V6 = "--v6" in sys.argv
+    V5 = "--v5" in sys.argv or V6          # V6 inherits the whole V5 feature set
     json.dump(build(card_mod=CARD_MOD, v4=("--v4" in sys.argv or V5)), sys.stdout, indent=1)
