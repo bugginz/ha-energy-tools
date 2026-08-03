@@ -595,12 +595,18 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
     cards = list(battery_band_cards())
 
     # Temperature column: inside on top, outside at the foot, A/C setpoint as the line between.
+    # V6 runs one grid row shorter than V4 (Rob 2026-08-04: 10 rows ran off the iPad's
+    # screen): 9 rows -> a 252x568 box, so the bar artwork wants
+    # th = 568 * TEMP_W / (252 * 1.65) = 219.
+    t_rows = 9 if V6 else temp_rows(rows)
+    t_th = 219 if V6 else th
+
     def temp_card(setpoint, accent, word, vis):
         els = [value(INSIDE, size=tsize, top="33%"), value(OUTSIDE, size=tsize, top="77%")]
         if setpoint:
             els.append(value(AC, attribute="temperature", suffix="°", prefix="A/C ",
                              size="min(26px, 2.2vw)", top="55%", color=accent))
-        c = pe(temp_bar_svg(setpoint, accent, word, th), els, QUARTER, temp_rows(rows))
+        c = pe(temp_bar_svg(setpoint, accent, word, t_th), els, QUARTER, t_rows)
         if setpoint:
             c["card_mod"] = {"style": ac_marker_css(accent)}
         return {**c, "visibility": vis} if vis else c
@@ -615,37 +621,37 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
         # The flow diagram absorbs solar/battery/load/grid; COAST still matters after dark
         # so it keeps a tile of its own beneath. The flow card renders ~374px tall no matter
         # how many rows its slot spans (it does not stretch), so give it its natural 6 rows —
-        # a 10-row slot left 258px of dead space that pushed COAST below the 751px envelope
+        # a 10-row slot left 258px of dead space that pushed COAST below the envelope
         # and off the iPad.
-        FLOW_ROWS, COAST_ROWS = 6, 4
+        FLOW_ROWS, COAST_ROWS = 6, 3
         cards.append(power_flow_card(FLOW_ROWS))
         if mode is EVENING:
             # No spacer needed: the temperature column still owns columns 1-6 down to row
-            # 10, so auto-placement's first free slot at row 7 is column 7 — directly
-            # under the flow diagram. 6 flow rows + 4 coast rows = the temperature
-            # column's 10, so the columns bottom out level at 751px.
-            # 4 rows -> a 382x248 box, so the artwork wants TILE_H = 300 * 248/382 = 195.
+            # 9, so auto-placement's first free slot at row 7 is column 7 — directly
+            # under the flow diagram. 6 flow rows + 3 coast rows = the temperature
+            # column's 9, so the columns bottom out level at 687px.
+            # 3 rows -> a 382x184 box, so the artwork wants TILE_H = 300 * 184/382 = 145.
             for accent, sub, band in (
                     (GREEN, "to the 10:00 window", vis_above("sensor.battery_coast_margin", 10)),
                     (AMBER, "tight to 10:00", vis_band("sensor.battery_coast_margin", 0, 10)),
                     (RED, "short of 10:00", [{"condition": "numeric_state",
                                               "entity": "sensor.battery_coast_margin",
                                               "below": 0}])):
-                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=195),
+                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=145),
                                    [value("sensor.battery_coast_status",
                                           size="min(38px, 3.2vw)")],
                                    POWER, COAST_ROWS), "visibility": band})
             # Battery twin in the last slot (columns 16-24) so the bottom row reads
             # COAST | BATTERY: SoC big, kWh in the pack beneath, accent and glyph
-            # following charge direction. No pulse chevrons — at h=195 they'd sit on
-            # the kWh line, and the banner up top already animates direction.
+            # following charge direction. No pulse chevrons — at this height they'd sit
+            # on the kWh line, and the banner up top already animates direction.
             for accent, glyph, band in ((GREEN, "▲", CHARGING),
                                         (AMBER, "▼", DISCHARGING),
                                         (MUTED, "", IDLE)):
-                cards.append({**pe(tile_svg("BATTERY", accent, glyph=glyph, h=195),
-                                   [value(SOC, size="min(48px, 4vw)", top="42%"),
+                cards.append({**pe(tile_svg("BATTERY", accent, glyph=glyph, h=145),
+                                   [value(SOC, size="min(44px, 3.7vw)", top="42%"),
                                     value("sensor.battery_energy",
-                                          size="min(28px, 2.4vw)", top="72%", color=MUTED)],
+                                          size="min(26px, 2.2vw)", top="74%", color=MUTED)],
                                    POWER, COAST_ROWS), "visibility": band})
         if mode:
             for c in cards:
