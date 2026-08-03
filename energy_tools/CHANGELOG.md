@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.75.3 — drop the phantom four4free export credit
+
+`strategy.tariffs.four4free.export_credit` claimed $1/day for keeping export under
+0.03 kWh/h in 18:00-21:00. It was authored speculatively on 2026-06-29, while zerohero was
+still the live plan, and is **not a term of the actual plan** (confirmed by the account
+holder). No code ever read it — the `export_credit` key in the money snapshot is unrelated
+(accumulated feed-in earnings). Removed from both DEFAULT_CONFIG and the baked template so
+it cannot mislead again.
+
 ## 1.75.2 — report the active tariff, not a hardcoded "zerohero"
 
 `snap["dynamic"]["source"]` was the literal string `"zerohero"` regardless of which profile

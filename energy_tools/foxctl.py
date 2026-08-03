@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.75.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.75.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -101,8 +101,6 @@ DEFAULT_CONFIG = {
                 "peak": {"start": 16, "end": 23, "c": 59.95},
                 "shoulder_c": 37.51,
                 "fit_peak_c": 8.0, "fit_else_c": 0.0,
-                # $1/day credit for keeping export ≤0.03 kWh/hr in 18–21 — honoured for free (export off).
-                "export_credit": {"start": 18, "end": 21, "max_kwh_per_h": 0.03, "dollar_per_day": 1.0},
             },
         },
         "max_soc": 100,             # hard charge cap — never grid-charge above this
