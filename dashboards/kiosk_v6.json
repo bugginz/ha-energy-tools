@@ -841,8 +841,8 @@
         },
         "battery": {
          "entity": {
-          "consumption": "sensor.foxess_foxctl_battery_charge_power",
-          "production": "sensor.foxess_foxctl_battery_discharge_power"
+          "consumption": "sensor.foxess_foxctl_battery_discharge_power",
+          "production": "sensor.foxess_foxctl_battery_charge_power"
          },
          "state_of_charge": "sensor.foxess_foxctl_battery_soc",
          "state_of_charge_decimals": 0,
@@ -1771,8 +1771,8 @@
         },
         "battery": {
          "entity": {
-          "consumption": "sensor.foxess_foxctl_battery_charge_power",
-          "production": "sensor.foxess_foxctl_battery_discharge_power"
+          "consumption": "sensor.foxess_foxctl_battery_discharge_power",
+          "production": "sensor.foxess_foxctl_battery_charge_power"
          },
          "state_of_charge": "sensor.foxess_foxctl_battery_soc",
          "state_of_charge_decimals": 0,

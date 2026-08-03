@@ -536,9 +536,11 @@ def power_flow_card(rows):
     a flow diagram says "where is it going" in one glance where four separate numbers make
     you do the arithmetic yourself.
 
-    Direction convention follows the card's own naming: `consumption` is power the house
-    takes FROM that source, `production` is power that source receives. So grid consumption
-    = import, battery consumption = charging.
+    Direction convention, confirmed live 2026-08-03: `consumption` is power the house takes
+    FROM that source, `production` is power that source RECEIVES. So grid consumption =
+    import and battery consumption = **discharge**. Getting the battery pair backwards put
+    1.5 kW of discharge into the "production" slot, so the card looked for something charging
+    the battery and drew a phantom solar->battery flow, while battery->house never appeared.
     """
     dev = "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_"
     return {
@@ -546,7 +548,7 @@ def power_flow_card(rows):
         "entities": {
             "grid": {"entity": {"consumption": GRID_IN, "production": GRID_OUT}},
             "solar": {"entity": SOLAR},
-            "battery": {"entity": {"consumption": CHG, "production": DIS},
+            "battery": {"entity": {"consumption": DIS, "production": CHG},
                         "state_of_charge": SOC, "state_of_charge_decimals": 0,
                         "state_of_charge_unit_white_space": False},
             "home": {"entity": LOAD, "override_state": True},
