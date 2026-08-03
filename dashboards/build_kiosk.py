@@ -635,6 +635,18 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
                                    [value("sensor.battery_coast_status",
                                           size="min(38px, 3.2vw)")],
                                    POWER, COAST_ROWS), "visibility": band})
+            # Battery twin in the last slot (columns 16-24) so the bottom row reads
+            # COAST | BATTERY: SoC big, kWh in the pack beneath, accent and glyph
+            # following charge direction. No pulse chevrons — at h=195 they'd sit on
+            # the kWh line, and the banner up top already animates direction.
+            for accent, glyph, band in ((GREEN, "▲", CHARGING),
+                                        (AMBER, "▼", DISCHARGING),
+                                        (MUTED, "", IDLE)):
+                cards.append({**pe(tile_svg("BATTERY", accent, glyph=glyph, h=195),
+                                   [value(SOC, size="min(48px, 4vw)", top="42%"),
+                                    value("sensor.battery_energy",
+                                          size="min(28px, 2.4vw)", top="72%", color=MUTED)],
+                                   POWER, COAST_ROWS), "visibility": band})
         if mode:
             for c in cards:
                 c["visibility"] = list(c.get("visibility") or []) + mode
