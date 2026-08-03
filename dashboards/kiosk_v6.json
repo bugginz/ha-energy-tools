@@ -854,35 +854,13 @@
         },
         "individual": [
          {
-          "entity": "sensor.downstairs_other_power",
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
           "color": [
            56,
            189,
            248
-          ]
-         },
-         {
-          "entity": "sensor.grillplats_plug_power_4",
-          "name": "Fridge",
-          "icon": "mdi:fridge",
-          "color": [
-           45,
-           212,
-           191
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.grillplats_plug_power_5",
-          "name": "Computers",
-          "icon": "mdi:desktop-classic",
-          "color": [
-           244,
-           114,
-           182
           ]
          },
          {
@@ -896,18 +874,6 @@
           ]
          },
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9",
-          "name": "Hot Water",
-          "icon": "mdi:water-boiler",
-          "color": [
-           245,
-           158,
-           11
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
           "name": "A/C",
           "icon": "mdi:air-conditioner",
@@ -915,30 +881,6 @@
            167,
            139,
            250
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
-          "name": "Oven",
-          "icon": "mdi:stove",
-          "color": [
-           239,
-           68,
-           68
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
-          "name": "Cooktop",
-          "icon": "mdi:pot-steam",
-          "color": [
-           251,
-           146,
-           60
           ],
           "display_zero": false,
           "display_zero_tolerance": 20
@@ -1806,35 +1748,13 @@
         },
         "individual": [
          {
-          "entity": "sensor.downstairs_other_power",
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
           "color": [
            56,
            189,
            248
-          ]
-         },
-         {
-          "entity": "sensor.grillplats_plug_power_4",
-          "name": "Fridge",
-          "icon": "mdi:fridge",
-          "color": [
-           45,
-           212,
-           191
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.grillplats_plug_power_5",
-          "name": "Computers",
-          "icon": "mdi:desktop-classic",
-          "color": [
-           244,
-           114,
-           182
           ]
          },
          {
@@ -1848,18 +1768,6 @@
           ]
          },
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9",
-          "name": "Hot Water",
-          "icon": "mdi:water-boiler",
-          "color": [
-           245,
-           158,
-           11
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
           "name": "A/C",
           "icon": "mdi:air-conditioner",
@@ -1867,30 +1775,6 @@
            167,
            139,
            250
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
-          "name": "Oven",
-          "icon": "mdi:stove",
-          "color": [
-           239,
-           68,
-           68
-          ],
-          "display_zero": false,
-          "display_zero_tolerance": 20
-         },
-         {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
-          "name": "Cooktop",
-          "icon": "mdi:pot-steam",
-          "color": [
-           251,
-           146,
-           60
           ],
           "display_zero": false,
           "display_zero_tolerance": 20
