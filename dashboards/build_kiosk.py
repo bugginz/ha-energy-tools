@@ -556,23 +556,40 @@ def power_flow_card(rows):
             # remaining "home" bubble reads as everything else. The intermittent ones carry
             # display_zero: false so they appear only when actually drawing — an oven and a
             # cooktop sitting at 0 W all evening would just be clutter.
-            # The card renders AT MOST 4 individual devices (config-level limit, verified
-            # live on v0.3.7 — entries past the fourth silently never draw). Rob's pick:
-            # the two room circuits always on, A/C and Car appearing when they draw.
-            # Downstairs is the RAW ch12 — the GRILLPLATS plugs (fridge + computers) are
-            # not itemised here, so there is nothing to double-count; their split lives in
-            # sensor.load_breakdown for the V4/V5 grid tiles instead.
+            # The card draws AT MOST 4 individual bubbles, but with sort_individual_devices
+            # the four slots go to the biggest CURRENT talkers: every load below is a
+            # candidate, entries under 20 W drop out entirely (display_zero false), and the
+            # active ones are ranked by live wattage (Rob 2026-08-04: "the top 4 talkers
+            # always showing"). Because the fridge and computer plugs can now win bubbles,
+            # Downstairs must be the minus-the-plugs remainder sensor — the raw ch12 would
+            # count them twice against the home figure.
             "individual": [
-                {"entity": dev + "12", "name": "Downstairs", "icon": "mdi:home-floor-g",
-                 "color": [56, 189, 248]},
-                {"entity": dev + "11", "name": "Upstairs", "icon": "mdi:home-floor-1",
-                 "color": [129, 140, 248]},
                 {"entity": dev + "8", "name": "A/C", "icon": "mdi:air-conditioner",
                  "color": [167, 139, 250], "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": dev + "18", "name": "Car", "icon": "mdi:car-electric",
                  "color": [34, 211, 238], "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": dev + "9", "name": "Hot Water", "icon": "mdi:water-boiler",
+                 "color": [245, 158, 11], "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": dev + "10", "name": "Oven", "icon": "mdi:stove",
+                 "color": [239, 68, 68], "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": dev + "16", "name": "Cooktop", "icon": "mdi:pot-steam",
+                 "color": [251, 146, 60], "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": "sensor.grillplats_plug_power_5", "name": "Computers",
+                 "icon": "mdi:desktop-classic", "color": [244, 114, 182],
+                 "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": "sensor.grillplats_plug_power_4", "name": "Fridge",
+                 "icon": "mdi:fridge", "color": [45, 212, 191],
+                 "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": "sensor.downstairs_other_power", "name": "Downstairs",
+                 "icon": "mdi:home-floor-g", "color": [56, 189, 248],
+                 "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": dev + "11", "name": "Upstairs", "icon": "mdi:home-floor-1",
+                 "color": [129, 140, 248], "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": dev + "14", "name": "Lights", "icon": "mdi:lightbulb-group",
+                 "color": [250, 204, 21], "display_zero": False, "display_zero_tolerance": 20},
             ],
         },
+        "sort_individual_devices": True,
         "clickable_entities": True,
         # "show" draws lines for flows whose value is ZERO — which put an animated dot
         # between solar and the battery at night. Hide them instead.
