@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.75.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.75.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2861,7 +2861,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "solar_bells": solar_bells,
         "sun": {"rise": sun_rise, "set": sun_set},   # the fill planner needs sunset to split
                                                      # remaining solar either side of the deadline
-        "dynamic": {"source": "zerohero", "mode": "tariff",
+        "dynamic": {"source": profile_key or "tariff", "mode": "tariff",
                     "tariff_label": profile.get("label"),
                     "tariff": {"free": profile.get("free"), "peak": profile.get("peak"),
                                "shoulder_c": profile.get("shoulder_c"), "export": profile.get("export")},

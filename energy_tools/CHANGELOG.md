@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.75.2 — report the active tariff, not a hardcoded "zerohero"
+
+`snap["dynamic"]["source"]` was the literal string `"zerohero"` regardless of which profile
+was live, so the dashboard and `/api/state` read as though the wrong plan was in use. It now
+reports the active `tariff_profile`. Four4free has been the live plan since 2026-07-10;
+zerohero is only a leftover profile in the tariff table. Nothing about the rates or the
+decisions was affected — only the label.
+
 ## 1.75.1 — no supply reservation for a de-configured car charger
 
 With `ev_charger_switch` cleared, the free-window planner kept reserving ~3.4 kW of supply
