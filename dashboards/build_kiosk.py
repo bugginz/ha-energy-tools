@@ -625,12 +625,14 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
         # and off the iPad.
         FLOW_ROWS, COAST_ROWS = 6, 3
         cards.append(power_flow_card(FLOW_ROWS))
+        # Bottom row under the flow diagram: COAST | BATTERY after dark, SOLAR | BATTERY
+        # in daylight (coast-to-10:00 is an after-dark question; generation is a daylight
+        # one). No spacer needed: the temperature column still owns columns 1-6 down to
+        # row 9, so auto-placement's first free slot at row 7 is column 7 — directly
+        # under the flow diagram. 6 flow rows + 3 tile rows = the temperature column's 9,
+        # so the columns bottom out level at 687px.
+        # 3 rows -> a 382x184 box, so the artwork wants TILE_H = 300 * 184/382 = 145.
         if mode is EVENING:
-            # No spacer needed: the temperature column still owns columns 1-6 down to row
-            # 9, so auto-placement's first free slot at row 7 is column 7 — directly
-            # under the flow diagram. 6 flow rows + 3 coast rows = the temperature
-            # column's 9, so the columns bottom out level at 687px.
-            # 3 rows -> a 382x184 box, so the artwork wants TILE_H = 300 * 184/382 = 145.
             for accent, sub, band in (
                     (GREEN, "to the 10:00 window", vis_above("sensor.battery_coast_margin", 10)),
                     (AMBER, "tight to 10:00", vis_band("sensor.battery_coast_margin", 0, 10)),
@@ -641,18 +643,21 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
                                    [value("sensor.battery_coast_status",
                                           size="min(38px, 3.2vw)")],
                                    POWER, COAST_ROWS), "visibility": band})
-            # Battery twin in the last slot (columns 16-24) so the bottom row reads
-            # COAST | BATTERY: SoC big, kWh in the pack beneath, accent and glyph
-            # following charge direction. No pulse chevrons — at this height they'd sit
-            # on the kWh line, and the banner up top already animates direction.
-            for accent, glyph, band in ((GREEN, "▲", CHARGING),
-                                        (AMBER, "▼", DISCHARGING),
-                                        (MUTED, "", IDLE)):
-                cards.append({**pe(tile_svg("BATTERY", accent, glyph=glyph, h=145),
-                                   [value(SOC, size="min(44px, 3.7vw)", top="42%"),
-                                    value("sensor.battery_energy",
-                                          size="min(26px, 2.2vw)", top="74%", color=MUTED)],
-                                   POWER, COAST_ROWS), "visibility": band})
+        else:
+            cards.append(pe(tile_svg("SOLAR", VIOLET, sub="generating now", glyph="☀", h=145),
+                            [value(SOLAR, size="min(44px, 3.7vw)")], POWER, COAST_ROWS))
+        # Battery twin in the last slot (columns 16-24), both modes: SoC big, kWh in the
+        # pack beneath, accent and glyph following charge direction. No pulse chevrons —
+        # at this height they'd sit on the kWh line, and the banner up top already
+        # animates direction.
+        for accent, glyph, band in ((GREEN, "▲", CHARGING),
+                                    (AMBER, "▼", DISCHARGING),
+                                    (MUTED, "", IDLE)):
+            cards.append({**pe(tile_svg("BATTERY", accent, glyph=glyph, h=145),
+                               [value(SOC, size="min(44px, 3.7vw)", top="42%"),
+                                value("sensor.battery_energy",
+                                      size="min(26px, 2.2vw)", top="74%", color=MUTED)],
+                               POWER, COAST_ROWS), "visibility": band})
         if mode:
             for c in cards:
                 c["visibility"] = list(c.get("visibility") or []) + mode
