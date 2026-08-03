@@ -1083,6 +1083,19 @@
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
+        },
+        {
+         "type": "state-label",
+         "entity": "sensor.load_breakdown",
+         "style": {
+          "top": "90%",
+          "left": "50%",
+          "font-size": "min(15px, 1.3vw)",
+          "font-weight": "300",
+          "letter-spacing": "-1px",
+          "white-space": "nowrap",
+          "color": "#94a3b8"
+         }
         }
        ],
        "grid_options": {
@@ -1117,6 +1130,19 @@
           "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "state-label",
+         "entity": "sensor.load_breakdown",
+         "style": {
+          "top": "90%",
+          "left": "50%",
+          "font-size": "min(15px, 1.3vw)",
+          "font-weight": "300",
+          "letter-spacing": "-1px",
+          "white-space": "nowrap",
+          "color": "#94a3b8"
          }
         }
        ],
@@ -2269,6 +2295,19 @@
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
+        },
+        {
+         "type": "state-label",
+         "entity": "sensor.load_breakdown",
+         "style": {
+          "top": "90%",
+          "left": "50%",
+          "font-size": "min(15px, 1.3vw)",
+          "font-weight": "300",
+          "letter-spacing": "-1px",
+          "white-space": "nowrap",
+          "color": "#94a3b8"
+         }
         }
        ],
        "grid_options": {
@@ -2303,6 +2342,19 @@
           "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
+         }
+        },
+        {
+         "type": "state-label",
+         "entity": "sensor.load_breakdown",
+         "style": {
+          "top": "90%",
+          "left": "50%",
+          "font-size": "min(15px, 1.3vw)",
+          "font-weight": "300",
+          "letter-spacing": "-1px",
+          "white-space": "nowrap",
+          "color": "#94a3b8"
          }
         }
        ],

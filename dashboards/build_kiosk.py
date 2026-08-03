@@ -588,11 +588,16 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
         cards.append({**pe(tile_svg("HOUSE LOAD", accent, sub=sub, glyph="⌂", h=th),
                            [value(LOAD, size=vsize)], POWER, rows), "visibility": band})
     # Grid: exporting is a different event from importing, so it gets its own colour and word.
+    # What is actually drawing, so "why am I buying power" is answerable from the tile.
+    # sensor.load_breakdown ranks the circuits and returns one short string, because
+    # picture-elements can neither sort nor template.
+    breakdown = value("sensor.load_breakdown", size="min(15px, 1.3vw)", top="90%",
+                      color=MUTED)
     cards.append({**pe(tile_svg("GRID", CYAN, sub="exporting", glyph="↑", h=th),
-                       [value(GRID_OUT, size=vsize)], POWER, rows),
+                       [value(GRID_OUT, size=vsize), breakdown], POWER, rows),
                   "visibility": vis_above(GRID_OUT, 0.05)})
     cards.append({**pe(tile_svg("GRID", AMBER, sub="importing", glyph="↓", h=th),
-                       [value(GRID_IN, size=vsize)], POWER, rows),
+                       [value(GRID_IN, size=vsize), breakdown], POWER, rows),
                   "visibility": [{"condition": "numeric_state", "entity": GRID_OUT, "below": 0.05}]})
     if mode:
         # visibility is a list, evaluated as AND — appending the mode gate keeps each card's
