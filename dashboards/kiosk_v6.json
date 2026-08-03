@@ -36,9 +36,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -49,7 +50,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -131,9 +132,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -144,7 +146,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -216,9 +218,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -229,7 +232,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -306,9 +309,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -319,7 +323,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -396,9 +400,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -409,7 +414,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -486,9 +491,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -499,7 +505,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -838,7 +844,9 @@
           "consumption": "sensor.foxess_foxctl_battery_charge_power",
           "production": "sensor.foxess_foxctl_battery_discharge_power"
          },
-         "state_of_charge": "sensor.foxess_foxctl_battery_soc"
+         "state_of_charge": "sensor.foxess_foxctl_battery_soc",
+         "state_of_charge_decimals": 0,
+         "state_of_charge_unit_white_space": false
         },
         "home": {
          "entity": "sensor.foxess_foxctl_house_load",
@@ -874,7 +882,8 @@
            158,
            11
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
@@ -885,7 +894,8 @@
            139,
            250
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
@@ -896,7 +906,8 @@
            68,
            68
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
@@ -907,7 +918,8 @@
            146,
            60
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
@@ -918,7 +930,8 @@
            211,
            238
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          }
         ]
        },
@@ -953,9 +966,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -966,7 +980,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1048,9 +1062,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -1061,7 +1076,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1133,9 +1148,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -1146,7 +1162,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1223,9 +1239,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -1236,7 +1253,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1313,9 +1330,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -1326,7 +1344,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1403,9 +1421,10 @@
          "entity": "sensor.foxess_foxctl_battery_soc",
          "style": {
           "top": "50%",
-          "left": "7%",
-          "font-size": "min(30px, 2.6vw)",
+          "left": "8%",
+          "font-size": "min(52px, 4.4vw)",
           "font-weight": "300",
+          "letter-spacing": "-1px",
           "white-space": "nowrap",
           "color": "#f1f5f9"
          }
@@ -1416,7 +1435,7 @@
          "attribute": "status",
          "style": {
           "top": "50%",
-          "left": "45%",
+          "left": "48%",
           "font-size": "min(19px, 1.7vw)",
           "font-weight": "500",
           "letter-spacing": "2px",
@@ -1755,7 +1774,9 @@
           "consumption": "sensor.foxess_foxctl_battery_charge_power",
           "production": "sensor.foxess_foxctl_battery_discharge_power"
          },
-         "state_of_charge": "sensor.foxess_foxctl_battery_soc"
+         "state_of_charge": "sensor.foxess_foxctl_battery_soc",
+         "state_of_charge_decimals": 0,
+         "state_of_charge_unit_white_space": false
         },
         "home": {
          "entity": "sensor.foxess_foxctl_house_load",
@@ -1791,7 +1812,8 @@
            158,
            11
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
@@ -1802,7 +1824,8 @@
            139,
            250
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
@@ -1813,7 +1836,8 @@
            68,
            68
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
@@ -1824,7 +1848,8 @@
            146,
            60
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
@@ -1835,7 +1860,8 @@
            211,
            238
           ],
-          "display_zero": false
+          "display_zero": false,
+          "display_zero_tolerance": 20
          }
         ]
        },

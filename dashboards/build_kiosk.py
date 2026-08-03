@@ -516,11 +516,12 @@ def battery_band_cards_v5():
                                    "font-weight": "400", "white-space": "nowrap",
                                    "color": CYAN}}]}
     soc_lbl = {"type": "state-label", "entity": SOC,
-               "style": {"top": "50%", "left": "7%", "font-size": "min(30px, 2.6vw)",
-                         "font-weight": "300", "white-space": "nowrap", "color": INK}}
+               "style": {"top": "50%", "left": "8%", "font-size": "min(52px, 4.4vw)",
+                         "font-weight": "300", "letter-spacing": "-1px",
+                         "white-space": "nowrap", "color": INK}}
     status_lbl = {"type": "state-label", "entity": "sensor.house_battery",
                   "attribute": "status",
-                  "style": {"top": "50%", "left": "45%", "font-size": "min(19px, 1.7vw)",
+                  "style": {"top": "50%", "left": "48%", "font-size": "min(19px, 1.7vw)",
                             "font-weight": "500", "letter-spacing": "2px",
                             "white-space": "nowrap", "color": MUTED}}
     for c in out:
@@ -546,7 +547,8 @@ def power_flow_card(rows):
             "grid": {"entity": {"consumption": GRID_IN, "production": GRID_OUT}},
             "solar": {"entity": SOLAR},
             "battery": {"entity": {"consumption": CHG, "production": DIS},
-                        "state_of_charge": SOC},
+                        "state_of_charge": SOC, "state_of_charge_decimals": 0,
+                        "state_of_charge_unit_white_space": False},
             "home": {"entity": LOAD, "override_state": True},
             # Individual consumers are subtracted from the home figure by the card, so the
             # remaining "home" bubble reads as everything else. The intermittent ones carry
@@ -558,15 +560,15 @@ def power_flow_card(rows):
                 {"entity": dev + "11", "name": "Upstairs", "icon": "mdi:home-floor-1",
                  "color": [129, 140, 248]},
                 {"entity": dev + "9", "name": "Hot Water", "icon": "mdi:water-boiler",
-                 "color": [245, 158, 11], "display_zero": False},
+                 "color": [245, 158, 11], "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": dev + "8", "name": "A/C", "icon": "mdi:air-conditioner",
-                 "color": [167, 139, 250], "display_zero": False},
+                 "color": [167, 139, 250], "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": dev + "10", "name": "Oven", "icon": "mdi:stove",
-                 "color": [239, 68, 68], "display_zero": False},
+                 "color": [239, 68, 68], "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": dev + "16", "name": "Cooktop", "icon": "mdi:pot-steam",
-                 "color": [251, 146, 60], "display_zero": False},
+                 "color": [251, 146, 60], "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": dev + "18", "name": "Car", "icon": "mdi:car-electric",
-                 "color": [34, 211, 238], "display_zero": False},
+                 "color": [34, 211, 238], "display_zero": False, "display_zero_tolerance": 20},
             ],
         },
         "clickable_entities": True,
