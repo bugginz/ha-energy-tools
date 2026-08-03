@@ -228,6 +228,7 @@ THIRD = COLS_ROW // 3
 HALF = COLS_ROW // 2
 QUARTER = 6          # V4: narrow left column for the vertical temperature bar
 POWER = 9            # V4: 6 + 9 + 9 = 24, so the power cards tile 2x2 beside it
+FLOW_COLS = 18       # V6: 6 (temperature column) + 18 (flow diagram) = 24
 # Row spans must be EXPLICIT here. With rows:"auto" every card is one grid row tall, so the
 # tall temperature card simply made that row tall and the 2x2 never formed beside it. A
 # sections row is 56px with an 8px gap, so 6 rows (376px) is exactly two 3-row cards (184px)
@@ -528,6 +529,45 @@ def battery_band_cards_v5():
     return out
 
 
+def power_flow_card(rows):
+    """power-flow-card-plus (already installed, v0.3.7) — animated grid/solar/battery/home
+    flows with the big consumers broken out. Replaces the 2x2 of power tiles in V6, because
+    a flow diagram says "where is it going" in one glance where four separate numbers make
+    you do the arithmetic yourself.
+
+    Direction convention follows the card's own naming: `consumption` is power the house
+    takes FROM that source, `production` is power that source receives. So grid consumption
+    = import, battery consumption = charging.
+    """
+    dev = "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_"
+    return {
+        "type": "custom:power-flow-card-plus",
+        "entities": {
+            "grid": {"entity": {"consumption": GRID_IN, "production": GRID_OUT}},
+            "solar": {"entity": SOLAR},
+            "battery": {"entity": {"consumption": CHG, "production": DIS},
+                        "state_of_charge": SOC},
+            "home": {"entity": LOAD, "override_state": True},
+            # Individual consumers are subtracted from the home figure by the card, so the
+            # remaining "home" bubble reads as everything else.
+            "individual": [
+                {"entity": dev + "18", "name": "Car", "icon": "mdi:car-electric",
+                 "color": [34, 211, 238]},
+                {"entity": dev + "9", "name": "Hot Water", "icon": "mdi:water-boiler",
+                 "color": [245, 158, 11]},
+                {"entity": dev + "8", "name": "A/C", "icon": "mdi:air-conditioner",
+                 "color": [167, 139, 250]},
+            ],
+        },
+        "clickable_entities": True,
+        "display_zero_lines": {"mode": "show", "transparency": 50},
+        "use_new_flow_rate_model": True,
+        "w_decimals": 0, "kw_decimals": 1, "min_flow_rate": 0.75, "max_flow_rate": 6,
+        "watt_threshold": 1000,
+        "grid_options": {"columns": FLOW_COLS, "rows": rows},
+    }
+
+
 def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
                    tsize="min(46px, 3.9vw)", show_bar=True, mode=None, th=TILE_H_DAY):
     """Temperature column on the left, the four halves of the energy equation on the right.
@@ -555,6 +595,25 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
     cards.append(temp_card(False, MUTED, "off", vis_state(AC, "off")))
 
     # Solar / battery / load / grid, 2x2.
+    if V6:
+        # The flow diagram absorbs solar/battery/load/grid; COAST still matters after dark
+        # so it keeps a tile of its own beneath.
+        cards.append(power_flow_card(temp_rows(rows)))
+        if mode is EVENING:
+            for accent, sub, band in (
+                    (GREEN, "to the 10:00 window", vis_above("sensor.battery_coast_margin", 10)),
+                    (AMBER, "tight to 10:00", vis_band("sensor.battery_coast_margin", 0, 10)),
+                    (RED, "short of 10:00", [{"condition": "numeric_state",
+                                              "entity": "sensor.battery_coast_margin",
+                                              "below": 0}])):
+                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=th),
+                                   [value("sensor.battery_coast_status",
+                                          size="min(38px, 3.2vw)")],
+                                   POWER, rows), "visibility": band})
+        if mode:
+            for c in cards:
+                c["visibility"] = list(c.get("visibility") or []) + mode
+        return cards
     if V5:
         # Daylight: solar. After dark: will the battery reach the 10:00 free window?
         # The day/evening MODE is already gated on sun.sun, so adding a sun condition here
