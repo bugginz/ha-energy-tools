@@ -846,13 +846,23 @@
         },
         "individual": [
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
-          "name": "Car",
-          "icon": "mdi:car-electric",
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+          "name": "Downstairs",
+          "icon": "mdi:home-floor-g",
           "color": [
-           34,
-           211,
-           238
+           56,
+           189,
+           248
+          ]
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11",
+          "name": "Upstairs",
+          "icon": "mdi:home-floor-1",
+          "color": [
+           129,
+           140,
+           248
           ]
          },
          {
@@ -863,7 +873,8 @@
            245,
            158,
            11
-          ]
+          ],
+          "display_zero": false
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
@@ -873,14 +884,47 @@
            167,
            139,
            250
-          ]
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
+          "name": "Oven",
+          "icon": "mdi:stove",
+          "color": [
+           239,
+           68,
+           68
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
+          "name": "Cooktop",
+          "icon": "mdi:pot-steam",
+          "color": [
+           251,
+           146,
+           60
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
+          "name": "Car",
+          "icon": "mdi:car-electric",
+          "color": [
+           34,
+           211,
+           238
+          ],
+          "display_zero": false
          }
         ]
        },
        "clickable_entities": true,
        "display_zero_lines": {
-        "mode": "show",
-        "transparency": 50
+        "mode": "hide"
        },
        "use_new_flow_rate_model": true,
        "w_decimals": 0,
@@ -1719,13 +1763,23 @@
         },
         "individual": [
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
-          "name": "Car",
-          "icon": "mdi:car-electric",
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+          "name": "Downstairs",
+          "icon": "mdi:home-floor-g",
           "color": [
-           34,
-           211,
-           238
+           56,
+           189,
+           248
+          ]
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11",
+          "name": "Upstairs",
+          "icon": "mdi:home-floor-1",
+          "color": [
+           129,
+           140,
+           248
           ]
          },
          {
@@ -1736,7 +1790,8 @@
            245,
            158,
            11
-          ]
+          ],
+          "display_zero": false
          },
          {
           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
@@ -1746,14 +1801,47 @@
            167,
            139,
            250
-          ]
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
+          "name": "Oven",
+          "icon": "mdi:stove",
+          "color": [
+           239,
+           68,
+           68
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
+          "name": "Cooktop",
+          "icon": "mdi:pot-steam",
+          "color": [
+           251,
+           146,
+           60
+          ],
+          "display_zero": false
+         },
+         {
+          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
+          "name": "Car",
+          "icon": "mdi:car-electric",
+          "color": [
+           34,
+           211,
+           238
+          ],
+          "display_zero": false
          }
         ]
        },
        "clickable_entities": true,
        "display_zero_lines": {
-        "mode": "show",
-        "transparency": 50
+        "mode": "hide"
        },
        "use_new_flow_rate_model": true,
        "w_decimals": 0,

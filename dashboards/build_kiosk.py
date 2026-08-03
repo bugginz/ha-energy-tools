@@ -549,18 +549,30 @@ def power_flow_card(rows):
                         "state_of_charge": SOC},
             "home": {"entity": LOAD, "override_state": True},
             # Individual consumers are subtracted from the home figure by the card, so the
-            # remaining "home" bubble reads as everything else.
+            # remaining "home" bubble reads as everything else. The intermittent ones carry
+            # display_zero: false so they appear only when actually drawing — an oven and a
+            # cooktop sitting at 0 W all evening would just be clutter.
             "individual": [
-                {"entity": dev + "18", "name": "Car", "icon": "mdi:car-electric",
-                 "color": [34, 211, 238]},
+                {"entity": dev + "12", "name": "Downstairs", "icon": "mdi:home-floor-g",
+                 "color": [56, 189, 248]},
+                {"entity": dev + "11", "name": "Upstairs", "icon": "mdi:home-floor-1",
+                 "color": [129, 140, 248]},
                 {"entity": dev + "9", "name": "Hot Water", "icon": "mdi:water-boiler",
-                 "color": [245, 158, 11]},
+                 "color": [245, 158, 11], "display_zero": False},
                 {"entity": dev + "8", "name": "A/C", "icon": "mdi:air-conditioner",
-                 "color": [167, 139, 250]},
+                 "color": [167, 139, 250], "display_zero": False},
+                {"entity": dev + "10", "name": "Oven", "icon": "mdi:stove",
+                 "color": [239, 68, 68], "display_zero": False},
+                {"entity": dev + "16", "name": "Cooktop", "icon": "mdi:pot-steam",
+                 "color": [251, 146, 60], "display_zero": False},
+                {"entity": dev + "18", "name": "Car", "icon": "mdi:car-electric",
+                 "color": [34, 211, 238], "display_zero": False},
             ],
         },
         "clickable_entities": True,
-        "display_zero_lines": {"mode": "show", "transparency": 50},
+        # "show" draws lines for flows whose value is ZERO — which put an animated dot
+        # between solar and the battery at night. Hide them instead.
+        "display_zero_lines": {"mode": "hide"},
         "use_new_flow_rate_model": True,
         "w_decimals": 0, "kw_decimals": 1, "min_flow_rate": 0.75, "max_flow_rate": 6,
         "watt_threshold": 1000,
