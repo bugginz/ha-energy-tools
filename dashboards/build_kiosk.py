@@ -613,19 +613,28 @@ def build_v4_cards(rows=POWER_ROWS_DAY, vsize="min(66px, 5.6vw)",
     # Solar / battery / load / grid, 2x2.
     if V6:
         # The flow diagram absorbs solar/battery/load/grid; COAST still matters after dark
-        # so it keeps a tile of its own beneath.
-        cards.append(power_flow_card(temp_rows(rows)))
+        # so it keeps a tile of its own beneath. The flow card renders ~374px tall no matter
+        # how many rows its slot spans (it does not stretch), so give it its natural 6 rows —
+        # a 10-row slot left 258px of dead space that pushed COAST below the 751px envelope
+        # and off the iPad.
+        FLOW_ROWS, COAST_ROWS = 6, 4
+        cards.append(power_flow_card(FLOW_ROWS))
         if mode is EVENING:
+            # No spacer needed: the temperature column still owns columns 1-6 down to row
+            # 10, so auto-placement's first free slot at row 7 is column 7 — directly
+            # under the flow diagram. 6 flow rows + 4 coast rows = the temperature
+            # column's 10, so the columns bottom out level at 751px.
+            # 4 rows -> a 382x248 box, so the artwork wants TILE_H = 300 * 248/382 = 195.
             for accent, sub, band in (
                     (GREEN, "to the 10:00 window", vis_above("sensor.battery_coast_margin", 10)),
                     (AMBER, "tight to 10:00", vis_band("sensor.battery_coast_margin", 0, 10)),
                     (RED, "short of 10:00", [{"condition": "numeric_state",
                                               "entity": "sensor.battery_coast_margin",
                                               "below": 0}])):
-                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=th),
+                cards.append({**pe(tile_svg("COAST", accent, sub=sub, glyph="◷", h=195),
                                    [value("sensor.battery_coast_status",
                                           size="min(38px, 3.2vw)")],
-                                   POWER, rows), "visibility": band})
+                                   POWER, COAST_ROWS), "visibility": band})
         if mode:
             for c in cards:
                 c["visibility"] = list(c.get("visibility") or []) + mode
