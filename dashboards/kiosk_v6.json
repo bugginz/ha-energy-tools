@@ -854,13 +854,35 @@
         },
         "individual": [
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+          "entity": "sensor.downstairs_other_power",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
           "color": [
            56,
            189,
            248
+          ]
+         },
+         {
+          "entity": "sensor.grillplats_plug_power_4",
+          "name": "Fridge",
+          "icon": "mdi:fridge",
+          "color": [
+           45,
+           212,
+           191
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
+          "entity": "sensor.grillplats_plug_power_5",
+          "name": "Computers",
+          "icon": "mdi:desktop-classic",
+          "color": [
+           244,
+           114,
+           182
           ]
          },
          {
@@ -1784,13 +1806,35 @@
         },
         "individual": [
          {
-          "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+          "entity": "sensor.downstairs_other_power",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
           "color": [
            56,
            189,
            248
+          ]
+         },
+         {
+          "entity": "sensor.grillplats_plug_power_4",
+          "name": "Fridge",
+          "icon": "mdi:fridge",
+          "color": [
+           45,
+           212,
+           191
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
+          "entity": "sensor.grillplats_plug_power_5",
+          "name": "Computers",
+          "icon": "mdi:desktop-classic",
+          "color": [
+           244,
+           114,
+           182
           ]
          },
          {

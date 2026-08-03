@@ -556,9 +556,17 @@ def power_flow_card(rows):
             # remaining "home" bubble reads as everything else. The intermittent ones carry
             # display_zero: false so they appear only when actually drawing — an oven and a
             # cooktop sitting at 0 W all evening would just be clutter.
+            # The GRILLPLATS plugs (fridge/freezer + computer gear) sit ON the downstairs
+            # circuit, so Downstairs shows sensor.downstairs_other_power (ch12 minus the
+            # two plugs) — the raw channel here would count the fridge and computers twice.
             "individual": [
-                {"entity": dev + "12", "name": "Downstairs", "icon": "mdi:home-floor-g",
-                 "color": [56, 189, 248]},
+                {"entity": "sensor.downstairs_other_power", "name": "Downstairs",
+                 "icon": "mdi:home-floor-g", "color": [56, 189, 248]},
+                {"entity": "sensor.grillplats_plug_power_4", "name": "Fridge",
+                 "icon": "mdi:fridge", "color": [45, 212, 191],
+                 "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": "sensor.grillplats_plug_power_5", "name": "Computers",
+                 "icon": "mdi:desktop-classic", "color": [244, 114, 182]},
                 {"entity": dev + "11", "name": "Upstairs", "icon": "mdi:home-floor-1",
                  "color": [129, 140, 248]},
                 {"entity": dev + "9", "name": "Hot Water", "icon": "mdi:water-boiler",
