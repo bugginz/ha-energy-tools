@@ -7,6 +7,9 @@
 # /opt/stack/tidbyt/tidbyt_key (mode 600) — never in the repo.
 set -euo pipefail
 
+# Cron's PATH is /usr/bin:/bin — pixlet lives in /usr/local/bin.
+export PATH=/usr/local/bin:$PATH
+
 DIR=/opt/stack/tidbyt
 DEVICE=subsequently-infallible-vital-kakapo-497
 HA=http://localhost:8123
