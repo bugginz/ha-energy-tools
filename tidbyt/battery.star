@@ -8,6 +8,31 @@
 
 load("render.star", "render")
 
+def soc_bar(fill, col, net):
+    """The SoC bar, animated like the kiosk band: a light sweep travelling in
+    the direction of the current — right while charging, left while
+    discharging, still when idle."""
+    base = [
+        render.Box(width = 64, height = 5, color = "#232935"),
+        render.Box(width = fill, height = 5, color = col),
+    ]
+    if abs(net) <= 0.05:
+        return render.Stack(children = base)
+    n = 12
+    sweep_w = 7
+    travel = max(fill - sweep_w, 1)
+    frames = []
+    for i in range(n):
+        pos = i if net > 0 else n - 1 - i
+        x = int(pos * travel / (n - 1))
+        frames.append(render.Stack(children = base + [
+            render.Padding(
+                pad = (x, 0, 0, 0),
+                child = render.Box(width = sweep_w, height = 5, color = "#ffffff55"),
+            ),
+        ]))
+    return render.Animation(children = frames)
+
 INK = "#f1f5f9"
 MUTED = "#94a3b8"
 BG = "#232935"
@@ -41,6 +66,7 @@ def main(config):
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
     return render.Root(
+        delay = 100,
         child = render.Column(
             expanded = True,
             main_align = "space_between",
@@ -87,12 +113,7 @@ def main(config):
                     ],
                 ),
                 # SoC bar, coloured by the coast-health sensor like the kiosk band.
-                render.Stack(
-                    children = [
-                        render.Box(width = 64, height = 5, color = BG),
-                        render.Box(width = fill, height = 5, color = col),
-                    ],
-                ),
+                soc_bar(fill, col, net),
             ],
         ),
     )
