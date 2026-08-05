@@ -33,6 +33,14 @@ def soc_bar(fill, col, net):
         ]))
     return render.Animation(children = frames)
 
+def flow_arrow(up, color):
+    """5x3 pixel triangle: point up while charging, down while discharging."""
+    rows = [1, 3] if up else [3, 1]
+    return render.Column(
+        cross_align = "center",
+        children = [render.Box(width = w, height = 1, color = color) for w in rows],
+    )
+
 INK = "#f1f5f9"
 MUTED = "#94a3b8"
 BG = "#232935"
@@ -50,14 +58,12 @@ def main(config):
     t_min = config.str("t_min", "?")
     t_max = config.str("t_max", "?")
 
-    # Starlark's % has no float-precision verbs, so one-decimal by hand.
-    kw1 = str(int(abs(net) * 10 + 0.5) / 10.0)
     if net > 0.05:
-        word, wcol = "CHG " + kw1, GREEN
+        word, wcol, up = "charge", GREEN, True
     elif net < -0.05:
-        word, wcol = "DIS " + kw1, AMBER
+        word, wcol, up = "discharge", RED, False
     else:
-        word, wcol = "IDLE", MUTED
+        word, wcol, up = "idle", MUTED, None
 
     # Coast margin to the 10:00 free window, same bands as the kiosk COAST tile.
     ccol = GREEN if coast >= 10 else (AMBER if coast >= 0 else RED)
@@ -88,8 +94,18 @@ def main(config):
                         render.Column(
                             cross_align = "end",
                             children = [
-                                render.Text("%skWh" % kwh, font = "tom-thumb", color = MUTED),
-                                render.Text(word, font = "tom-thumb", color = wcol),
+                                # "=" reads as "equivalent to"; dropped at 100%
+                                # where the row runs out of pixels.
+                                render.Text(("" if soc >= 100 else "=") + kwh + "kWh",
+                                            font = "tom-thumb", color = MUTED),
+                                render.Row(
+                                    cross_align = "center",
+                                    children = ([] if up == None else
+                                                [flow_arrow(up, wcol),
+                                                 render.Box(width = 1, height = 1)]) + [
+                                        render.Text(word, font = "tom-thumb", color = wcol),
+                                    ],
+                                ),
                             ],
                         ),
                     ],
