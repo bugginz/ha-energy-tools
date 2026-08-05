@@ -8,29 +8,50 @@
 
 load("render.star", "render")
 
-def soc_bar(fill, col, net):
-    """The SoC bar, animated like the kiosk band: a light sweep travelling in
-    the direction of the current — right while charging, left while
-    discharging, still when idle."""
+def _px(x, w, color, y = 0, h = 5):
+    return render.Padding(pad = (x, y, 0, 0), child = render.Box(width = w, height = h, color = color))
+
+
+def _chevron(x, left):
+    """3-wide chevron drawn pixel by pixel; points the way it moves."""
+    a, b, c = (x + 2, x + 1, x) if left else (x, x + 1, x + 2)
+    col = "#171b21aa"
+    return [_px(a, 1, col, 0, 1), _px(a, 1, col, 4, 1),
+            _px(b, 1, col, 1, 1), _px(b, 1, col, 3, 1),
+            _px(c, 1, col, 2, 1)]
+
+
+def soc_bar(fill, col, net, style):
+    """The SoC bar. Animation travels in the direction of the current — right
+    while charging, left while discharging, still when idle.
+      sweep   — baseline: soft light band gliding along the fill
+      chevtip — chevrons marching + a slow glow at the leading edge"""
     base = [
         render.Box(width = 64, height = 5, color = "#232935"),
         render.Box(width = fill, height = 5, color = col),
     ]
     if abs(net) <= 0.05:
         return render.Stack(children = base)
+    up = net > 0
+    frames = []
+    if style == "chevtip":
+        period = 8
+        tip_alpha = ["00", "28", "50", "78", "a0", "78", "50", "28"]
+        for i in range(period):
+            off = i if up else period - 1 - i
+            marks = []
+            for s in range(off, fill - 3, period):
+                marks += _chevron(s, not up)
+            marks.append(_px(max(fill - 3, 0), 3, "#ffffff" + tip_alpha[i]))
+            frames.append(render.Stack(children = base + marks))
+        return render.Animation(children = frames)
     n = 12
     sweep_w = 7
     travel = max(fill - sweep_w, 1)
-    frames = []
     for i in range(n):
-        pos = i if net > 0 else n - 1 - i
+        pos = i if up else n - 1 - i
         x = int(pos * travel / (n - 1))
-        frames.append(render.Stack(children = base + [
-            render.Padding(
-                pad = (x, 0, 0, 0),
-                child = render.Box(width = sweep_w, height = 5, color = "#ffffff55"),
-            ),
-        ]))
+        frames.append(render.Stack(children = base + [_px(x, sweep_w, "#ffffff55")]))
     return render.Animation(children = frames)
 
 def flow_arrow(up, color):
@@ -131,7 +152,7 @@ def main(config):
                     ],
                 ),
                 # SoC bar, coloured by the coast-health sensor like the kiosk band.
-                soc_bar(fill, col, net),
+                soc_bar(fill, col, net, config.str("bar", "sweep")),
             ],
         ),
     )

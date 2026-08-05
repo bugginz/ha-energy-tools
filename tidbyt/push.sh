@@ -43,7 +43,7 @@ print(int(round(fc[0]["templow"])), int(round(fc[1]["temperature"])))
 
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
-  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is
