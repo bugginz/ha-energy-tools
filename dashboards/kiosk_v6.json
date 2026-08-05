@@ -950,6 +950,18 @@
           "display_zero_tolerance": 20
          },
          {
+          "entity": "sensor.drier_plug_power",
+          "name": "Dryer",
+          "icon": "mdi:tumble-dryer",
+          "color": [
+           251,
+           113,
+           133
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
           "entity": "sensor.downstairs_other_power",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
@@ -2107,6 +2119,18 @@
            96,
            165,
            250
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
+          "entity": "sensor.drier_plug_power",
+          "name": "Dryer",
+          "icon": "mdi:tumble-dryer",
+          "color": [
+           251,
+           113,
+           133
           ],
           "display_zero": false,
           "display_zero_tolerance": 20
