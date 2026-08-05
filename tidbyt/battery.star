@@ -35,7 +35,7 @@ def soc_bar(fill, col, net):
 
 def flow_arrow(up, color):
     """5x3 pixel triangle: point up while charging, down while discharging."""
-    rows = [1, 3] if up else [3, 1]
+    rows = [1, 3, 5] if up else [5, 3, 1]
     return render.Column(
         cross_align = "center",
         children = [render.Box(width = w, height = 1, color = color) for w in rows],
@@ -58,12 +58,14 @@ def main(config):
     t_min = config.str("t_min", "?")
     t_max = config.str("t_max", "?")
 
+    # No words (Rob 2026-08-05): arrow gives direction, number gives rate.
+    kw1 = str(int(abs(net) * 10 + 0.5) / 10.0)
     if net > 0.05:
-        word, wcol, up = "charge", GREEN, True
+        word, wcol, up = kw1 + "kW", GREEN, True
     elif net < -0.05:
-        word, wcol, up = "discharge", RED, False
+        word, wcol, up = kw1 + "kW", RED, False
     else:
-        word, wcol, up = "idle", MUTED, None
+        word, wcol, up = "", MUTED, None
 
     # Coast margin to the 10:00 free window, same bands as the kiosk COAST tile.
     ccol = GREEN if coast >= 10 else (AMBER if coast >= 0 else RED)
