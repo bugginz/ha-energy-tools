@@ -938,6 +938,18 @@
           "display_zero_tolerance": 20
          },
          {
+          "entity": "sensor.grillplats_plug_power_6",
+          "name": "Washer",
+          "icon": "mdi:washing-machine",
+          "color": [
+           96,
+           165,
+           250
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
           "entity": "sensor.downstairs_other_power",
           "name": "Downstairs",
           "icon": "mdi:home-floor-g",
@@ -2083,6 +2095,18 @@
            45,
            212,
            191
+          ],
+          "display_zero": false,
+          "display_zero_tolerance": 20
+         },
+         {
+          "entity": "sensor.grillplats_plug_power_6",
+          "name": "Washer",
+          "icon": "mdi:washing-machine",
+          "color": [
+           96,
+           165,
+           250
           ],
           "display_zero": false,
           "display_zero_tolerance": 20

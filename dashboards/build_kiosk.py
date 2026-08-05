@@ -560,9 +560,9 @@ def power_flow_card(rows):
             # the four slots go to the biggest CURRENT talkers: every load below is a
             # candidate, entries under 20 W drop out entirely (display_zero false), and the
             # active ones are ranked by live wattage (Rob 2026-08-04: "the top 4 talkers
-            # always showing"). Because the fridge and computer plugs can now win bubbles,
-            # Downstairs must be the minus-the-plugs remainder sensor — the raw ch12 would
-            # count them twice against the home figure.
+            # always showing"). Because the fridge, computer and washer plugs can now win
+            # bubbles, Downstairs must be the minus-the-plugs remainder sensor — the raw
+            # ch12 would count them twice against the home figure.
             "individual": [
                 {"entity": dev + "8", "name": "A/C", "icon": "mdi:air-conditioner",
                  "color": [167, 139, 250], "display_zero": False, "display_zero_tolerance": 20},
@@ -579,6 +579,9 @@ def power_flow_card(rows):
                  "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": "sensor.grillplats_plug_power_4", "name": "Fridge",
                  "icon": "mdi:fridge", "color": [45, 212, 191],
+                 "display_zero": False, "display_zero_tolerance": 20},
+                {"entity": "sensor.grillplats_plug_power_6", "name": "Washer",
+                 "icon": "mdi:washing-machine", "color": [96, 165, 250],
                  "display_zero": False, "display_zero_tolerance": 20},
                 {"entity": "sensor.downstairs_other_power", "name": "Downstairs",
                  "icon": "mdi:home-floor-g", "color": [56, 189, 248],
