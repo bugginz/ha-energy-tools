@@ -22,10 +22,25 @@ KWH=$(get sensor.battery_energy)
 CHG=$(get sensor.foxess_foxctl_battery_charge_power)
 DIS=$(get sensor.foxess_foxctl_battery_discharge_power)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
+COAST=$(get sensor.battery_coast_margin || echo 0)
+TNOW=$(get sensor.living_room_ac_outside || echo '?')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
+TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
+
+# Overnight low (today's templow) + tomorrow's high, from the daily forecast.
+read -r TMIN TMAX < <(curl -sf -m 10 -X POST \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  "$HA/api/services/weather/get_forecasts?return_response" \
+  -d '{"entity_id": "weather.forecast_home", "type": "daily"}' \
+  | python3 -c '
+import json, sys
+fc = list(json.load(sys.stdin)["service_response"].values())[0]["forecast"]
+print(int(round(fc[0]["templow"])), int(round(fc[1]["temperature"])))
+' || echo '? ?')
 
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" \
   -o /tmp/tidbyt_battery.webp
 
 pixlet push --api-token "$(cat $DIR/tidbyt_key)" \
