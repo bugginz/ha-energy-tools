@@ -46,6 +46,16 @@ pixlet render "$DIR/battery.star" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" \
   -o /tmp/tidbyt_battery.webp
 
+# Runs every minute, pushes only when the render actually differs from what is
+# already on the device — pixlet renders are deterministic, so identical bytes
+# mean an identical display.
+if cmp -s /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"; then
+  echo "unchanged — no push"
+  exit 0
+fi
+
 pixlet push --api-token "$(cat $DIR/tidbyt_key)" \
   --installation-id housebattery --background \
   "$DEVICE" /tmp/tidbyt_battery.webp
+cp /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"
+echo "pushed"
