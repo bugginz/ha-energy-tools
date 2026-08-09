@@ -216,18 +216,26 @@ def main(config):
         return at(0, y, render.Row(expanded = True, main_align = "end",
                                    cross_align = "center", children = kids))
 
-    # Absolute layout on a 64x32 canvas — flex could not fit the kWh+coast line
-    # beside the three-slot right column without overflowing.
+    # Absolute layout on a 64x32 canvas. Decluttered per Rob 2026-08-09: no kWh
+    # line, coast lives in the bar's empty end, weather high, breathing room low.
     els = [render.Box(width = 64, height = 32, color = "#00000000")]
 
-    # Big number, digit ink cropped to the very top, tiny % beside it.
-    els.append(at(0, 0, render.Row(cross_align = "start", children = [
-        render.Padding(pad = (0, -2, 0, -3),
-                       child = render.Text("%d" % soc, font = "10x20", color = INK)),
+    # Big number: health-coloured (green when on track) and double-struck for
+    # weight — 10x20 is the largest built-in font, so bold is the "bigger".
+    # Digit ink cropped to the very top; % and the bin reminder ride beside it.
+    num = render.Stack(children = [
+        render.Text("%d" % soc, font = "10x20", color = col),
+        at(1, 0, render.Text("%d" % soc, font = "10x20", color = col)),
+    ])
+    header = [
+        render.Padding(pad = (0, -2, 0, -3), child = num),
         render.Text("%", font = "tom-thumb", color = MUTED),
-    ])))
+    ]
+    if bins:
+        header += [render.Box(width = 2, height = 1), bins_icons(bins)]
+    els.append(at(0, 0, render.Row(cross_align = "start", children = header)))
 
-    # Right column: rate, then car (fresh WiCAN only), then bins — 6px slots.
+    # Right column: rate, then car (fresh WiCAN only) — 6px slots.
     y = 0
     if word:
         els.append(right_at(y, ([] if up == None else
@@ -237,18 +245,6 @@ def main(config):
     if car:
         els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
                                 render.Text(car + "%", font = "tom-thumb", color = CYAN)]))
-        y += 6
-    if bins:
-        els.append(right_at(y, [bins_icons(bins)]))
-
-    # kWh equivalent + rollercoaster separator + coast margin (Rob 2026-08-09).
-    els.append(at(0, 15, render.Row(cross_align = "center", children = [
-        render.Text(kwh + "kWh", font = "tom-thumb", color = MUTED),
-        render.Box(width = 2, height = 1),
-        coaster_icon(ccol),
-        render.Box(width = 2, height = 1),
-        render.Text(ctxt, font = "tom-thumb", color = ccol),
-    ])))
 
     # Weather line: current / overnight / tomorrow, each icon + temp. Colour
     # still carries the label: white now, cyan overnight low, orange tomorrow.
@@ -258,13 +254,19 @@ def main(config):
             render.Text(t + "\u00b0", font = "tom-thumb", color = colr),
         ])
 
-    els.append(at(0, 21, render.Row(expanded = True, main_align = "space_between", children = [
+    els.append(at(0, 16, render.Row(expanded = True, main_align = "space_between", children = [
         wgroup(config.str("cond", ""), t_now, INK),
         wgroup(cond_n, t_min, CYAN),
         wgroup(cond_t, t_max, ORANGE),
     ])))
 
     els.append(at(0, 27, soc_bar(fill, col, net, config.str("bar", "sweep"), 64)))
+
+    # Coast margin tucked into the bar's unfilled end — only meaningful once the
+    # battery is substantially charged (>=75%) and only while it still fits.
+    if soc >= 75 and (64 - fill) >= 4 * len(ctxt) + 2:
+        els.append(right_at(26, [render.Text(ctxt, font = "tom-thumb", color = ccol),
+                                 render.Box(width = 1, height = 1)]))
 
     return render.Root(
         delay = flow_delay(net),
