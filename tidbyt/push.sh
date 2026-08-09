@@ -42,9 +42,40 @@ fc = list(json.load(sys.stdin)["service_response"].values())[0]["forecast"]
 print(int(round(fc[0]["templow"])), int(round(fc[1]["temperature"])))
 ' || echo '? ?')
 
+# Bin reminder: Friday through Sunday night, unless the "Bins out" button is on.
+# Letters = bins due at the coming Monday collection: R waste, Y recycling, G organic.
+BINS=$(python3 - << 'PYEOF'
+import json, urllib.request, datetime
+tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
+def get(e):
+    req = urllib.request.Request('http://localhost:8123/api/states/' + e,
+                                 headers={'Authorization': 'Bearer ' + tok})
+    return json.load(urllib.request.urlopen(req, timeout=10))
+try:
+    out = ''
+    today = datetime.date.today()
+    if today.weekday() >= 4 and get('input_boolean.bins_out')['state'] != 'on':
+        horizon = today + datetime.timedelta(days=7 - today.weekday())
+        for ent, letter in [('sensor.waste_collection_schedule_waste', 'R'),
+                            ('sensor.waste_collection_schedule_bins', 'Y'),
+                            ('sensor.waste_collection_schedule_organic', 'G')]:
+            for k in get(ent)['attributes']:
+                try:
+                    d = datetime.date.fromisoformat(k)
+                except ValueError:
+                    continue
+                if today <= d <= horizon:
+                    out += letter
+                    break
+    print(out)
+except Exception:
+    print('')
+PYEOF
+)
+
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
-  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" "bins=$BINS" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is

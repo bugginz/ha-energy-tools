@@ -44,7 +44,7 @@ def flow_delay(net):
     return min(max(int(280 / (1 + abs(net))), 45), 280)
 
 
-def soc_bar(fill, col, net, style):
+def soc_bar(fill, col, net, style, bw = 64):
     """The SoC bar. Animation travels in the direction of the current — right
     while charging, left while discharging, still when idle. Rate drives the
     look: frame delay (see flow_delay), chevron contrast, tip brightness and a
@@ -54,12 +54,12 @@ def soc_bar(fill, col, net, style):
     t = min(abs(net) / 5.0, 1.0)
     hot = _lighten(col, t * 0.25)
     base = [
-        render.Box(width = 64, height = 5, color = "#232935"),
+        render.Box(width = bw, height = 5, color = "#232935"),
         render.Box(width = fill, height = 5, color = hot),
     ]
     if abs(net) <= 0.05:
         return render.Stack(children = [
-            render.Box(width = 64, height = 5, color = "#232935"),
+            render.Box(width = bw, height = 5, color = "#232935"),
             render.Box(width = fill, height = 5, color = col),
         ])
     up = net > 0
@@ -118,6 +118,27 @@ def weather_icon(cond):
     return render.Stack(children = [render.Box(width = 7, height = 6, color = "#00000000")] + art)
 
 
+BIN_COLORS = {"R": "#ef4444", "Y": "#fcd34d", "G": "#22c55e"}
+
+
+def bins_icons(letters):
+    """Mini wheelie-bins for the bottom-right corner: R waste, Y recycling,
+    G organic. 3x6 each: handle, body, wheels."""
+    kids = []
+    for i in range(len(letters)):
+        c = BIN_COLORS.get(letters[i], "#94a3b8")
+        if i:
+            kids.append(render.Box(width = 1, height = 1))
+        kids.append(render.Stack(children = [
+            render.Box(width = 3, height = 6, color = "#00000000"),
+            _p(1, 0, 1, 1, c),
+            _p(0, 1, 3, 4, c),
+            _p(0, 5, 1, 1, "#94a3b8"),
+            _p(2, 5, 1, 1, "#94a3b8"),
+        ]))
+    return render.Row(cross_align = "end", children = kids)
+
+
 def flow_arrow(up, color):
     """5x3 pixel triangle: point up while charging, down while discharging."""
     rows = [1, 3, 5] if up else [5, 3, 1]
@@ -160,7 +181,9 @@ def main(config):
     ccol = GREEN if coast >= 10 else (AMBER if coast >= 0 else RED)
     ctxt = ("+" if coast >= 0 else "") + str(coast)
 
-    fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
+    bins = config.str("bins", "")
+    bw = 64 - (4 * len(bins) + 2) if bins else 64
+    fill = max(1, min(bw, int(soc * bw / 100 + 0.5)))
 
     return render.Root(
         delay = flow_delay(net),
@@ -223,7 +246,13 @@ def main(config):
                     ],
                 ),
                 # SoC bar, coloured by the coast-health sensor like the kiosk band.
-                soc_bar(fill, col, net, config.str("bar", "sweep")),
+                # In a bin-reminder window the bar cedes its right corner to the
+                # wheelie-bins due at Monday's collection.
+                render.Row(
+                    cross_align = "end",
+                    children = [soc_bar(fill, col, net, config.str("bar", "sweep"), bw)] +
+                               ([render.Box(width = 2, height = 1), bins_icons(bins)] if bins else []),
+                ),
             ],
         ),
     )
