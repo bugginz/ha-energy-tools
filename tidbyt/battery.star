@@ -12,36 +12,68 @@ def _px(x, w, color, y = 0, h = 5):
     return render.Padding(pad = (x, y, 0, 0), child = render.Box(width = w, height = h, color = color))
 
 
-def _chevron(x, left):
+def _chevron_c(x, left, col):
     """3-wide chevron drawn pixel by pixel; points the way it moves."""
     a, b, c = (x + 2, x + 1, x) if left else (x, x + 1, x + 2)
-    col = "#171b21aa"
     return [_px(a, 1, col, 0, 1), _px(a, 1, col, 4, 1),
             _px(b, 1, col, 1, 1), _px(b, 1, col, 3, 1),
             _px(c, 1, col, 2, 1)]
 
 
+HEXD = "0123456789abcdef"
+
+
+def _hex2(v):
+    v = min(max(int(v), 0), 255)
+    return HEXD[v // 16] + HEXD[v % 16]
+
+
+def _lighten(hexcol, f):
+    """Blend a #rrggbb colour toward white by f (0..1)."""
+    r = int(hexcol[1:3], 16)
+    g = int(hexcol[3:5], 16)
+    b = int(hexcol[5:7], 16)
+    return "#" + _hex2(r + (255 - r) * f) + _hex2(g + (255 - g) * f) + _hex2(b + (255 - b) * f)
+
+
+def flow_delay(net):
+    """Frame delay from draw rate: ~0.5kW gentle (~190ms), 2kW busy (~95ms),
+    5kW+ violent (~45ms)."""
+    if abs(net) <= 0.05:
+        return 100
+    return min(max(int(280 / (1 + abs(net))), 45), 280)
+
+
 def soc_bar(fill, col, net, style):
     """The SoC bar. Animation travels in the direction of the current — right
-    while charging, left while discharging, still when idle.
+    while charging, left while discharging, still when idle. Rate drives the
+    look: frame delay (see flow_delay), chevron contrast, tip brightness and a
+    fill lightening all scale with |net| up to 5kW.
       sweep   — baseline: soft light band gliding along the fill
-      chevtip — chevrons marching + a slow glow at the leading edge"""
+      chevtip — chevrons marching + a glow at the leading edge"""
+    t = min(abs(net) / 5.0, 1.0)
+    hot = _lighten(col, t * 0.25)
     base = [
         render.Box(width = 64, height = 5, color = "#232935"),
-        render.Box(width = fill, height = 5, color = col),
+        render.Box(width = fill, height = 5, color = hot),
     ]
     if abs(net) <= 0.05:
-        return render.Stack(children = base)
+        return render.Stack(children = [
+            render.Box(width = 64, height = 5, color = "#232935"),
+            render.Box(width = fill, height = 5, color = col),
+        ])
     up = net > 0
     frames = []
     if style == "chevtip":
         period = 8
-        tip_alpha = ["00", "28", "50", "78", "a0", "78", "50", "28"]
+        chev = "#171b21" + _hex2(0x77 + int(t * 0x88))
+        peak = 0x50 + int(t * 0xa8)
+        tip_alpha = [_hex2(peak * k // 4) for k in [0, 1, 2, 3, 4, 3, 2, 1]]
         for i in range(period):
             off = i if up else period - 1 - i
             marks = []
             for s in range(off, fill - 3, period):
-                marks += _chevron(s, not up)
+                marks += _chevron_c(s, not up, chev)
             marks.append(_px(max(fill - 3, 0), 3, "#ffffff" + tip_alpha[i]))
             frames.append(render.Stack(children = base + marks))
         return render.Animation(children = frames)
@@ -95,7 +127,7 @@ def main(config):
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
     return render.Root(
-        delay = 100,
+        delay = flow_delay(net),
         child = render.Column(
             expanded = True,
             main_align = "space_between",
