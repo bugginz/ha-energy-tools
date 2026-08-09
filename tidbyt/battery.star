@@ -86,6 +86,38 @@ def soc_bar(fill, col, net, style):
         frames.append(render.Stack(children = base + [_px(x, sweep_w, "#ffffff55")]))
     return render.Animation(children = frames)
 
+def _p(x, y, w, h, c):
+    return render.Padding(pad = (x, y, 0, 0), child = render.Box(width = w, height = h, color = c))
+
+
+def weather_icon(cond):
+    """7x6 pixel-art current-condition icon; empty box for unknown conditions."""
+    YEL, GRY, DGR = "#fcd34d", "#94a3b8", "#64748b"
+    BLU, WHT, PAL = "#38bdf8", "#e2e8f0", "#cbd5e1"
+    cloud = [_p(1, 1, 4, 1, GRY), _p(0, 2, 6, 2, GRY)]
+    art = []
+    if cond == "sunny":
+        art = [_p(2, 1, 3, 3, YEL), _p(3, 0, 1, 1, YEL), _p(3, 4, 1, 1, YEL),
+               _p(0, 2, 1, 1, YEL), _p(6, 2, 1, 1, YEL)]
+    elif cond == "clear-night":
+        art = [_p(2, 1, 3, 3, PAL), _p(3, 1, 2, 2, "#171b21"), _p(6, 0, 1, 1, WHT)]
+    elif cond == "partlycloudy":
+        art = [_p(1, 0, 2, 2, YEL), _p(3, 2, 3, 1, GRY), _p(2, 3, 5, 2, GRY)]
+    elif cond in ("cloudy", "windy", "windy-variant"):
+        art = cloud
+    elif cond in ("rainy", "pouring", "hail"):
+        art = cloud + [_p(1, 5, 1, 1, BLU), _p(3, 5, 1, 1, BLU), _p(5, 5, 1, 1, BLU)]
+    elif cond in ("lightning", "lightning-rainy"):
+        art = cloud + [_p(3, 4, 1, 1, YEL), _p(2, 5, 1, 1, YEL)]
+    elif cond in ("snowy", "snowy-rainy"):
+        art = cloud + [_p(1, 5, 1, 1, WHT), _p(3, 5, 1, 1, WHT), _p(5, 5, 1, 1, WHT)]
+    elif cond == "fog":
+        art = [_p(0, 1, 6, 1, DGR), _p(1, 3, 5, 1, DGR), _p(0, 5, 6, 1, DGR)]
+    if not art:
+        return render.Box(width = 0, height = 0)
+    return render.Stack(children = [render.Box(width = 7, height = 6, color = "#00000000")] + art)
+
+
 def flow_arrow(up, color):
     """5x3 pixel triangle: point up while charging, down while discharging."""
     rows = [1, 3, 5] if up else [5, 3, 1]
@@ -98,7 +130,7 @@ INK = "#f1f5f9"
 MUTED = "#94a3b8"
 BG = "#232935"
 GREEN, AMBER, RED = "#22c55e", "#f59e0b", "#ef4444"
-CYAN, ORANGE = "#38bdf8", "#fb923c"
+CYAN, ORANGE, BLUE = "#38bdf8", "#fb923c", "#38bdf8"
 HEALTH = {"green": GREEN, "orange": AMBER, "red": RED}
 
 def main(config):
@@ -112,11 +144,15 @@ def main(config):
     t_max = config.str("t_max", "?")
 
     # No words (Rob 2026-08-05): arrow gives direction, number gives rate.
+    # Rate colour (Rob 2026-08-09): charging keeps green; discharge grades
+    # blue < 0.4kW, orange < 2kW, red >= 2kW.
     kw1 = str(int(abs(net) * 10 + 0.5) / 10.0)
     if net > 0.05:
         word, wcol, up = kw1 + "kW", GREEN, True
     elif net < -0.05:
-        word, wcol, up = kw1 + "kW", RED, False
+        rate = abs(net)
+        wcol = BLUE if rate < 0.4 else (ORANGE if rate < 2.0 else RED)
+        word, up = kw1 + "kW", False
     else:
         word, wcol, up = "", MUTED, None
 
@@ -173,11 +209,14 @@ def main(config):
                     children = [
                         render.Text(ctxt, font = "tom-thumb", color = ccol),
                         render.Row(
+                            cross_align = "center",
                             children = [
+                                weather_icon(config.str("cond", "")),
+                                render.Box(width = 2, height = 1),
                                 render.Text(t_now + "°", font = "tom-thumb", color = INK),
-                                render.Box(width = 3, height = 1),
+                                render.Box(width = 2, height = 1),
                                 render.Text(t_min + "°", font = "tom-thumb", color = CYAN),
-                                render.Box(width = 3, height = 1),
+                                render.Box(width = 2, height = 1),
                                 render.Text(t_max + "°", font = "tom-thumb", color = ORANGE),
                             ],
                         ),

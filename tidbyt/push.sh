@@ -27,6 +27,7 @@ DIS=$(get sensor.foxess_foxctl_battery_discharge_power)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
 COAST=$(get sensor.battery_coast_margin || echo 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
+COND=$(get weather.forecast_home || echo '')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
 TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
 
@@ -43,7 +44,7 @@ print(int(round(fc[0]["templow"])), int(round(fc[1]["temperature"])))
 
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
-  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is
