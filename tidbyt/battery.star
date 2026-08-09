@@ -262,9 +262,10 @@ def main(config):
 
     els.append(at(0, 27, soc_bar(fill, col, net, config.str("bar", "sweep"), 64)))
 
-    # Coast margin tucked into the bar's unfilled end — only meaningful once the
-    # battery is substantially charged (>=75%) and only while it still fits.
-    if soc >= 75 and (64 - fill) >= 4 * len(ctxt) + 2:
+    # Coast margin tucked into the bar's unfilled end — shown whenever the
+    # unfilled bar has room for it (space appears as SoC drops below ~75%,
+    # which is exactly when the coast question starts mattering).
+    if (64 - fill) >= 4 * len(ctxt) + 2:
         els.append(right_at(26, [render.Text(ctxt, font = "tom-thumb", color = ccol),
                                  render.Box(width = 1, height = 1)]))
 
