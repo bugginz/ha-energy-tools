@@ -31,16 +31,34 @@ COND=$(get weather.forecast_home || echo '')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
 TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
 
-# Overnight low (today's templow) + tomorrow's high, from the daily forecast.
-read -r TMIN TMAX < <(curl -sf -m 10 -X POST \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  "$HA/api/services/weather/get_forecasts?return_response" \
-  -d '{"entity_id": "weather.forecast_home", "type": "daily"}' \
-  | python3 -c '
-import json, sys
-fc = list(json.load(sys.stdin)["service_response"].values())[0]["forecast"]
-print(int(round(fc[0]["templow"])), int(round(fc[1]["temperature"])))
-' || echo '? ?')
+# Overnight low + tomorrow's high and their forecast CONDITIONS: overnight icon
+# from the hourly forecast at ~3am, tomorrow's from the daily forecast.
+read -r TMIN TMAX CNIGHT CTMRW < <(python3 - << 'PYEOF'
+import json, urllib.request, datetime
+tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
+def fc(kind):
+    req = urllib.request.Request(
+        'http://localhost:8123/api/services/weather/get_forecasts?return_response',
+        data=json.dumps({'entity_id': 'weather.forecast_home', 'type': kind}).encode(),
+        method='POST',
+        headers={'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'})
+    return list(json.load(urllib.request.urlopen(req, timeout=10))['service_response'].values())[0]['forecast']
+try:
+    daily = fc('daily')
+    tmin = int(round(daily[0]['templow']))
+    tmax = int(round(daily[1]['temperature']))
+    ctmrw = daily[1].get('condition', '')
+    cnight = daily[0].get('condition', '')
+    for h in fc('hourly'):
+        d = datetime.datetime.fromisoformat(h['datetime'].replace('Z', '+00:00')).astimezone()
+        if d.hour == 3 and d > datetime.datetime.now().astimezone():
+            cnight = h.get('condition', cnight)
+            break
+    print(tmin, tmax, cnight, ctmrw)
+except Exception:
+    print('? ? ? ?')
+PYEOF
+)
 
 # Bin reminder: Friday through Sunday night, unless the "Bins out" button is on.
 # Letters = bins due at the coming Monday collection: R waste, Y recycling, G organic.
@@ -94,7 +112,8 @@ PYEOF
 
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
-  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" "bins=$BINS" "car=$CAR" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
+  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is

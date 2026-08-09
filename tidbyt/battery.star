@@ -139,6 +139,16 @@ def bins_icons(letters):
     return render.Row(cross_align = "end", children = kids)
 
 
+def coaster_icon(cart_col):
+    """7x6 rollercoaster: a track hump with the cart at the crest, cart coloured
+    by coast health. Separator between kWh and the coast margin."""
+    track = "#64748b"
+    pts = [(0, 5), (1, 4), (2, 3), (3, 2), (4, 3), (5, 4), (6, 5)]
+    return render.Stack(children = [render.Box(width = 7, height = 6, color = "#00000000")] +
+                        [_p(x, y, 1, 1, track) for x, y in pts] +
+                        [_p(2, 1, 2, 1, cart_col)])
+
+
 def car_icon():
     """7x5 side-view car: cabin, body, wheels."""
     c = "#22d3ee"
@@ -195,87 +205,68 @@ def main(config):
 
     bins = config.str("bins", "")
     car = config.str("car", "")
+    cond_n = config.str("cond_n", "")
+    cond_t = config.str("cond_t", "")
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
-    # Right column: flow rate, then car SoC (only when WiCAN is fresh), then the
-    # bins due Monday. All right-aligned beside the big number.
-    right_rows = [
-        render.Row(
-            cross_align = "center",
-            children = ([] if up == None else
-                        [flow_arrow(up, wcol),
-                         render.Box(width = 1, height = 1)]) + [
-                render.Text(word, font = "tom-thumb", color = wcol),
-            ],
-        ),
-    ]
+    def at(x, y, child):
+        return render.Padding(pad = (x, y, 0, 0), child = child)
+
+    def right_at(y, kids):
+        return at(0, y, render.Row(expanded = True, main_align = "end",
+                                   cross_align = "center", children = kids))
+
+    # Absolute layout on a 64x32 canvas — flex could not fit the kWh+coast line
+    # beside the three-slot right column without overflowing.
+    els = [render.Box(width = 64, height = 32, color = "#00000000")]
+
+    # Big number, digit ink cropped to the very top, tiny % beside it.
+    els.append(at(0, 0, render.Row(cross_align = "start", children = [
+        render.Padding(pad = (0, -2, 0, -3),
+                       child = render.Text("%d" % soc, font = "10x20", color = INK)),
+        render.Text("%", font = "tom-thumb", color = MUTED),
+    ])))
+
+    # Right column: rate, then car (fresh WiCAN only), then bins — 6px slots.
+    y = 0
+    if word:
+        els.append(right_at(y, ([] if up == None else
+                                [flow_arrow(up, wcol), render.Box(width = 1, height = 1)]) +
+                               [render.Text(word, font = "tom-thumb", color = wcol)]))
+        y += 6
     if car:
-        right_rows.append(render.Row(
-            cross_align = "center",
-            children = [
-                car_icon(),
-                render.Box(width = 2, height = 1),
-                render.Text(car + "%", font = "tom-thumb", color = CYAN),
-            ],
-        ))
+        els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
+                                render.Text(car + "%", font = "tom-thumb", color = CYAN)]))
+        y += 6
     if bins:
-        right_rows.append(bins_icons(bins))
+        els.append(right_at(y, [bins_icons(bins)]))
+
+    # kWh equivalent + rollercoaster separator + coast margin (Rob 2026-08-09).
+    els.append(at(0, 15, render.Row(cross_align = "center", children = [
+        render.Text(kwh + "kWh", font = "tom-thumb", color = MUTED),
+        render.Box(width = 2, height = 1),
+        coaster_icon(ccol),
+        render.Box(width = 2, height = 1),
+        render.Text(ctxt, font = "tom-thumb", color = ccol),
+    ])))
+
+    # Weather line: current / overnight / tomorrow, each icon + temp. Colour
+    # still carries the label: white now, cyan overnight low, orange tomorrow.
+    def wgroup(c, t, colr):
+        return render.Row(cross_align = "center", children = [
+            weather_icon(c), render.Box(width = 1, height = 1),
+            render.Text(t + "\u00b0", font = "tom-thumb", color = colr),
+        ])
+
+    els.append(at(0, 21, render.Row(expanded = True, main_align = "space_between", children = [
+        wgroup(config.str("cond", ""), t_now, INK),
+        wgroup(cond_n, t_min, CYAN),
+        wgroup(cond_t, t_max, ORANGE),
+    ])))
+
+    els.append(at(0, 27, soc_bar(fill, col, net, config.str("bar", "sweep"), 64)))
 
     return render.Root(
         delay = flow_delay(net),
-        child = render.Column(
-            expanded = True,
-            main_align = "space_between",
-            children = [
-                render.Row(
-                    expanded = True,
-                    main_align = "space_between",
-                    cross_align = "start",
-                    children = [
-                        # The 10x20 font pads ~2px above the digit ink and ~4px
-                        # below it; negative padding crops that dead space so the
-                        # digits align with the % at the very top and the kWh
-                        # line fits beneath (Rob 2026-08-09).
-                        render.Column(
-                            children = [
-                                render.Row(
-                                    cross_align = "start",
-                                    children = [
-                                        render.Padding(
-                                            pad = (0, -2, 0, -3),
-                                            child = render.Text("%d" % soc, font = "10x20", color = INK)),
-                                        render.Text("%", font = "tom-thumb", color = MUTED),
-                                    ],
-                                ),
-                                render.Text(kwh + "kWh", font = "tom-thumb", color = MUTED),
-                            ],
-                        ),
-                        render.Column(cross_align = "end", children = right_rows),
-                    ],
-                ),
-                # Coast margin | temps: now (white) - overnight low (blue) -
-                # tomorrow high (orange). Colour carries the labels.
-                render.Row(
-                    expanded = True,
-                    main_align = "space_between",
-                    children = [
-                        render.Text(ctxt, font = "tom-thumb", color = ccol),
-                        render.Row(
-                            cross_align = "center",
-                            children = [
-                                weather_icon(config.str("cond", "")),
-                                render.Box(width = 2, height = 1),
-                                render.Text(t_now + "°", font = "tom-thumb", color = INK),
-                                render.Box(width = 2, height = 1),
-                                render.Text(t_min + "°", font = "tom-thumb", color = CYAN),
-                                render.Box(width = 2, height = 1),
-                                render.Text(t_max + "°", font = "tom-thumb", color = ORANGE),
-                            ],
-                        ),
-                    ],
-                ),
-                # SoC bar, coloured by the coast-health sensor like the kiosk band.
-                soc_bar(fill, col, net, config.str("bar", "sweep"), 64),
-            ],
-        ),
+        child = render.Stack(children = els),
     )
