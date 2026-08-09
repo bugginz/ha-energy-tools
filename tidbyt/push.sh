@@ -56,9 +56,9 @@ try:
     today = datetime.date.today()
     if today.weekday() >= 4 and get('input_boolean.bins_out')['state'] != 'on':
         horizon = today + datetime.timedelta(days=7 - today.weekday())
+        # Organic (green) is every week — no information, not shown (Rob 2026-08-09).
         for ent, letter in [('sensor.waste_collection_schedule_waste', 'R'),
-                            ('sensor.waste_collection_schedule_bins', 'Y'),
-                            ('sensor.waste_collection_schedule_organic', 'G')]:
+                            ('sensor.waste_collection_schedule_bins', 'Y')]:
             for k in get(ent)['attributes']:
                 try:
                     d = datetime.date.fromisoformat(k)
@@ -73,9 +73,28 @@ except Exception:
 PYEOF
 )
 
+# Car SoC: shown only if the WiCAN value CHANGED in the last 12h (stale reads
+# hide rather than mislead). Raw tops out ~95.5 when the car manages itself to
+# full, so scale raw/95.5 and cap at 100 (Rob 2026-08-09).
+CAR=$(python3 - << 'PYEOF'
+import json, urllib.request, datetime
+tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
+try:
+    req = urllib.request.Request('http://localhost:8123/api/states/sensor.wican_soc_real',
+                                 headers={'Authorization': 'Bearer ' + tok})
+    s = json.load(urllib.request.urlopen(req, timeout=10))
+    changed = datetime.datetime.fromisoformat(s['last_changed'].replace('Z', '+00:00'))
+    age_h = (datetime.datetime.now(datetime.timezone.utc) - changed).total_seconds() / 3600
+    raw = float(s['state'])
+    print(min(100, int(raw / 95.5 * 100 + 0.5)) if age_h <= 12 else '')
+except Exception:
+    print('')
+PYEOF
+)
+
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
-  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" "bins=$BINS" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" "bins=$BINS" "car=$CAR" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is

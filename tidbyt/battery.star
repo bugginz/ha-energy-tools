@@ -139,6 +139,18 @@ def bins_icons(letters):
     return render.Row(cross_align = "end", children = kids)
 
 
+def car_icon():
+    """7x5 side-view car: cabin, body, wheels."""
+    c = "#22d3ee"
+    return render.Stack(children = [
+        render.Box(width = 7, height = 5, color = "#00000000"),
+        _p(1, 0, 4, 2, c),
+        _p(0, 2, 7, 2, c),
+        _p(1, 4, 1, 1, "#64748b"),
+        _p(5, 4, 1, 1, "#64748b"),
+    ])
+
+
 def flow_arrow(up, color):
     """5x3 pixel triangle: point up while charging, down while discharging."""
     rows = [1, 3, 5] if up else [5, 3, 1]
@@ -182,8 +194,32 @@ def main(config):
     ctxt = ("+" if coast >= 0 else "") + str(coast)
 
     bins = config.str("bins", "")
-    bw = 64 - (4 * len(bins) + 2) if bins else 64
-    fill = max(1, min(bw, int(soc * bw / 100 + 0.5)))
+    car = config.str("car", "")
+    fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
+
+    # Right column: flow rate, then car SoC (only when WiCAN is fresh), then the
+    # bins due Monday. All right-aligned beside the big number.
+    right_rows = [
+        render.Row(
+            cross_align = "center",
+            children = ([] if up == None else
+                        [flow_arrow(up, wcol),
+                         render.Box(width = 1, height = 1)]) + [
+                render.Text(word, font = "tom-thumb", color = wcol),
+            ],
+        ),
+    ]
+    if car:
+        right_rows.append(render.Row(
+            cross_align = "center",
+            children = [
+                car_icon(),
+                render.Box(width = 2, height = 1),
+                render.Text(car + "%", font = "tom-thumb", color = CYAN),
+            ],
+        ))
+    if bins:
+        right_rows.append(bins_icons(bins))
 
     return render.Root(
         delay = flow_delay(net),
@@ -194,34 +230,27 @@ def main(config):
                 render.Row(
                     expanded = True,
                     main_align = "space_between",
-                    cross_align = "center",
+                    cross_align = "start",
                     children = [
-                        # Big number in 10x20, tiny % beside it: "100%" all in
-                        # 10x20 is 40px and collides with the right column.
-                        render.Row(
-                            cross_align = "start",
-                            children = [
-                                render.Text("%d" % soc, font = "10x20", color = INK),
-                                render.Text("%", font = "tom-thumb", color = MUTED),
-                            ],
-                        ),
+                        # The 10x20 font pads ~2px above the digit ink and ~4px
+                        # below it; negative padding crops that dead space so the
+                        # digits align with the % at the very top and the kWh
+                        # line fits beneath (Rob 2026-08-09).
                         render.Column(
-                            cross_align = "end",
                             children = [
-                                # "=" reads as "equivalent to"; dropped at 100%
-                                # where the row runs out of pixels.
-                                render.Text(("" if soc >= 100 else "=") + kwh + "kWh",
-                                            font = "tom-thumb", color = MUTED),
                                 render.Row(
-                                    cross_align = "center",
-                                    children = ([] if up == None else
-                                                [flow_arrow(up, wcol),
-                                                 render.Box(width = 1, height = 1)]) + [
-                                        render.Text(word, font = "tom-thumb", color = wcol),
+                                    cross_align = "start",
+                                    children = [
+                                        render.Padding(
+                                            pad = (0, -2, 0, -3),
+                                            child = render.Text("%d" % soc, font = "10x20", color = INK)),
+                                        render.Text("%", font = "tom-thumb", color = MUTED),
                                     ],
                                 ),
+                                render.Text(kwh + "kWh", font = "tom-thumb", color = MUTED),
                             ],
                         ),
+                        render.Column(cross_align = "end", children = right_rows),
                     ],
                 ),
                 # Coast margin | temps: now (white) - overnight low (blue) -
@@ -246,13 +275,7 @@ def main(config):
                     ],
                 ),
                 # SoC bar, coloured by the coast-health sensor like the kiosk band.
-                # In a bin-reminder window the bar cedes its right corner to the
-                # wheelie-bins due at Monday's collection.
-                render.Row(
-                    cross_align = "end",
-                    children = [soc_bar(fill, col, net, config.str("bar", "sweep"), bw)] +
-                               ([render.Box(width = 2, height = 1), bins_icons(bins)] if bins else []),
-                ),
+                soc_bar(fill, col, net, config.str("bar", "sweep"), 64),
             ],
         ),
     )
