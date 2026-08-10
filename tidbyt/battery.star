@@ -136,7 +136,12 @@ def bins_icons(letters):
             _p(0, 5, 1, 1, "#94a3b8"),
             _p(2, 5, 1, 1, "#94a3b8"),
         ]))
-    return render.Row(cross_align = "end", children = kids)
+    row = render.Row(cross_align = "end", children = kids)
+    # Slow blink while the reminder is up: 10 frames on, 6 off; the transparent
+    # placeholder keeps the header row from reflowing on off frames.
+    w = 4 * len(letters) - 1
+    blank = render.Box(width = w, height = 6, color = "#00000000")
+    return render.Animation(children = [row] * 10 + [blank] * 6)
 
 
 def src_icon(kind):
@@ -155,7 +160,8 @@ def src_icon(kind):
         A = "#f59e0b"
         return render.Stack(children = [
             render.Box(width = 7, height = 6, color = "#00000000"),
-            _p(0, 1, 6, 4, A), _p(6, 2, 1, 2, A), _p(1, 2, 1, 2, "#171b21"),
+            _p(3, 0, 2, 1, A),          # terminal nub on top
+            _p(2, 1, 4, 5, A),          # upright body
         ])
     return render.Box(width = 0, height = 0)
 
