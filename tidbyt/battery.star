@@ -261,8 +261,11 @@ def main(config):
         return render.Padding(pad = (x, y, 0, 0), child = child)
 
     def right_at(y, kids):
+        # +1px right margin: tom-thumb's W overhangs its advance and clips at
+        # the display edge otherwise (seen on "0.4kW" at 100%%).
         return at(0, y, render.Row(expanded = True, main_align = "end",
-                                   cross_align = "center", children = kids))
+                                   cross_align = "center",
+                                   children = kids + [render.Box(width = 1, height = 1)]))
 
     # Absolute layout on a 64x32 canvas. Decluttered per Rob 2026-08-09: no kWh
     # line, coast lives in the bar's empty end, weather high, breathing room low.
