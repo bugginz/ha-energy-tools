@@ -257,6 +257,10 @@ def main(config):
         header += [render.Box(width = 2, height = 1), bins_icons(bins)]
     els.append(at(0, 0, render.Row(cross_align = "start", children = header)))
 
+    # Source icon sits directly under the % symbol (Rob 2026-08-10).
+    if source:
+        els.append(at(10 * len(str(soc)) + 1, 7, src_icon(source)))
+
     # Right column: rate, then car (fresh WiCAN only) — 6px slots.
     y = 0
     if word:
@@ -268,8 +272,6 @@ def main(config):
         els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
                                 render.Text(car + "%", font = "tom-thumb", color = CYAN)]))
         y += 6
-    if source:
-        els.append(right_at(y, [src_icon(source)]))
 
     # Weather line: current / overnight / tomorrow, each icon + temp. Colour
     # still carries the label: white now, cyan overnight low, orange tomorrow.
@@ -285,7 +287,8 @@ def main(config):
         wgroup(cond_t, t_max, ORANGE),
     ])))
 
-    els.append(at(0, 27, soc_bar(fill, col, net, config.str("bar", "sweep"), 64)))
+    barcol = "#a78bfa" if source == "grid" else ("#fcd34d" if source == "sun" else col)
+    els.append(at(0, 27, soc_bar(fill, barcol, net, config.str("bar", "sweep"), 64)))
 
     # Coast margin tucked into the bar's unfilled end — shown whenever the
     # unfilled bar has room for it (space appears as SoC drops below ~75%,
