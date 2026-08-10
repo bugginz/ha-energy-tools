@@ -139,6 +139,27 @@ def bins_icons(letters):
     return render.Row(cross_align = "end", children = kids)
 
 
+def src_icon(kind):
+    """7x6 'house is fed by' icon: sun (solar), violet pylon (grid), amber
+    battery pack (battery)."""
+    if kind == "sun":
+        return weather_icon("sunny")
+    if kind == "grid":
+        V = "#a78bfa"
+        return render.Stack(children = [
+            render.Box(width = 7, height = 6, color = "#00000000"),
+            _p(0, 1, 7, 1, V), _p(3, 0, 1, 5, V), _p(1, 3, 5, 1, V),
+            _p(1, 5, 1, 1, V), _p(5, 5, 1, 1, V),
+        ])
+    if kind == "batt":
+        A = "#f59e0b"
+        return render.Stack(children = [
+            render.Box(width = 7, height = 6, color = "#00000000"),
+            _p(0, 1, 6, 4, A), _p(6, 2, 1, 2, A), _p(1, 2, 1, 2, "#171b21"),
+        ])
+    return render.Box(width = 0, height = 0)
+
+
 def coaster_icon(cart_col):
     """7x6 rollercoaster: a track hump with the cart at the crest, cart coloured
     by coast health. Separator between kWh and the coast margin."""
@@ -207,6 +228,7 @@ def main(config):
     car = config.str("car", "")
     cond_n = config.str("cond_n", "")
     cond_t = config.str("cond_t", "")
+    source = config.str("src", "")
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
     def at(x, y, child):
@@ -245,6 +267,9 @@ def main(config):
     if car:
         els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
                                 render.Text(car + "%", font = "tom-thumb", color = CYAN)]))
+        y += 6
+    if source:
+        els.append(right_at(y, [src_icon(source)]))
 
     # Weather line: current / overnight / tomorrow, each icon + temp. Colour
     # still carries the label: white now, cyan overnight low, orange tomorrow.
@@ -254,7 +279,7 @@ def main(config):
             render.Text(t + "\u00b0", font = "tom-thumb", color = colr),
         ])
 
-    els.append(at(0, 16, render.Row(expanded = True, main_align = "space_between", children = [
+    els.append(at(0, 17, render.Row(expanded = True, main_align = "space_between", children = [
         wgroup(config.str("cond", ""), t_now, INK),
         wgroup(cond_n, t_min, CYAN),
         wgroup(cond_t, t_max, ORANGE),

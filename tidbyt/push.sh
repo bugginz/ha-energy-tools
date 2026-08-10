@@ -20,15 +20,32 @@ get() {
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])'
 }
 
+# Demo tour: armed from the Main dashboard. Disarm FIRST so the next cron tick
+# doesn't restart it, then hand over to the scenario script and skip the live push.
+DEMO=$(get input_boolean.tidbyt_demo || echo off)
+if [ "$DEMO" = "on" ]; then
+  curl -sf -m 10 -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    "$HA/api/services/input_boolean/turn_off" \
+    -d '{"entity_id": "input_boolean.tidbyt_demo"}' > /dev/null
+  exec "$DIR/demo.sh"
+fi
+
 SOC=$(get sensor.foxess_foxctl_battery_soc)
 KWH=$(get sensor.battery_energy)
 CHG=$(get sensor.foxess_foxctl_battery_charge_power)
 DIS=$(get sensor.foxess_foxctl_battery_discharge_power)
+SOLAR=$(get sensor.foxess_foxctl_solar_power || echo 0)
+GRIDIN=$(get sensor.foxess_foxctl_grid_import || echo 0)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
 COAST=$(get sensor.battery_coast_margin || echo 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
+# Dominant supply feeding the house right now: sun / batt / grid (blank if all idle).
+SRC=$(python3 -c "
+v = {'sun': float('$SOLAR'), 'batt': float('$DIS'), 'grid': float('$GRIDIN')}
+k = max(v, key=lambda x: v[x])
+print(k if v[k] > 0.05 else '')")
 TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
 
 # Overnight low + tomorrow's high and their forecast CONDITIONS: overnight icon
@@ -113,7 +130,7 @@ PYEOF
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
-  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" \
+  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is
