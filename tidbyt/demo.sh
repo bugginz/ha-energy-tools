@@ -17,7 +17,7 @@ SCENARIOS=(
   "68 28.2 -1.2 green 30 11 8 13 rainy rainy rainy '' '' batt"           # rainy holding pattern, battery carries the house
   "85 35.2 -3.4 green 24 15 9 17 clear-night clear-night sunny '' 100 batt"  # evening peak, heavy draw, car full
   "72 29.8 -0.8 green 28 13 10 16 partlycloudy clear-night partlycloudy RY '' batt"  # bin night: both bins due
-  "90 37.3 4.2 green 33 18 11 21 sunny sunny sunny '' 100 sun"           # sunny surplus, gentle top-up
+  "100 41.4 0.0 green 33 18 11 21 sunny sunny sunny '' 100 sun 1.4"     # full battery floating on solar; house draw shows
   "64 26.5 -2.4 green 21 6 3 15 clear-night fog sunny '' 32 batt"        # pre-dawn dump into a low car
   "40 16.6 -1.6 orange 3 9 7 12 cloudy rainy cloudy '' '' batt"          # coast getting tight
   "22 9.1 -2.2 red -5 8 6 11 lightning lightning-rainy rainy '' 18 grid" # rough night: storm, grid, red everywhere
@@ -28,7 +28,7 @@ for s in "${SCENARIOS[@]}"; do
   pixlet render "$DIR/battery.star" \
     "soc=$1" "kwh=$2" "net_kw=$3" "health=$4" "coast=$5" \
     "t_now=$6" "t_min=$7" "t_max=$8" "bar=chevtip" \
-    "cond=$9" "cond_n=${10}" "cond_t=${11}" "bins=${12}" "car=${13}" "src=${14}" \
+    "cond=$9" "cond_n=${10}" "cond_t=${11}" "bins=${12}" "car=${13}" "src=${14}" "load=${15:-0}" \
     -o /tmp/tidbyt_demo_frame.webp
   pixlet push --api-token "$KEY" "$DEVICE" /tmp/tidbyt_demo_frame.webp
   sleep 8

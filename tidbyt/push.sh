@@ -36,6 +36,7 @@ CHG=$(get sensor.foxess_foxctl_battery_charge_power)
 DIS=$(get sensor.foxess_foxctl_battery_discharge_power)
 SOLAR=$(get sensor.foxess_foxctl_solar_power || echo 0)
 GRIDIN=$(get sensor.foxess_foxctl_grid_import || echo 0)
+LOAD=$(get sensor.foxess_foxctl_house_load || echo 0)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
 COAST=$(get sensor.battery_coast_margin || echo 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
@@ -130,7 +131,7 @@ PYEOF
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
-  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" \
+  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
   -o /tmp/tidbyt_battery.webp
 
 # Runs every minute, pushes only when the render actually differs from what is

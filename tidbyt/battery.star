@@ -188,6 +188,17 @@ def car_icon():
     ])
 
 
+def house_icon():
+    """7x6 house: roof + body, for the 'house is drawing' figure when the
+    battery itself is idle."""
+    W = "#e2e8f0"
+    return render.Stack(children = [
+        render.Box(width = 7, height = 6, color = "#00000000"),
+        _p(3, 0, 1, 1, W), _p(2, 1, 3, 1, W), _p(1, 2, 5, 1, W),
+        _p(2, 3, 4, 3, W), _p(3, 4, 1, 2, "#171b21"),
+    ])
+
+
 def flow_arrow(up, color):
     """5x3 pixel triangle: point up while charging, down while discharging."""
     rows = [1, 3, 5] if up else [5, 3, 1]
@@ -225,6 +236,15 @@ def main(config):
         word, up = kw1 + "kW", False
     else:
         word, wcol, up = "", MUTED, None
+
+    # Battery idle: the slot shows the HOUSE draw instead (with a house glyph),
+    # so a full battery floating on solar still tells you what the house pulls.
+    hload = float(config.str("load", "0"))
+    house = False
+    if up == None and hload > 0.05:
+        word = str(int(hload * 10 + 0.5) / 10.0) + "kW"
+        wcol = INK
+        house = True
 
     # Coast margin to the 10:00 free window, same bands as the kiosk COAST tile.
     ccol = GREEN if coast >= 10 else (AMBER if coast >= 0 else RED)
@@ -270,9 +290,12 @@ def main(config):
     # Right column: rate, then car (fresh WiCAN only) — 6px slots.
     y = 0
     if word:
-        els.append(right_at(y, ([] if up == None else
-                                [flow_arrow(up, wcol), render.Box(width = 1, height = 1)]) +
-                               [render.Text(word, font = "tom-thumb", color = wcol)]))
+        lead = []
+        if up != None:
+            lead = [flow_arrow(up, wcol), render.Box(width = 1, height = 1)]
+        elif house:
+            lead = [house_icon(), render.Box(width = 1, height = 1)]
+        els.append(right_at(y, lead + [render.Text(word, font = "tom-thumb", color = wcol)]))
         y += 6
     if car:
         els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
