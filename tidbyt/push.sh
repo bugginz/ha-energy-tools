@@ -20,6 +20,15 @@ get() {
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])'
 }
 
+# Numeric fetch with fallback: a sensor reporting unavailable/unknown must
+# degrade the display, not wedge it (2026-08-13: three template sensors died
+# and every render crashed on float("unavailable") for five hours).
+getn() {
+  local v
+  v=$(get "$1" 2>/dev/null)
+  python3 -c "print(float('$v'))" 2>/dev/null || echo "$2"
+}
+
 # Demo tour: armed from the Main dashboard. Disarm FIRST so the next cron tick
 # doesn't restart it, then hand over to the scenario script and skip the live push.
 DEMO=$(get input_boolean.tidbyt_demo || echo off)
@@ -30,15 +39,15 @@ if [ "$DEMO" = "on" ]; then
   exec "$DIR/demo.sh"
 fi
 
-SOC=$(get sensor.foxess_foxctl_battery_soc)
-KWH=$(get sensor.battery_energy)
-CHG=$(get sensor.foxess_foxctl_battery_charge_power)
-DIS=$(get sensor.foxess_foxctl_battery_discharge_power)
-SOLAR=$(get sensor.foxess_foxctl_solar_power || echo 0)
-GRIDIN=$(get sensor.foxess_foxctl_grid_import || echo 0)
-LOAD=$(get sensor.foxess_foxctl_house_load || echo 0)
+SOC=$(getn sensor.foxess_foxctl_battery_soc 0)
+KWH=$(getn sensor.battery_energy 0)
+CHG=$(getn sensor.foxess_foxctl_battery_charge_power 0)
+DIS=$(getn sensor.foxess_foxctl_battery_discharge_power 0)
+SOLAR=$(getn sensor.foxess_foxctl_solar_power 0)
+GRIDIN=$(getn sensor.foxess_foxctl_grid_import 0)
+LOAD=$(getn sensor.foxess_foxctl_house_load 0)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
-COAST=$(get sensor.battery_coast_margin || echo 0)
+COAST=$(getn sensor.battery_coast_margin 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
