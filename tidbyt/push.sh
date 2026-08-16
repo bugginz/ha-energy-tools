@@ -45,17 +45,27 @@ CHG=$(getn sensor.foxess_foxctl_battery_charge_power 0)
 DIS=$(getn sensor.foxess_foxctl_battery_discharge_power 0)
 SOLAR=$(getn sensor.foxess_foxctl_solar_power 0)
 GRIDIN=$(getn sensor.foxess_foxctl_grid_import 0)
-LOAD=$(getn sensor.foxess_foxctl_house_load 0)
 HEALTH=$(get sensor.kiosk_battery_soc_health)
 COAST=$(getn sensor.battery_coast_margin 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
 NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
-# Dominant supply feeding the house right now: sun / batt / grid (blank if all idle).
+LOAD=$(getn sensor.foxess_foxctl_house_load 0)
+# What is carrying the house right now. 'sun' is reserved for the house running
+# ENTIRELY on sunshine (solar >= load) — a winter morning trickle of 0.2kW is
+# technically the largest of the three but flips the icon and the whole bar
+# colour every few minutes as clouds pass, which reads as noise (Rob 2026-08-17).
+# Otherwise the gap-filler wins: battery, else grid.
 SRC=$(python3 -c "
-v = {'sun': float('$SOLAR'), 'batt': float('$DIS'), 'grid': float('$GRIDIN')}
-k = max(v, key=lambda x: v[x])
-print(k if v[k] > 0.05 else '')")
+solar, dis, grid, load = float('$SOLAR'), float('$DIS'), float('$GRIDIN'), float('$LOAD')
+if solar > 0.05 and solar >= load:
+    print('sun')
+elif dis > 0.05 and dis >= grid:
+    print('batt')
+elif grid > 0.05:
+    print('grid')
+else:
+    print('')")
 TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
 
 # Overnight low + tomorrow's high and their forecast CONDITIONS: overnight icon
