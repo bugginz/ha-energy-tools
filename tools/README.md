@@ -45,3 +45,11 @@ foxctl's `ev_power_entity` (`power_18`), the circuits-total template in
 `template.yaml` (which builds `power_2..18` in a loop), the Power Circuits
 dashboard, and the 18 "Circuit N max 7d" statistics helpers. Changing ids breaks
 all four, silently.
+
+## WiCAN / Car Scanner log decoding
+
+- `wican_log_decode.py` — turns a Car Scanner adapter log into per-ECU/per-DID
+  value histories (ISO-TP reassembled, `\r`-aware), decodes the known Fiat 500e
+  fields (`--decode`), and prints WiCAN `B<n>` indices for a payload
+  (`--wican-index`). Runs anywhere; no HA access needed. Findings are written up
+  in `docs/wican/fiat500e-2020-decoded-pids.md`.

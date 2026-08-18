@@ -1,29 +1,65 @@
 {
-  "_comment": "Fiat 500e / Abarth 500e (2020+ new platform, Stellantis). Derived from a Car Scanner adapter log 2026-07-13 (VIN ZFAEFA265R...). Bus: ISO 15765-4 CAN 29-bit 500k (ATSP7, ATCP18). SoC source: DID 0x019E on ECU 0x42 (req 18DA42F1, resp 18DAF142) — displayed SoC, scale x0.1%. Verified live: 0x0358 = 85.6% and decaying while awake. NOTE: polling keeps the car awake (DC-DC on, ~0.4%/25min HV drain) — poll sparsely when not charging.",
+  "_comment": "Fiat 500e / Abarth 500e (2020+ new platform, Stellantis). Derived from Car Scanner adapter logs 2026-07-13 and 2026-08-18 (VIN ZFAEFA265R...), see fiat500e-2020-decoded-pids.md. Bus: ISO 15765-4 CAN 29-bit 500k (ATSP7, ATCP18). Byte indices follow WiCAN's raw-frame convention (B0 = first ISO-TP PCI byte, continuation-frame PCI bytes count too) — verified against HA's recorded soc_real. The earlier guess that 0x42 DID 019E was the displayed SoC was WRONG (it reads ~85 and barely moves while BMS SoC changes); SoC comes from BPCM 0x44 22A010. NOTE: polling keeps the car awake (DC-DC on, HV drain) — poll sparsely when not charging.",
   "car_model": "Fiat 500e (2020+) / Abarth 500e",
-  "init": "ATST64;ATSP7;ATCP18;ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;ATFCSD300000;ATFCSM1;",
+  "init": "ATST64;ATSP7;ATCP18;ATSHDA44F1;ATCRA18DAF144;ATFCSH18DA44F1;ATFCSD300000;ATFCSM1;",
   "pids": [
     {
-      "pid": "22019E",
-      "pid_init": "ATSHDA42F1;ATCRA18DAF142;",
+      "pid": "22A010",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
       "parameters": [
-        {
-          "name": "soc",
-          "expression": "([B3]*256+[B4])/10",
-          "unit": "%"
-        }
+        {"name": "soc_real", "expression": "B9*100/255", "unit": "%",
+         "_comment": "BMS pack SoC (data byte 3). Peaks ~95.7 when the car is full; dash % ~ (raw-4.5)/0.912. B5/B6 = SoC of lowest/highest cell."}
+      ]
+    },
+    {
+      "pid": "22A011",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
+      "parameters": [
+        {"name": "hv_voltage", "expression": "[B5:B6]/10", "unit": "V"}
+      ]
+    },
+    {
+      "pid": "22A009",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
+      "parameters": [
+        {"name": "cell_v_max", "expression": "B7*256+B9", "unit": "mV"},
+        {"name": "cell_v_min", "expression": "[B10:B11]", "unit": "mV"},
+        {"name": "batt_temp_max", "expression": "[B14:B15]-32768", "unit": "C"},
+        {"name": "batt_temp_min", "expression": "B17*256+B18-32768", "unit": "C"}
       ]
     },
     {
       "pid": "22A029",
-      "pid_init": "ATSHDA44F1;ATCRA18DAF144;ATFCSH18DA44F1;",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
       "parameters": [
-        {
-          "name": "soh_capacity_ah",
-          "expression": "([B5]*256+[B6])/10",
-          "unit": "Ah",
-          "_comment": "current capacity ~117.6Ah vs 120.0Ah new -> SoH ~98%. Byte offsets to verify on first live read."
-        }
+        {"name": "batt_cap_nominal_ah", "expression": "[B9:B10]/10", "unit": "Ah", "_comment": "120.0 Ah"},
+        {"name": "batt_cap_ah", "expression": "[B11:B12]/10", "unit": "Ah", "_comment": "117.6 Ah -> SoH ~98%"},
+        {"name": "batt_soh_alt", "expression": "[B5:B6]/655.35", "unit": "%", "_comment": "98.0 (Jul) -> 97.6 (Aug); slowly declining SOH-like figure"}
+      ]
+    },
+    {
+      "pid": "22A001",
+      "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
+      "parameters": [
+        {"name": "counter_f0", "expression": "(B5*65536+B6*256+B7)/10", "unit": "km?", "_comment": "40809.0 on 2026-08-18, +14023 in 5 weeks — odometer if dash agrees"},
+        {"name": "lifetime_ah_a", "expression": "[B9:B11]/10", "unit": "Ah"},
+        {"name": "lifetime_ah_b", "expression": "[B12:B14]/10", "unit": "Ah"},
+        {"name": "lifetime_kwh_a", "expression": "(B15*65536+B17*256+B18)/10", "unit": "kWh"},
+        {"name": "lifetime_kwh_b", "expression": "[B19:B21]/10", "unit": "kWh"}
+      ]
+    },
+    {
+      "pid": "223062",
+      "pid_init": "ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;",
+      "parameters": [
+        {"name": "hv_voltage_hcp", "expression": "[B4:B5]/50", "unit": "V"}
+      ]
+    },
+    {
+      "pid": "223027",
+      "pid_init": "ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;",
+      "parameters": [
+        {"name": "counter_3027", "expression": "[B4:B6]/10", "unit": "km?", "_comment": "10875.9 on 2026-08-18 — second odometer candidate"}
       ]
     }
   ]
