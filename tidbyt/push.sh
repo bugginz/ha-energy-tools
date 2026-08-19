@@ -3,17 +3,19 @@
 #
 # Reads live values from HA (localhost:8123, long-lived token from the
 # energy-tools token file), passes them to battery.star as params, pushes the
-# rendered webp as a background installation. The Tidbyt API key lives ONLY in
-# /opt/stack/tidbyt/tidbyt_key (mode 600) — never in the repo.
+# rendered webp as a background installation to the LOCAL tronbyt-server
+# (docker, :8000) — the Tidbyt runs Tronbyt firmware since 2026-08-19 and polls
+# that server; the Tidbyt cloud is no longer involved. The server API key lives
+# ONLY in /opt/stack/tidbyt/tronbyt_key (mode 600) — never in the repo.
 set -euo pipefail
 
 # Cron's PATH is /usr/bin:/bin — pixlet lives in /usr/local/bin.
 export PATH=/usr/local/bin:$PATH
 
 DIR=/opt/stack/tidbyt
-DEVICE=subsequently-infallible-vital-kakapo-497
 HA=http://localhost:8123
 TOKEN=$(cat /opt/stack/energy_tools/data/.config/sen66/ha_token)
+source "$DIR/tronbyt_push.sh"
 
 get() {
   curl -sf -m 10 -H "Authorization: Bearer $TOKEN" "$HA/api/states/$1" \
@@ -161,8 +163,6 @@ if cmp -s /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"; then
   exit 0
 fi
 
-pixlet push --api-token "$(cat $DIR/tidbyt_key)" \
-  --installation-id housebattery --background \
-  "$DEVICE" /tmp/tidbyt_battery.webp
+push_webp /tmp/tidbyt_battery.webp housebattery background
 cp /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"
 echo "pushed"

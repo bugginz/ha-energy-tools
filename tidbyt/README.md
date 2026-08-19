@@ -4,11 +4,38 @@
 the corner, SoC bar coloured by `sensor.kiosk_battery_soc_health` along the
 bottom. All live values arrive as CLI params.
 
-`push.sh` runs on the Pi from cron (`*/5`): reads HA over localhost with the
-energy-tools token, renders with pixlet (v0.34.0, /usr/local/bin on the Pi
+`push.sh` runs on the Pi from cron (`* * * * *`): reads HA over localhost with
+the energy-tools token, renders with pixlet (v0.34.0, /usr/local/bin on the Pi
 host), and pushes to the device as background installation `housebattery`.
+`demo.sh` is the showcase tour (armed by `input_boolean.tidbyt_demo`).
 
-The Tidbyt API key lives ONLY on the Pi at `/opt/stack/tidbyt/tidbyt_key`
-(mode 600) — do not commit it. Deploy changes with:
+## Tronbyt (since 2026-08-19)
 
-    scp tidbyt/battery.star tidbyt/push.sh robwil@homeassistant.local:/opt/stack/tidbyt/
+The Tidbyt (Gen 1 — stock fw reported `tidbyt-v10`) runs **Tronbyt**
+firmware and polls a local **tronbyt-server** instead of the Tidbyt cloud. The
+stock firmware was heap-starved (27 KB low-watermark running BLE + MQTT/WSS)
+and kept crashing; Tronbyt just HTTP-GETs a WebP.
+
+- Server: `tronbyt-server` service in `/opt/stack/docker-compose.yml`
+  (`ghcr.io/tronbyt/server:2`), UI at http://homeassistant.local:8000,
+  data in `/opt/stack/tidbyt/server-data/` (sqlite + pushed webps + firmware
+  releases). Device id `tidbyt`, type `tidbyt_gen1`. Owner login `robwil`,
+  password in `/opt/stack/tidbyt/tronbyt_admin_pw` (600; single-user
+  auto-login is on, so rarely needed).
+- Push: `tronbyt_push.sh` (sourced by push.sh/demo.sh) curls the server's
+  Tidbyt-compatible `POST /v0/devices/tidbyt/push` — stock pixlet's `push`
+  hardcodes api.tidbyt.com. API key in `/opt/stack/tidbyt/tronbyt_key`
+  (mode 600) — **never commit it**.
+- Device: fetches `http://192.168.1.52:8000/tidbyt/next` (baked into the
+  firmware; Pi IP is static). Re-flash / change wifi: device page → Firmware
+  in the server UI generates a merged `.bin`; from the Mac
+  `esptool --chip esp32 --port /dev/cu.usbserial-8310 --baud 115200
+  write-flash 0 tidbyt-merged.bin` (baud switching fails on this CP2102N).
+- Revert to stock: full 8 MB dump of the original flash (incl. NVS, i.e. wifi
+  + device cert) lives on the Mac at `~/tidbyt-backup/` (secrets — not in
+  git); generic stock image is tronbyt `firmware-esp32/reset/gen1_merged.bin`.
+
+Deploy changes with:
+
+    scp tidbyt/battery.star tidbyt/push.sh tidbyt/demo.sh tidbyt/tronbyt_push.sh \
+        robwil@homeassistant.local:/opt/stack/tidbyt/

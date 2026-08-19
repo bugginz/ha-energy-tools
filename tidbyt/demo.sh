@@ -8,8 +8,7 @@ set -euo pipefail
 export PATH=/usr/local/bin:$PATH
 
 DIR=/opt/stack/tidbyt
-DEVICE=subsequently-infallible-vital-kakapo-497
-KEY=$(cat $DIR/tidbyt_key)
+source "$DIR/tronbyt_push.sh"
 
 # soc kwh net health coast t_now t_min t_max cond cond_n cond_t bins car src
 SCENARIOS=(
@@ -30,7 +29,7 @@ for s in "${SCENARIOS[@]}"; do
     "t_now=$6" "t_min=$7" "t_max=$8" "bar=chevtip" \
     "cond=$9" "cond_n=${10}" "cond_t=${11}" "bins=${12}" "car=${13}" "src=${14}" "load=${15:-0}" \
     -o /tmp/tidbyt_demo_frame.webp
-  pixlet push --api-token "$KEY" "$DEVICE" /tmp/tidbyt_demo_frame.webp
+  push_webp /tmp/tidbyt_demo_frame.webp "" foreground
   sleep 8
 done
 echo "demo tour complete"
