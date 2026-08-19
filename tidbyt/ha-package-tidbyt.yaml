@@ -1,0 +1,211 @@
+# Home Assistant package: Tidbyt (Tronbyt) controls.
+# Lives at /opt/stack/ha/config/packages/tidbyt.yaml on the Pi (loaded via
+# `homeassistant: packages: !include_dir_named packages` in configuration.yaml).
+# Talks to tronbyt-server (docker, localhost:8000) with the device API key,
+# which is in HA's secrets.yaml as `tronbyt_auth: "Bearer <key>"` — never here.
+#
+# Entities:
+#   sensor.tidbyt_brightness / tidbyt_last_seen / tidbyt_firmware / tidbyt_dim_brightness  (REST, 60s)
+#   binary_sensor.tidbyt_online        last seen < 2 min (device heartbeats every 15s over WS)
+#   binary_sensor.tidbyt_dimmed_now    the server's night-mode window is active right now
+#   number.tidbyt_brightness           0-100 %, PATCHes the server (device applies on next frame, <=15s)
+#   switch.tidbyt_screen               off = brightness 0, on = restore the level stashed at turn-off
+#   switch.tidbyt_dim_schedule         enable the night-dim window (server-side night mode)
+#   number.tidbyt_dim_brightness       brightness used inside the window (0 = screen off)
+#   input_datetime.tidbyt_dim_start/_end   the window; automation below pushes changes to the server
+#   button.tidbyt_reboot               reboot over the websocket
+# The demo-tour button is the pre-existing input_boolean.tidbyt_demo (push.sh watches it).
+
+rest:
+  - resource: http://localhost:8000/v0/devices/tidbyt
+    scan_interval: 60
+    headers:
+      Authorization: !secret tronbyt_auth
+    sensor:
+      - name: Tidbyt brightness
+        unique_id: tidbyt_brightness
+        icon: mdi:brightness-6
+        unit_of_measurement: "%"
+        value_template: "{{ value_json.brightness }}"
+      - name: Tidbyt last seen
+        unique_id: tidbyt_last_seen
+        device_class: timestamp
+        value_template: "{{ value_json.lastSeen }}"
+      - name: Tidbyt firmware
+        unique_id: tidbyt_firmware
+        icon: mdi:chip
+        value_template: "Tronbyt {{ value_json.info.firmwareVersion }} ({{ value_json.info.protocolType }})"
+      - name: Tidbyt dim brightness
+        unique_id: tidbyt_dim_brightness
+        icon: mdi:brightness-4
+        unit_of_measurement: "%"
+        value_template: "{{ value_json.nightMode.brightness }}"
+    binary_sensor:
+      - name: Tidbyt dim schedule enabled
+        unique_id: tidbyt_dim_schedule_enabled
+        value_template: "{{ value_json.nightMode.enabled }}"
+      - name: Tidbyt dimmed now
+        unique_id: tidbyt_dimmed_now
+        icon: mdi:weather-night
+        value_template: "{{ value_json.nightMode.active }}"
+
+rest_command:
+  # Generic PATCH: pass `payload` as a dict, e.g. {brightness: 20}.
+  tidbyt_patch:
+    url: http://localhost:8000/v0/devices/tidbyt
+    method: PATCH
+    headers:
+      Authorization: !secret tronbyt_auth
+    content_type: application/json
+    payload: "{{ payload | to_json }}"
+  tidbyt_reboot:
+    url: http://localhost:8000/v0/devices/tidbyt/reboot
+    method: POST
+    headers:
+      Authorization: !secret tronbyt_auth
+
+input_number:
+  tidbyt_brightness_restore:
+    name: Tidbyt brightness to restore
+    min: 1
+    max: 100
+    step: 1
+    initial: 12
+    icon: mdi:brightness-5
+
+input_datetime:
+  tidbyt_dim_start:
+    name: Tidbyt dim from
+    has_date: false
+    has_time: true
+    initial: "00:00:00"
+    icon: mdi:weather-sunset-down
+  tidbyt_dim_end:
+    name: Tidbyt dim until
+    has_date: false
+    has_time: true
+    initial: "06:00:00"
+    icon: mdi:weather-sunset-up
+
+template:
+  - binary_sensor:
+      - name: Tidbyt online
+        unique_id: tidbyt_online
+        device_class: connectivity
+        state: >-
+          {% set t = states('sensor.tidbyt_last_seen') | as_datetime(none) %}
+          {{ t is not none and (now() - t).total_seconds() < 120 }}
+
+  - number:
+      - name: Tidbyt brightness
+        unique_id: tidbyt_brightness_ctl
+        icon: mdi:brightness-6
+        unit_of_measurement: "%"
+        min: 0
+        max: 100
+        step: 1
+        state: "{{ states('sensor.tidbyt_brightness') }}"
+        availability: "{{ has_value('sensor.tidbyt_brightness') }}"
+        set_value:
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                brightness: "{{ value | int }}"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.tidbyt_brightness
+      - name: Tidbyt dim brightness
+        unique_id: tidbyt_dim_brightness_ctl
+        icon: mdi:brightness-4
+        unit_of_measurement: "%"
+        min: 0
+        max: 100
+        step: 1
+        state: "{{ states('sensor.tidbyt_dim_brightness') }}"
+        availability: "{{ has_value('sensor.tidbyt_dim_brightness') }}"
+        set_value:
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                nightModeBrightness: "{{ value | int }}"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.tidbyt_dim_brightness
+
+  - switch:
+      - name: Tidbyt screen
+        unique_id: tidbyt_screen
+        icon: mdi:television-ambient-light
+        state: "{{ states('sensor.tidbyt_brightness') | int(0) > 0 }}"
+        turn_off:
+          - if: "{{ states('sensor.tidbyt_brightness') | int(0) > 0 }}"
+            then:
+              - action: input_number.set_value
+                target:
+                  entity_id: input_number.tidbyt_brightness_restore
+                data:
+                  value: "{{ states('sensor.tidbyt_brightness') | int }}"
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                brightness: 0
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.tidbyt_brightness
+        turn_on:
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                brightness: "{{ states('input_number.tidbyt_brightness_restore') | int(12) }}"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: sensor.tidbyt_brightness
+      - name: Tidbyt dim schedule
+        unique_id: tidbyt_dim_schedule
+        icon: mdi:weather-night
+        state: "{{ is_state('binary_sensor.tidbyt_dim_schedule_enabled', 'on') }}"
+        turn_on:
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                nightModeEnabled: true
+                nightModeStartTime: "{{ states('input_datetime.tidbyt_dim_start')[0:5] }}"
+                nightModeEndTime: "{{ states('input_datetime.tidbyt_dim_end')[0:5] }}"
+          - action: homeassistant.update_entity
+            target:
+              entity_id: binary_sensor.tidbyt_dim_schedule_enabled
+        turn_off:
+          - action: rest_command.tidbyt_patch
+            data:
+              payload:
+                nightModeEnabled: false
+          - action: homeassistant.update_entity
+            target:
+              entity_id: binary_sensor.tidbyt_dim_schedule_enabled
+
+  - button:
+      - name: Tidbyt reboot
+        unique_id: tidbyt_reboot
+        icon: mdi:restart
+        press:
+          - action: rest_command.tidbyt_reboot
+
+automation:
+  - id: tidbyt_dim_window_sync
+    alias: "Tidbyt: push dim window to tronbyt-server"
+    description: input_datetime helpers are the source of truth for the night-dim window; mirror them to the server whenever they change.
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_datetime.tidbyt_dim_start
+          - input_datetime.tidbyt_dim_end
+    actions:
+      - action: rest_command.tidbyt_patch
+        data:
+          payload:
+            nightModeStartTime: "{{ states('input_datetime.tidbyt_dim_start')[0:5] }}"
+            nightModeEndTime: "{{ states('input_datetime.tidbyt_dim_end')[0:5] }}"
+      - action: homeassistant.update_entity
+        target:
+          entity_id: binary_sensor.tidbyt_dimmed_now

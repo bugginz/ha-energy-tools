@@ -166,3 +166,13 @@ fi
 push_webp /tmp/tidbyt_battery.webp housebattery background
 cp /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"
 echo "pushed"
+
+# Live preview for the HA Tidbyt dashboard (/local/tidbyt/now.webp): same
+# render magnified 8x so the browser doesn't blur the pixels. Best effort.
+PREVIEW_DIR=/opt/stack/ha/config/www/tidbyt
+mkdir -p "$PREVIEW_DIR" 2>/dev/null && pixlet render "$DIR/battery.star" \
+  "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
+  "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
+  "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
+  --magnify 8 -o "$PREVIEW_DIR/now.webp.tmp" 2>/dev/null \
+  && mv "$PREVIEW_DIR/now.webp.tmp" "$PREVIEW_DIR/now.webp" || true

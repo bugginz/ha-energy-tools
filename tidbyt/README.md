@@ -47,7 +47,28 @@ and kept crashing; Tronbyt just HTTP-GETs a WebP.
   + device cert) lives on the Mac at `~/tidbyt-backup/` (secrets — not in
   git); generic stock image is tronbyt `firmware-esp32/reset/gen1_merged.bin`.
 
+## HA controls + dashboard (2026-08-20)
+
+- `ha-package-tidbyt.yaml` → Pi `/opt/stack/ha/config/packages/tidbyt.yaml`
+  (HA package; `homeassistant: packages:` in configuration.yaml). Gives
+  `number.tidbyt_brightness`, `switch.tidbyt_screen`, `button.tidbyt_reboot`,
+  `binary_sensor.tidbyt_online`, firmware/last-seen sensors, and the night dim:
+  `switch.tidbyt_dim_schedule` + `number.tidbyt_dim_brightness` +
+  `input_datetime.tidbyt_dim_start/_end` (the server's native night mode does
+  the scheduling; an automation mirrors the helpers to it). Needs HA's
+  `secrets.yaml` `tronbyt_auth: "Bearer <key>"`. Reload: `homeassistant.reload_all`
+  (a brand-new `rest:` needs one restart).
+- `ha/dashboard_tidbyt.json` + `ha/install_dashboard.py` → the **Tidbyt**
+  dashboard (`/dashboard-tidbyt`): live preview, status, display + night-dim
+  controls. Install/update from the Pi:
+  `docker exec -e HA_TOKEN=... homeassistant python3 /config/tidbyt_dash/install_dashboard.py /config/tidbyt_dash/dashboard_tidbyt.json`
+  (files live in `/opt/stack/ha/config/tidbyt_dash/`).
+- Live preview: push.sh also renders an 8x-magnified copy to
+  `/opt/stack/ha/config/www/tidbyt/now.webp` (`/local/tidbyt/now.webp`).
+
 Deploy changes with:
 
     scp tidbyt/battery.star tidbyt/push.sh tidbyt/demo.sh tidbyt/tronbyt_push.sh \
         robwil@homeassistant.local:/opt/stack/tidbyt/
+    scp tidbyt/ha-package-tidbyt.yaml robwil@homeassistant.local:/opt/stack/ha/config/packages/tidbyt.yaml
+    scp tidbyt/ha/* robwil@homeassistant.local:/opt/stack/ha/config/tidbyt_dash/

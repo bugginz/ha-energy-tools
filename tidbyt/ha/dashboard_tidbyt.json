@@ -1,0 +1,173 @@
+{
+  "title": "Tidbyt",
+  "views": [
+    {
+      "title": "Tidbyt",
+      "path": "tidbyt",
+      "icon": "mdi:television-ambient-light",
+      "type": "sections",
+      "max_columns": 3,
+      "sections": [
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "heading",
+              "heading": "Now showing",
+              "heading_style": "title",
+              "tap_action": {
+                "action": "url",
+                "url_path": "http://homeassistant.local:8000/"
+              }
+            },
+            {
+              "type": "markdown",
+              "content": "<img src=\"/local/tidbyt/now.webp?v={{ states('sensor.tidbyt_last_seen') | as_timestamp(0) | int }}\" width=\"100%\" alt=\"Tidbyt preview\">",
+              "grid_options": {
+                "columns": "full"
+              }
+            },
+            {
+              "type": "entities",
+              "show_header_toggle": false,
+              "entities": [
+                {
+                  "entity": "binary_sensor.tidbyt_online",
+                  "name": "Online"
+                },
+                {
+                  "entity": "sensor.tidbyt_last_seen",
+                  "name": "Last seen",
+                  "format": "relative"
+                },
+                {
+                  "entity": "sensor.tidbyt_firmware",
+                  "name": "Firmware"
+                },
+                {
+                  "type": "weblink",
+                  "url": "http://homeassistant.local:8000/",
+                  "name": "tronbyt-server (apps, firmware, OTA)",
+                  "icon": "mdi:open-in-new",
+                  "new_tab": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "heading",
+              "heading": "Display",
+              "heading_style": "title"
+            },
+            {
+              "type": "tile",
+              "entity": "switch.tidbyt_screen",
+              "name": "Screen",
+              "tap_action": {
+                "action": "toggle"
+              }
+            },
+            {
+              "type": "tile",
+              "entity": "button.tidbyt_reboot",
+              "name": "Reboot",
+              "tap_action": {
+                "action": "perform-action",
+                "perform_action": "button.press",
+                "target": {
+                  "entity_id": "button.tidbyt_reboot"
+                },
+                "confirmation": {
+                  "text": "Reboot the Tidbyt?"
+                }
+              },
+              "hide_state": true
+            },
+            {
+              "type": "tile",
+              "entity": "number.tidbyt_brightness",
+              "name": "Brightness",
+              "features": [
+                {
+                  "type": "numeric-input",
+                  "style": "slider"
+                }
+              ],
+              "grid_options": {
+                "columns": "full"
+              }
+            },
+            {
+              "type": "tile",
+              "entity": "input_boolean.tidbyt_demo",
+              "name": "Demo tour (runs on the next minute tick)",
+              "tap_action": {
+                "action": "toggle"
+              },
+              "grid_options": {
+                "columns": "full"
+              }
+            }
+          ]
+        },
+        {
+          "type": "grid",
+          "cards": [
+            {
+              "type": "heading",
+              "heading": "Night dim",
+              "heading_style": "title"
+            },
+            {
+              "type": "tile",
+              "entity": "switch.tidbyt_dim_schedule",
+              "name": "Dim on a schedule",
+              "tap_action": {
+                "action": "toggle"
+              }
+            },
+            {
+              "type": "tile",
+              "entity": "binary_sensor.tidbyt_dimmed_now",
+              "name": "Dimmed now"
+            },
+            {
+              "type": "tile",
+              "entity": "number.tidbyt_dim_brightness",
+              "name": "Dim brightness (0 = off)",
+              "features": [
+                {
+                  "type": "numeric-input",
+                  "style": "slider"
+                }
+              ],
+              "grid_options": {
+                "columns": "full"
+              }
+            },
+            {
+              "type": "tile",
+              "entity": "input_datetime.tidbyt_dim_start",
+              "name": "From",
+              "tap_action": {
+                "action": "more-info"
+              }
+            },
+            {
+              "type": "tile",
+              "entity": "input_datetime.tidbyt_dim_end",
+              "name": "Until",
+              "tap_action": {
+                "action": "more-info"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
