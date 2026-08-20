@@ -289,13 +289,16 @@ def main(config):
 
     # Big number: health-coloured (green when on track) and double-struck for
     # weight — 10x20 is the largest built-in font, so bold is the "bigger".
-    # Digit ink cropped to the very top; % and the bin reminder ride beside it.
+    # At 100 the third digit crowds the header, so the font steps down to 6x13
+    # (still double-struck). Digit ink cropped to the very top; % and the bin
+    # reminder ride beside it.
+    bigfont, fw, crop = ("10x20", 10, (0, -2, 0, -3)) if soc < 100 else ("6x13", 6, (0, -2, 0, -2))
     num = render.Stack(children = [
-        render.Text("%d" % soc, font = "10x20", color = col),
-        at(1, 0, render.Text("%d" % soc, font = "10x20", color = col)),
+        render.Text("%d" % soc, font = bigfont, color = col),
+        at(1, 0, render.Text("%d" % soc, font = bigfont, color = col)),
     ])
     header = [
-        render.Padding(pad = (0, -2, 0, -3), child = num),
+        render.Padding(pad = crop, child = num),
         render.Text("%", font = "tom-thumb", color = MUTED),
     ]
     if bins:
@@ -304,7 +307,7 @@ def main(config):
 
     # Source icon sits directly under the % symbol (Rob 2026-08-10).
     if source:
-        els.append(at(10 * len(str(soc)) + 1, 7, src_icon(source)))
+        els.append(at(fw * len(str(soc)) + 1, 7, src_icon(source)))
 
     # Right column: rate, then car (fresh WiCAN only) — 6px slots.
     y = 0
