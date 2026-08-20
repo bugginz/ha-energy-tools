@@ -149,13 +149,13 @@ except Exception:
 PYEOF
 )
 
-# Car charger (Shelly 1PM Gen4): bolt pulses while current actually flows,
-# steady dim bolt when the switch is on but idle. unavailable -> no bolt
-# (hide rather than mislead; the Shelly drops off wifi when unplugged).
-CHSW=$(get switch.shelly1pmg4_e4b06371af48 2>/dev/null || echo unavailable)
+# Car charger (Ogemray 25A smart switch — replaced the Shelly 1PM, 2026-08):
+# bolt pulses while current actually flows, steady dim bolt when the switch is
+# on but idle. unavailable -> no bolt (hide rather than mislead).
+CHSW=$(get switch.ogemray25a_70af09ed9950 2>/dev/null || echo unavailable)
 CARCHG=""
 if [ "$CHSW" = "on" ]; then
-  CHPW=$(getn sensor.shelly1pmg4_e4b06371af48_power 0)
+  CHPW=$(getn sensor.ogemray25a_70af09ed9950_power 0)
   CARCHG=$(python3 -c "print('chg' if float('$CHPW') > 100 else 'on')")
 fi
 
