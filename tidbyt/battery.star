@@ -188,6 +188,21 @@ def car_icon():
     ])
 
 
+def bolt_icon(mode):
+    """4x5 lightning bolt beside the car: pulsing yellow while current is
+    actually flowing ("chg"), steady dim amber when the charger switch is on
+    but nothing is drawing ("on" — plugged-in-and-armed, or car full)."""
+    def art(c):
+        return render.Stack(children = [
+            render.Box(width = 4, height = 5, color = "#00000000"),
+            _p(2, 0, 2, 1, c), _p(1, 1, 2, 1, c), _p(0, 2, 3, 1, c),
+            _p(1, 3, 1, 1, c), _p(0, 4, 1, 1, c),
+        ])
+    if mode == "chg":
+        return render.Animation(children = [art("#fde047")] * 4 + [art("#a16207")] * 4)
+    return art("#b45309")
+
+
 def house_icon():
     """7x6 house: roof + body, for the 'house is drawing' figure when the
     battery itself is idle."""
@@ -255,6 +270,7 @@ def main(config):
     cond_n = config.str("cond_n", "")
     cond_t = config.str("cond_t", "")
     source = config.str("src", "")
+    carchg = config.str("carchg", "")  # "" / "on" (switch armed) / "chg" (current flowing)
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
     def at(x, y, child):
@@ -300,9 +316,16 @@ def main(config):
             lead = [house_icon(), render.Box(width = 1, height = 1)]
         els.append(right_at(y, lead + [render.Text(word, font = "tom-thumb", color = wcol)]))
         y += 6
-    if car:
-        els.append(right_at(y, [car_icon(), render.Box(width = 2, height = 1),
-                                render.Text(car + "%", font = "tom-thumb", color = CYAN)]))
+    # Car row appears for a fresh SoC or any charger activity (bolt alone if
+    # the SoC is stale — charging is worth showing even when WiCAN is asleep).
+    if car or carchg:
+        kids = [car_icon()]
+        if carchg:
+            kids += [render.Box(width = 1, height = 1), bolt_icon(carchg)]
+        if car:
+            kids += [render.Box(width = 2, height = 1),
+                     render.Text(car + "%", font = "tom-thumb", color = CYAN)]
+        els.append(right_at(y, kids))
         y += 6
 
     # Weather line: current / overnight / tomorrow, each icon + temp. Colour

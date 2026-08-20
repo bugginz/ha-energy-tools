@@ -119,13 +119,13 @@
           "cards": [
             {
               "type": "heading",
-              "heading": "Night dim",
+              "heading": "Night mode (red)",
               "heading_style": "title"
             },
             {
               "type": "tile",
               "entity": "switch.tidbyt_dim_schedule",
-              "name": "Dim on a schedule",
+              "name": "Red + dim on a schedule",
               "tap_action": {
                 "action": "toggle"
               }
@@ -138,7 +138,7 @@
             {
               "type": "tile",
               "entity": "number.tidbyt_dim_brightness",
-              "name": "Dim brightness (0 = off)",
+              "name": "Night brightness (red palette; 0 = off)",
               "features": [
                 {
                   "type": "numeric-input",

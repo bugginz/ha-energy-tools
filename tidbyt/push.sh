@@ -149,11 +149,34 @@ except Exception:
 PYEOF
 )
 
+# Car charger (Shelly 1PM Gen4): bolt pulses while current actually flows,
+# steady dim bolt when the switch is on but idle. unavailable -> no bolt
+# (hide rather than mislead; the Shelly drops off wifi when unplugged).
+CHSW=$(get switch.shelly1pmg4_e4b06371af48 2>/dev/null || echo unavailable)
+CARCHG=""
+if [ "$CHSW" = "on" ]; then
+  CHPW=$(getn sensor.shelly1pmg4_e4b06371af48_power 0)
+  CARCHG=$(python3 -c "print('chg' if float('$CHPW') > 100 else 'on')")
+fi
+
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
   "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
+  "carchg=$CARCHG" \
   -o /tmp/tidbyt_battery.webp
+
+# Night mode (the server's dim window, set from the HA Tidbyt dashboard):
+# while it is active the frame is recoloured red-only (nightshade.py) before
+# pushing — red + 1-2% brightness beats any dim full-colour render for glare.
+# Shading happens before the compare, so entering/leaving the window pushes.
+NIGHT=$(curl -sf -m 5 -H "Authorization: Bearer $(cat "$TRONBYT_KEY_FILE")" \
+  "$TRONBYT/v0/devices/$TRONBYT_DEVICE" \
+  | python3 -c 'import sys, json; print(1 if json.load(sys.stdin)["nightMode"]["active"] else 0)' \
+  || echo 0)
+if [ "$NIGHT" = "1" ]; then
+  python3 "$DIR/nightshade.py" /tmp/tidbyt_battery.webp /tmp/tidbyt_battery.webp
+fi
 
 # Runs every minute, pushes only when the render actually differs from what is
 # already on the device — pixlet renders are deterministic, so identical bytes
@@ -174,5 +197,7 @@ mkdir -p "$PREVIEW_DIR" 2>/dev/null && pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
   "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
+  "carchg=$CARCHG" \
   --magnify 8 -o "$PREVIEW_DIR/now.webp.tmp" 2>/dev/null \
+  && { [ "$NIGHT" != "1" ] || python3 "$DIR/nightshade.py" "$PREVIEW_DIR/now.webp.tmp" "$PREVIEW_DIR/now.webp.tmp"; } \
   && mv "$PREVIEW_DIR/now.webp.tmp" "$PREVIEW_DIR/now.webp" || true

@@ -65,6 +65,14 @@ and kept crashing; Tronbyt just HTTP-GETs a WebP.
   (files live in `/opt/stack/ha/config/tidbyt_dash/`).
 - Live preview: push.sh also renders an 8x-magnified copy to
   `/opt/stack/ha/config/www/tidbyt/now.webp` (`/local/tidbyt/now.webp`).
+- **Night mode is red**: while the server's dim window is active, push.sh runs
+  the frame through `nightshade.py` (luma -> red-only, background luma <48
+  goes black, floor 96 so tom-thumb strokes survive 1-2% brightness). Level
+  and window come from the HA dashboard (night brightness 1 by default).
+- **Car charging bolt**: `carchg` param — pulsing yellow bolt while the Shelly
+  charger switch is on and drawing >100 W, steady dim amber when on but idle,
+  nothing when off/unavailable. The car row shows for a bolt even if the WiCAN
+  SoC is stale.
 
 Deploy changes with:
 
