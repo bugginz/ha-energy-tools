@@ -187,6 +187,7 @@ if cmp -s /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"; then
 fi
 
 push_webp /tmp/tidbyt_battery.webp housebattery background
+push_webp_wide /tmp/tidbyt_battery.webp housebattery background
 cp /tmp/tidbyt_battery.webp "$DIR/last_pushed.webp"
 echo "pushed"
 
