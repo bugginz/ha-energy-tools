@@ -41,8 +41,17 @@ if [ "$DEMO" = "on" ]; then
   exec "$DIR/demo.sh"
 fi
 
+# AC flows come from the LOCAL Meross 18ch clamps (seconds cadence), not the
+# FoxESS cloud: the cloud takes one instantaneous sample every ~5min, so a
+# cycling load (oven thermostat) makes it flip between 0.5 and 3.6kW while the
+# real average was 2.4kW — confirmed against the SoC drop rate (2026-08-21).
+# The cloud keeps solar (DC, no clamp on it), SoC, kWh, coast and forecast,
+# and remains the fallback if the clamps go unavailable.
 SOC=$(getn sensor.foxess_foxctl_battery_soc 0)
 KWH=$(getn sensor.battery_energy 0)
+HOUSE_W=$(getn sensor.circuits_total_power NA)
+GRID_W=$(getn sensor.grid_main_power_local NA)
+INV_W=$(getn sensor.inverter_ac_power_local NA)
 CHG=$(getn sensor.foxess_foxctl_battery_charge_power 0)
 DIS=$(getn sensor.foxess_foxctl_battery_discharge_power 0)
 SOLAR=$(getn sensor.foxess_foxctl_solar_power 0)
@@ -51,20 +60,35 @@ HEALTH=$(get sensor.kiosk_battery_soc_health)
 COAST=$(getn sensor.battery_coast_margin 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
-NET=$(python3 -c "print(round(float('$CHG') - float('$DIS'), 2))")
-LOAD=$(getn sensor.foxess_foxctl_house_load 0)
+LOAD_CLOUD=$(getn sensor.foxess_foxctl_house_load 0)
+read -r LOAD GRID NET < <(python3 -c "
+def w(v):
+    return None if v == 'NA' else float(v) / 1000.0
+solar = float('$SOLAR')
+house, grid, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
+if house is None or invac is None:          # clamps down -> cloud fallback
+    house = float('$LOAD_CLOUD')
+    grid = float('$GRIDIN')
+    batt = float('$CHG') - float('$DIS')
+else:
+    if grid is None:
+        grid = house - invac
+    batt = solar - invac                    # + charging / - discharging
+print(round(house, 2), round(grid, 2), round(batt, 2))
+")
 # What is carrying the house right now. 'sun' is reserved for the house running
 # ENTIRELY on sunshine (solar >= load) — a winter morning trickle of 0.2kW is
 # technically the largest of the three but flips the icon and the whole bar
 # colour every few minutes as clouds pass, which reads as noise (Rob 2026-08-17).
 # Otherwise the gap-filler wins: battery, else grid.
 SRC=$(python3 -c "
-solar, dis, grid, load = float('$SOLAR'), float('$DIS'), float('$GRIDIN'), float('$LOAD')
+solar, load, grid, batt = float('$SOLAR'), float('$LOAD'), float('$GRID'), float('$NET')
+dis, imp = max(-batt, 0.0), max(grid, 0.0)
 if solar > 0.05 and solar >= load:
     print('sun')
-elif dis > 0.05 and dis >= grid:
+elif dis > 0.05 and dis >= imp:
     print('batt')
-elif grid > 0.05:
+elif imp > 0.05:
     print('grid')
 else:
     print('')")
