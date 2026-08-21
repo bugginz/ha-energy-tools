@@ -41,7 +41,7 @@
       "pid": "22A001",
       "pid_init": "ATSHDA44F1;ATCRA18DAF144;",
       "parameters": [
-        {"name": "counter_f0", "expression": "(B5*65536+B6*256+B7)/10", "unit": "km?", "_comment": "40809.0 on 2026-08-18, +14023 in 5 weeks — odometer if dash agrees"},
+        {"name": "counter_f0", "expression": "(B5*65536+B6*256+B7)/10", "unit": "?", "_comment": "40809.0 on 2026-08-18, +14023 in 5 weeks. NOT the odometer (dash read ~10.9k km, confirmed 2026-08-22); meaning unknown"},
         {"name": "lifetime_ah_a", "expression": "[B9:B11]/10", "unit": "Ah"},
         {"name": "lifetime_ah_b", "expression": "[B12:B14]/10", "unit": "Ah"},
         {"name": "lifetime_kwh_a", "expression": "(B15*65536+B17*256+B18)/10", "unit": "kWh"},
@@ -59,7 +59,7 @@
       "pid": "223027",
       "pid_init": "ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;",
       "parameters": [
-        {"name": "counter_3027", "expression": "[B4:B6]/10", "unit": "km?", "_comment": "10875.9 on 2026-08-18 — second odometer candidate"}
+        {"name": "odometer", "expression": "[B4:B6]/10", "unit": "km", "_comment": "10875.9 on 2026-08-18 — CONFIRMED against the dash (Rob, 2026-08-22)"}
       ]
     }
   ]
