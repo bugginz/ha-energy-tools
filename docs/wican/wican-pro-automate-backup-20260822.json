@@ -1,0 +1,60 @@
+{
+  "_comment": "Automate section of the WiCAN Pro config backup 2026-08-22 (fw v4.51p_beta-01). WiFi/MQTT/system sections dropped — they contain credentials; the full backup stays on Rob's machine (iCloud). This is the working state after the 2026-08-22 debug session: odometer in true km (native counter is 0.1 mi), 0xC10A040 sniff filter deleted (gateway blocks broadcasts at the OBD port), dash SoC computed in HA (sensor.car_soc_display).",
+  "auto_pid": {
+    "initialisation": "ATSP7;ATCP18;",
+    "grouping": "disable",
+    "disable_on_sleep_voltage": "automate_threshold",
+    "pid_polling_min_voltage": 12,
+    "webhook_data_mode": "full",
+    "car_specific": "disable",
+    "ha_discovery": "disable",
+    "car_model": "Fiat: 600e",
+    "pids": [
+      {
+        "Name": "soc_real",
+        "Init": "ATSHDA44F1;",
+        "PID": "22A010",
+        "Expression": "B9*100/255",
+        "Unit": "%",
+        "Class": "battery",
+        "MinValue": "0",
+        "MaxValue": "100",
+        "Period": "30000",
+        "Type": "Default",
+        "Send_to": "",
+        "enabled": true
+      },
+      {
+        "Name": "odometer",
+        "Init": "ATSHDA42F1;",
+        "PID": "223027",
+        "Expression": "[B4:B6]*0.160934",
+        "Unit": "km",
+        "Class": "distance",
+        "MinValue": "0",
+        "MaxValue": "100000",
+        "Period": "30000",
+        "Type": "Default",
+        "Send_to": "",
+        "enabled": true
+      }
+    ],
+    "std_pids": [],
+    "can_filters": [],
+    "standard_pids": "disable",
+    "ecu_protocol": "0",
+    "group_api_token": "",
+    "destinations": [
+      {
+        "type": "Default",
+        "destination": "",
+        "cycle": 5000,
+        "api_token": "",
+        "cert_set": "default",
+        "enabled": true,
+        "auth": {"type": "none"},
+        "query_params": []
+      }
+    ]
+  }
+}

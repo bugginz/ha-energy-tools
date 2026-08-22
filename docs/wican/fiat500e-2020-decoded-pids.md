@@ -74,13 +74,19 @@ car is awake (charging, or ignition on) — the BPCM sleeps otherwise.
 ## SoC: raw vs dash
 
 `sensor.wican_soc_real` (d3) peaks at **95.7 % (0xF4)** when the car is full
-(HA history 2026-08-14 and 08-17) — matching Rob's tidbyt `raw/95.5` scaling.
-Community fits for dash % from the same byte family:
-`raw/0.9 - 5` ([#335](https://github.com/meatpiHQ/wican-fw/issues/335)) or
-`raw - (40-raw)/7` ([#95](https://github.com/meatpiHQ/wican-fw/issues/95)).
-Both are within ~1 % of `(raw-4.5)/0.912`. To pin it down, note the dash %
-against the HA value a few times across the range (a mid-charge reading is worth
-more than another full one).
+(HA history 2026-08-14 and 08-17). **Calibrated 2026-08-22**: raw 87.84 →
+dash 94 %. The [#95](https://github.com/meatpiHQ/wican-fw/issues/95) formula
+wins:
+
+    dash % = min(100, raw - (40 - raw)/7)        # = (8·raw − 40)/7, capped
+
+It predicts 94.7 at that point (dash shows integers) and clips to 100 for
+raw ≥ 92.5, consistent with raw peaking at 95.7 while the dash reads 100.
+Rejected fits at raw 87.84: `raw/0.9-5` → 92.6, `(raw-4.5)/0.912` → 91.4,
+tidbyt's `raw/95.5` → 92.0. Implemented as HA template sensor
+`sensor.car_soc_display` (`template.yaml` on the Pi); it holds its last value
+while the car sleeps, same as `soc_real`. A future low-SoC data point (< 50 %)
+would further verify the slope.
 
 Dead end (tested 2026-08-22): WiCAN Pro **Custom Filters** cannot sniff broadcast frame `0xC10A040`
 (MSG31B_EVCU) which OVMS decodes as `d[0]` = estimated range km and `d[1]>>1` =
