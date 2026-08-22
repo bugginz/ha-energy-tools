@@ -117,7 +117,7 @@ KNOWN = {
     ("42", "3062"): lambda d: {"hv_V": u16(d, 0) / 50},
     ("42", "B562"): lambda d: {"hv_V": u16(d, 0) / 50},
     ("42", "4052"): lambda d: {"hv_bus_V": u16(d, 4)},
-    ("42", "3027"): lambda d: {"odo_km": u24(d, 0) / 10},
+    ("42", "3027"): lambda d: {"odo_mi": u24(d, 0) / 10, "odo_km": u24(d, 0) / 10 * 1.60934},
     ("42", "3065"): lambda d: {"temps_C": [None if b == 0x28 else b - 40 for b in d]},
     ("42", "4053"): lambda d: {"temp_C": d[1] - 40},
 }

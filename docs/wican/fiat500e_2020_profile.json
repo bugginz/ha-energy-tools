@@ -59,7 +59,7 @@
       "pid": "223027",
       "pid_init": "ATSHDA42F1;ATCRA18DAF142;ATFCSH18DA42F1;",
       "parameters": [
-        {"name": "odometer", "expression": "[B4:B6]/10", "unit": "km", "_comment": "10875.9 on 2026-08-18 — CONFIRMED against the dash (Rob, 2026-08-22)"}
+        {"name": "odometer", "expression": "[B4:B6]*0.160934", "unit": "km", "_comment": "native counter is 0.1 mi: 10916.9 mi read live 2026-08-22 = 17569.0 km = dash exactly"}
       ]
     }
   ]
