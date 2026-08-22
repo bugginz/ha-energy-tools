@@ -155,8 +155,9 @@ PYEOF
 )
 
 # Car SoC: shown only if the WiCAN value CHANGED in the last 12h (stale reads
-# hide rather than mislead). Raw tops out ~95.5 when the car manages itself to
-# full, so scale raw/95.5 and cap at 100 (Rob 2026-08-09).
+# hide rather than mislead). Dash-calibrated 2026-08-22 (raw 87.84 = dash 94,
+# wican-fw#95): dash = min(100, raw - (40-raw)/7). Matches sensor.car_soc_display;
+# supersedes the raw/95.5 scaling of 2026-08-09.
 CAR=$(python3 - << 'PYEOF'
 import json, urllib.request, datetime
 tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
@@ -167,7 +168,7 @@ try:
     changed = datetime.datetime.fromisoformat(s['last_changed'].replace('Z', '+00:00'))
     age_h = (datetime.datetime.now(datetime.timezone.utc) - changed).total_seconds() / 3600
     raw = float(s['state'])
-    print(min(100, int(raw / 95.5 * 100 + 0.5)) if age_h <= 12 else '')
+    print(min(100, int(raw - (40 - raw) / 7 + 0.5)) if age_h <= 12 else '')
 except Exception:
     print('')
 PYEOF
