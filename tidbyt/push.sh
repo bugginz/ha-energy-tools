@@ -41,72 +41,24 @@ if [ "$DEMO" = "on" ]; then
   exec "$DIR/demo.sh"
 fi
 
-# AC flows come from the LOCAL Meross 18ch clamps (seconds cadence), not the
-# FoxESS cloud: the cloud takes one instantaneous sample every ~5min, so a
-# cycling load (oven thermostat) makes it flip between 0.5 and 3.6kW while the
-# real average was 2.4kW — confirmed against the SoC drop rate (2026-08-21).
-# The cloud keeps solar (DC, no clamp on it), SoC, kWh, coast and forecast,
-# and remains the fallback if the clamps go unavailable.
-SOC=$(getn sensor.foxess_foxctl_battery_soc 0)
-KWH=$(getn sensor.battery_energy 0)
-HOUSE_W=$(getn sensor.circuits_total_power NA)
-GRID_W=$(getn sensor.grid_main_power_local NA)
-INV_W=$(getn sensor.inverter_ac_power_local NA)
-CHG=$(getn sensor.foxess_foxctl_battery_charge_power 0)
-DIS=$(getn sensor.foxess_foxctl_battery_discharge_power 0)
-SOLAR=$(getn sensor.foxess_foxctl_solar_power 0)
-GRIDIN=$(getn sensor.foxess_foxctl_grid_import 0)
+# Every shared figure comes from ONE snapshot, so this screen and the wide
+# displays show the same numbers from the same instant rather than each querying
+# HA a few seconds apart (which is what made the Tidbyt read 1.7kW while wide2
+# read 1.5kW). snapshot.sh owns the sensor list and the derivation; refresh it
+# here if the driver has not run recently so a manual run still works.
+SNAP=/dev/shm/tronbyt/snapshot.env
+if [ ! -f "$SNAP" ] || [ $(( $(date +%s) - $(stat -c %Y "$SNAP") )) -gt 90 ]; then
+  "$DIR/snapshot.sh" || true
+fi
+# shellcheck source=/dev/null
+[ -f "$SNAP" ] && source "$SNAP"
+# set -u is on: if the snapshot could not be produced at all, degrade rather
+# than abort mid-render.
+: "${SOC:=0}" "${KWH:=0}" "${LOAD:=0}" "${GRID:=0}" "${NET:=0}" "${SOLAR:=0}"
+: "${SRC:=}" "${CAR:=}" "${COAST:=0}" "${TNOW:=?}"
+
 HEALTH=$(get sensor.kiosk_battery_soc_health)
-COAST=$(getn sensor.battery_coast_margin 0)
-TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
-LOAD_CLOUD=$(getn sensor.foxess_foxctl_house_load 0)
-SUN_STATE=$(get sun.sun 2>/dev/null || echo below_horizon)
-# Battery from the inverter's own figures, solar derived from the clamp —
-# see tronbyt-wide/dash/push_wide.sh for why: solar-minus-clamp invented 2kW
-# of charging when the pack was full and the inverter curtailing.
-read -r LOAD GRID NET SOLAR < <(python3 -c "
-def w(v):
-    return None if v == 'NA' else float(v) / 1000.0
-chg, dis = float('$CHG'), float('$DIS')
-batt = chg - dis
-house, grid, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
-night = '$SUN_STATE' == 'below_horizon'
-if house is None or invac is None:          # clamps down -> cloud fallback
-    house = float('$LOAD_CLOUD')
-    grid = float('$GRIDIN')
-    solar = float('$SOLAR')
-elif night:
-    # After dark the inverter's AC output IS the battery, so take both from the
-    # fast clamp and ignore the cloud's charge/discharge: pairing a seconds-old
-    # clamp with a minutes-old cloud figure invents solar that cannot exist
-    # (2026-08-23 19:50: 1.77 invac - 0.84 stale discharge = 0.93kW of 'solar'
-    # with the sun down). The clamp is signed, so a grid charge reads +charging.
-    if grid is None:
-        grid = house - invac
-    solar, batt = 0.0, -invac
-else:
-    if grid is None:
-        grid = house - invac
-    solar = max(invac + batt, 0.0)
-print(round(house, 2), round(grid, 2), round(batt, 2), round(solar, 2))
-")
-# What is carrying the house right now. 'sun' is reserved for the house running
-# ENTIRELY on sunshine (solar >= load) — a winter morning trickle of 0.2kW is
-# technically the largest of the three but flips the icon and the whole bar
-# colour every few minutes as clouds pass, which reads as noise (Rob 2026-08-17).
-# Otherwise the gap-filler wins: battery, else grid.
-SRC=$(python3 -c "
-solar, load, grid, batt = float('$SOLAR'), float('$LOAD'), float('$GRID'), float('$NET')
-dis, imp = max(-batt, 0.0), max(grid, 0.0)
-if solar > 0.05 and solar >= load:
-    print('sun')
-elif dis > 0.05 and dis >= imp:
-    print('batt')
-elif imp > 0.05:
-    print('grid')
-else:
-    print('')")
 TNOW=$(python3 -c "print(int(round(float('$TNOW'))))" 2>/dev/null || echo '?')
 
 # Overnight low + tomorrow's high and their forecast CONDITIONS: overnight icon
@@ -173,21 +125,6 @@ PYEOF
 # hide rather than mislead). Dash-calibrated 2026-08-22 (raw 87.84 = dash 94,
 # wican-fw#95): dash = min(100, raw - (40-raw)/7). Matches sensor.car_soc_display;
 # supersedes the raw/95.5 scaling of 2026-08-09.
-CAR=$(python3 - << 'PYEOF'
-import json, urllib.request, datetime
-tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
-try:
-    req = urllib.request.Request('http://localhost:8123/api/states/sensor.wican_soc_real',
-                                 headers={'Authorization': 'Bearer ' + tok})
-    s = json.load(urllib.request.urlopen(req, timeout=10))
-    changed = datetime.datetime.fromisoformat(s['last_changed'].replace('Z', '+00:00'))
-    age_h = (datetime.datetime.now(datetime.timezone.utc) - changed).total_seconds() / 3600
-    raw = float(s['state'])
-    print(min(100, int(raw - (40 - raw) / 7 + 0.5)) if age_h <= 12 else '')
-except Exception:
-    print('')
-PYEOF
-)
 
 # Car charger (Ogemray 25A smart switch — replaced the Shelly 1PM, 2026-08):
 # bolt pulses while current actually flows, steady dim bolt when the switch is

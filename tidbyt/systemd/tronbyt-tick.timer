@@ -1,0 +1,13 @@
+[Unit]
+Description=Tick the tronbyt displays every 30s
+
+[Timer]
+# One cycle is ~3.3s of work (two renders in parallel), so 30s is ~11% of one
+# core. Replaces the two independent per-minute cron entries, which sampled HA
+# seconds apart and made the same figure differ between screens.
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
