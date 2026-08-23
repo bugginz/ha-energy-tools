@@ -61,6 +61,7 @@ COAST=$(getn sensor.battery_coast_margin 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
 LOAD_CLOUD=$(getn sensor.foxess_foxctl_house_load 0)
+SUN_STATE=$(get sun.sun 2>/dev/null || echo below_horizon)
 # Battery from the inverter's own figures, solar derived from the clamp —
 # see tronbyt-wide/dash/push_wide.sh for why: solar-minus-clamp invented 2kW
 # of charging when the pack was full and the inverter curtailing.
@@ -70,10 +71,20 @@ def w(v):
 chg, dis = float('$CHG'), float('$DIS')
 batt = chg - dis
 house, grid, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
+night = '$SUN_STATE' == 'below_horizon'
 if house is None or invac is None:          # clamps down -> cloud fallback
     house = float('$LOAD_CLOUD')
     grid = float('$GRIDIN')
     solar = float('$SOLAR')
+elif night:
+    # After dark the inverter's AC output IS the battery, so take both from the
+    # fast clamp and ignore the cloud's charge/discharge: pairing a seconds-old
+    # clamp with a minutes-old cloud figure invents solar that cannot exist
+    # (2026-08-23 19:50: 1.77 invac - 0.84 stale discharge = 0.93kW of 'solar'
+    # with the sun down). The clamp is signed, so a grid charge reads +charging.
+    if grid is None:
+        grid = house - invac
+    solar, batt = 0.0, -invac
 else:
     if grid is None:
         grid = house - invac
