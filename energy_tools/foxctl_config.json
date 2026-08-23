@@ -106,7 +106,7 @@
     "set_work_mode": true,
     "set_force_charge": true
   },
-  "poll_seconds": 300,
+  "poll_seconds": 120,
   "web": {
     "host": "0.0.0.0",
     "port": 8770

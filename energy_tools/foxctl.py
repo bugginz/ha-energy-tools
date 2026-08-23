@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.75.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.76.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -182,7 +182,7 @@ DEFAULT_CONFIG = {
                   # in bursts, then sit still for hours. Older than this and the SoC is treated
                   # as unknown rather than believed.
                   "soc_max_age_min": 180},
-    "poll_seconds": 300,
+    "poll_seconds": 120,
     "web": {"host": "0.0.0.0", "port": 8770},
 }
 
@@ -215,6 +215,38 @@ _FOX_STATUS = {"err": None, "ts": 0.0, "rate_limited": False, "ok_ts": 0.0}
 
 def _note_fox_status(msg, rate_limited=False):
     _FOX_STATUS.update(err=msg, ts=time.time(), rate_limited=rate_limited)
+
+
+# Account API quota, from /op/v0/user/getAccessCount. An uncapped account reports the STRING "\u221e"
+# for both fields, so a numeric "remaining" is the signal that a cap has appeared — worth surfacing
+# before it turns into errors. Polled at most hourly; one call an hour is noise against the budget.
+_FOX_QUOTA = {"total": None, "remaining": None, "ts": 0.0}
+QUOTA_REFRESH_S = 3600
+
+
+def fox_quota():
+    """Last known API quota, or None if never fetched."""
+    return dict(_FOX_QUOTA) if _FOX_QUOTA["ts"] else None
+
+
+def refresh_fox_quota(fox, force=False):
+    """Refresh the cached quota at most every QUOTA_REFRESH_S. Logs on change so the journal records
+    the day a cap appears. Never raises — quota telemetry must not break a control cycle."""
+    now = time.time()
+    if not force and (now - _FOX_QUOTA["ts"]) < QUOTA_REFRESH_S:
+        return fox_quota()
+    prev = (_FOX_QUOTA["total"], _FOX_QUOTA["remaining"])
+    try:
+        r = fox.access_count()
+    except Exception as e:
+        print(f"quota fetch failed: {e}", file=sys.stderr)
+        _FOX_QUOTA["ts"] = now          # back off either way; don't retry-storm a sick endpoint
+        return fox_quota()
+    _FOX_QUOTA.update(total=r.get("total"), remaining=r.get("remaining"), ts=now)
+    if (_FOX_QUOTA["total"], _FOX_QUOTA["remaining"]) != prev:
+        print(f"{datetime.now().isoformat(timespec='seconds')} FoxESS API quota: "
+              f"remaining={_FOX_QUOTA['remaining']} of {_FOX_QUOTA['total']}")
+    return fox_quota()
 
 
 def fox_error_status():
@@ -268,6 +300,10 @@ class FoxESS:
             raise RuntimeError(f"FoxESS {path} errno={errno}: {msg}")
         _FOX_STATUS["ok_ts"] = time.time()
         return d
+
+    def access_count(self) -> dict:
+        """Account API quota: {"total": .., "remaining": ..}. Both are the string "\u221e" when uncapped."""
+        return self.call("/op/v0/user/getAccessCount").get("result") or {}
 
     def real(self, variables: list[str]) -> dict:
         d = self.call("/op/v0/device/real/query", {"sn": self.sn, "variables": variables})
@@ -2608,6 +2644,7 @@ def gather_and_decide(cfg: dict) -> dict:
         _TELE["last"] = real
         _TELE["ts"] = time.time()
         soc_ts = _TELE["ts"]
+        refresh_fox_quota(fox)          # hourly, and only once the API has proven reachable
     except Exception as e:
         print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
         real = _TELE.get("last") or {}
@@ -2908,6 +2945,7 @@ def gather_and_decide(cfg: dict) -> dict:
         "solar_surplus_kw": round(pv - load, 2),
         "telemetry_source": tsrc,
         "fox_error": fox_error_status(),
+        "fox_quota": fox_quota(),
         "soc": soc,
         "pv_kw": round(pv, 2),
         "real": real,
@@ -4036,6 +4074,14 @@ def render(snap: dict, cfg: dict) -> str:
         f'free {mo.get("free_used_kwh",0):g}/{mo.get("free_cap_kwh",50):g}kWh · wk ${mo.get("week_saved",0):.2f}</small></div>'
     ) if mo else ""
 
+    fq = snap.get("fox_quota") or {}
+    try:
+        q_left = float(fq.get("remaining"))          # "∞" (uncapped) raises → no banner
+    except (TypeError, ValueError):
+        q_left = None
+    quota_banner = (f'<div class="card warn">⚠️ FoxESS API quota low — {fq.get("remaining")} of '
+                    f'{fq.get("total")} calls left today.</div>') if q_left is not None and q_left < 500 else ""
+
     fe = snap.get("fox_error")
     if fe and fe.get("rate_limited"):
         banner = (f'<div class="card warn">⛔ FoxESS API rate-limited — telemetry/control may be stale '
@@ -4045,6 +4091,7 @@ def render(snap: dict, cfg: dict) -> str:
                   f'(last error {fe.get("age")}s ago).</div>')
     else:
         banner = ''
+    banner += quota_banner
 
     tn = snap.get("temp_nudge") or {}
     temp_txt = f' · {tn["cur_c"]:.0f}°C' if isinstance(tn.get("cur_c"), (int, float)) else ""

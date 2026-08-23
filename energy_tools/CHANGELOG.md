@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.76.0 — record the API quota; poll at the cloud's actual refresh rate
+
+Two related changes, both from measuring rather than assuming.
+
+**Quota is now recorded.** Nothing ever read `/op/v0/user/getAccessCount`; the only signal
+that we were near a limit was an HTTP 429 after the fact. `FoxESS.access_count()` now polls
+it hourly (`refresh_fox_quota`), logs it whenever it changes, publishes it in the snapshot as
+`fox_quota`, and raises a dashboard banner if `remaining` ever becomes a number below 500.
+This account currently reports `total: "\u221e", remaining: "\u221e"` — uncapped — so the banner
+is dormant by design: it exists to catch the day that changes.
+
+**poll_seconds 300 -> 120.** foxctl is the single FoxESS poller (the foxess-ha integration's
+entities 404 — it is not feeding anything), so the `foxess_foxctl_*` sensors the displays read
+were only as fresh as this loop. Sampling the cloud every 20s showed it serving one identical
+snapshot for ~2 minutes at a time, so 120s matches its real refresh cadence: worst-case
+staleness drops from 5 minutes to ~2, with no calls spent on data that has not changed. Only
+`real/query` scales with this — `today_actuals` is time-gated at 600s, so the `history/query`
+endpoint that intermittently returns errno 41200 sees no extra load.
+
 ## 1.75.3 — drop the phantom four4free export credit
 
 `strategy.tariffs.four4free.export_credit` claimed $1/day for keeping export under
