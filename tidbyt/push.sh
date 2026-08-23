@@ -61,20 +61,24 @@ COAST=$(getn sensor.battery_coast_margin 0)
 TNOW=$(get sensor.living_room_ac_outside || echo '?')
 COND=$(get weather.forecast_home || echo '')
 LOAD_CLOUD=$(getn sensor.foxess_foxctl_house_load 0)
-read -r LOAD GRID NET < <(python3 -c "
+# Battery from the inverter's own figures, solar derived from the clamp —
+# see tronbyt-wide/dash/push_wide.sh for why: solar-minus-clamp invented 2kW
+# of charging when the pack was full and the inverter curtailing.
+read -r LOAD GRID NET SOLAR < <(python3 -c "
 def w(v):
     return None if v == 'NA' else float(v) / 1000.0
-solar = float('$SOLAR')
+chg, dis = float('$CHG'), float('$DIS')
+batt = chg - dis
 house, grid, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
 if house is None or invac is None:          # clamps down -> cloud fallback
     house = float('$LOAD_CLOUD')
     grid = float('$GRIDIN')
-    batt = float('$CHG') - float('$DIS')
+    solar = float('$SOLAR')
 else:
     if grid is None:
         grid = house - invac
-    batt = solar - invac                    # + charging / - discharging
-print(round(house, 2), round(grid, 2), round(batt, 2))
+    solar = max(invac + batt, 0.0)
+print(round(house, 2), round(grid, 2), round(batt, 2), round(solar, 2))
 ")
 # What is carrying the house right now. 'sun' is reserved for the house running
 # ENTIRELY on sunshine (solar >= load) — a winter morning trickle of 0.2kW is
