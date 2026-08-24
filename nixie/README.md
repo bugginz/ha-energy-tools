@@ -90,30 +90,47 @@ Example: `079014D` = 79%, discharging 1.4 kW.
 
 ## Flashing
 
-ISP via USBasp, wired to the castellated pads on the underside of the board:
+### Normal: over WiFi
+
+The ESP32 bridges TCP port 6638 to the AVR's UART and handles the reset and baud
+switching automatically — running avrdude is the entire procedure:
+
+```sh
+arduino-cli compile -b arduino:avr:uno --output-dir build .
+avrdude -c arduino -p m328p -P net:nixie-soc-display.local:6638 \
+  -U flash:w:build/nixie_live.ino.hex:i
+```
+
+The `ioctl("TIOCMGET")` warnings are harmless (avrdude trying to wiggle modem
+control lines on a network socket). Optiboot protects itself, so there is no
+bootloader rewrite and no lock-bit step. The SoC updates pause during the flash
+and resume when avrdude disconnects.
+
+### Recovery only: ISP via USBasp
+
+For a corrupted bootloader or fuse changes — the situations serial flashing can't
+handle. Wires to the underside pads:
 
 ```
 MOSI -> IDC 1    RST -> IDC 5    SCK -> IDC 7    MISO -> IDC 9    GND -> IDC 4/6/8/10
 ```
 
-Leave IDC 2 (VTG) unconnected — the clock powers itself.
+Leave IDC 2 (VTG) unconnected — the clock powers itself. The RST pad is shared with
+the ESP32's reset wire; only one connected at a time.
 
 ```sh
-arduino-cli compile -b arduino:avr:uno --output-dir build .
 avrdude -c usbasp -p m328p -e \
   -U flash:w:build/nixie_live.ino.hex:i \
   -U flash:w:optiboot_atmega328.hex:i \
   -U lock:w:0xCF:m
 ```
 
-Always write the sketch and Optiboot together in one command: `-e` erases the whole
-chip including the bootloader, and flashing with `-D` over existing code corrupts it.
+Over ISP, always write the sketch and Optiboot together in one command: `-e` erases
+the whole chip including the bootloader, and flashing with `-D` over existing code
+corrupts it. **Unplug the USBasp to run** — MOSI is shared with the WS2812 data line.
 
 Fuses are stock and already correct for a 16 MHz crystal (lfuse `0xFF`, hfuse `0xDE`,
 efuse `0xFD`) — do not touch them.
-
-**The programmer must be unplugged to run.** MOSI is shared with the WS2812 data
-line, so a connected USBasp corrupts the LEDs.
 
 ## Sketches
 
