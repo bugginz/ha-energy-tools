@@ -15,14 +15,67 @@ api:
   encryption:
     key: !secret api_encryption_key
 
+ota:
+  - platform: esphome
+
 logger:
 
-# Seeed XIAO ESP32-C6: D6 = GPIO16 (TX). One-way link - nixie board's RX pin
-# only, no wire back, so no rx_pin here.
+external_components:
+  - source: github://oxan/esphome-stream-server
+
+# Seeed XIAO ESP32-C6 <-> nixie AVR:
+#   D6 = GPIO16 = TX  -> AVR RX (pin 30)
+#   D7 = GPIO17 = RX  <- AVR TX (pin 31) via 2.2k/3.3k divider
+#   D8 = GPIO19       -> AVR RESET (back-side RST pad) via 1k, open-drain
 uart:
   id: nixie_uart
   tx_pin: GPIO16
+  rx_pin: GPIO17
   baud_rate: 57600
+
+# avrdude flashes the AVR over WiFi through this port:
+#   avrdude -c arduino -p m328p -P net:nixie-soc-display.local:6638
+# On client connect: baud -> 115200 (Optiboot), pulse AVR reset, pause SoC
+# updates. On disconnect: baud -> 57600, updates resume.
+stream_server:
+  uart_id: nixie_uart
+  port: 6638
+  buffer_size: 1024
+
+binary_sensor:
+  - platform: stream_server
+    connected:
+      id: flash_client
+      name: "AVR flash client connected"
+      on_press:
+        - lambda: |-
+            id(nixie_uart).set_baud_rate(115200);
+            id(nixie_uart).load_settings();
+        - output.turn_on: avr_reset_out    # pull RESET low
+        - delay: 100ms
+        - output.turn_off: avr_reset_out   # release -> Optiboot runs
+      on_release:
+        - lambda: |-
+            id(nixie_uart).set_baud_rate(57600);
+            id(nixie_uart).load_settings();
+
+output:
+  - platform: gpio
+    id: avr_reset_out
+    pin:
+      number: GPIO19
+      inverted: true          # turn_on = drive LOW (reset asserted)
+      mode:
+        output: true
+        open_drain: true      # released state floats; AVR's own pullup wins
+
+button:
+  - platform: template
+    name: "AVR reset"
+    on_press:
+      - output.turn_on: avr_reset_out
+      - delay: 100ms
+      - output.turn_off: avr_reset_out
 
 sensor:
   - platform: homeassistant
@@ -41,6 +94,7 @@ interval:
   - interval: 10s
     then:
       - lambda: |-
+          if (id(flash_client).state) return;   // don't write during a flash
           int soc = (int) round(id(ha_soc).state);
           if (soc < 0) soc = 0;
           if (soc > 100) soc = 100;
