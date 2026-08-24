@@ -8,3 +8,5 @@ __pycache__/
 # local config files that may hold secrets (the add-on injects these at runtime)
 **/.config/
 options.json
+esphome/secrets.yaml
+esphome/.esphome/

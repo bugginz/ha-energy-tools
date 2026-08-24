@@ -1,0 +1,55 @@
+esphome:
+  name: nixie-soc-display
+  friendly_name: Nixie SoC Display
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+logger:
+
+# Seeed XIAO ESP32-C6: D6 = GPIO16 (TX). One-way link - nixie board's RX pin
+# only, no wire back, so no rx_pin here.
+uart:
+  id: nixie_uart
+  tx_pin: GPIO16
+  baud_rate: 57600
+
+sensor:
+  - platform: homeassistant
+    id: ha_soc
+    entity_id: sensor.foxess_foxctl_battery_soc
+  - platform: homeassistant
+    id: ha_charge
+    entity_id: sensor.foxess_foxctl_battery_charge_power
+  - platform: homeassistant
+    id: ha_discharge
+    entity_id: sensor.foxess_foxctl_battery_discharge_power
+
+# Protocol: "SSSPPPD\n" - SoC 3 digits, |net power| in 0.1kW 3 digits,
+# direction char (C=charging, D=discharging). e.g. "065012C" = 65%, 1.2kW in.
+interval:
+  - interval: 10s
+    then:
+      - lambda: |-
+          int soc = (int) round(id(ha_soc).state);
+          if (soc < 0) soc = 0;
+          if (soc > 100) soc = 100;
+          float net_kw = id(ha_charge).state - id(ha_discharge).state;
+          int net_tenths = (int) round(fabs(net_kw) * 10.0);
+          if (net_tenths > 999) net_tenths = 999;
+          char dir = (net_kw >= 0) ? 'C' : 'D';
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%03d%03d%c\n", soc, net_tenths, dir);
+          id(nixie_uart).write_str(buf);
+          ESP_LOGI("nixie", "soc_raw=%.1f charge=%.2f discharge=%.2f -> sent: %s",
+                   id(ha_soc).state, id(ha_charge).state, id(ha_discharge).state, buf);
