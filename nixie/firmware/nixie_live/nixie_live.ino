@@ -175,8 +175,9 @@ void animFrame(){
     }
     // speed scales with total power: crawl near zero, max at ~10kW
     ledC->showLeds(ledBright);
-    long spd=2+(tot>100?100:tot)*22/100;   // 2..24 phase units per frame
-    animPhase+=spd*animSpeed/4;
+    // slider sets the base pace; power adds urgency on top. never freezes.
+    long spd=2L*animSpeed+(tot>100?100:tot)*24/100;
+    animPhase+=spd;
     return;
   }
   ledC->showLeds(ledBright);
