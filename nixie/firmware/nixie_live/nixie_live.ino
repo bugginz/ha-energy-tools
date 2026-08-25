@@ -43,7 +43,7 @@ int8_t mover=0;                              // round-robin: which digit steps n
 unsigned long lastWalk=0, lastSpin=0, spinStart=0;
 bool spinning=false;
 
-char rxBuf[22]; uint8_t rxLen=0;
+char rxBuf[23]; uint8_t rxLen=0;
 
 void pwmInit(){ICR1=TOP;OCR1A=0;TCCR1A=_BV(WGM11)|_BV(COM1A1);TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS10);DDRB|=_BV(DDB1);}
 void shift16(uint16_t v){
@@ -163,9 +163,13 @@ void animFrame(){
     for(uint8_t k=0;k<nBat&&idx<6;k++) leds[idx++]=CRGB(0,255,0);     // battery green
     for(uint8_t k=0;k<nGrid&&idx<6;k++) leds[idx++]=CRGB(160,0,255);  // grid purple
     while(idx<6) leds[idx++]=CRGB::Black;
-    // traveling brightness wave over the colored segments
+    // traveling brightness wave over the colored segments.
+    // battery discharge dominant -> wave flows right-to-left (drawing from
+    // the stored side); otherwise left-to-right (import/solar arriving).
+    bool fromBattery = battDisT > (gridExport?0:gridT);
     for(uint8_t i=0;i<NUM_LEDS;i++){
-      uint8_t b=sin8((uint8_t)(animPhase>>2)-i*42);
+      uint8_t ph=(uint8_t)(animPhase>>2);
+      uint8_t b=sin8(fromBattery ? ph+i*42 : ph-i*42);
       leds[i].nscale8(b<70?70:b);
     }
     // speed scales with total power: crawl near zero, max at ~10kW
@@ -201,6 +205,10 @@ void applyPacket(const char* p, uint8_t len){
   }
   if(len>=20 && p[19]>='0' && p[19]<='9')
     tubeDwell=600+(uint16_t)(p[19]-'0')*250;   // 600..2850us
+  if(len>=21 && p[20]>='0' && p[20]<='4'){
+    uint8_t na=p[20]-'0';
+    if(na!=animMode){ animMode=na; if(animMode==0) restoreLeds(); }
+  }
   dispMode=newMode;
   digitalWrite(SEP, dispMode==1);         // decimal point on in mode 1
   if(dispMode==1) layoutMode1(); else buildDigits(false);
@@ -217,6 +225,7 @@ void mux(unsigned long ms){
       delayMicroseconds(tubeDwell);
       digitalWrite(ANODE[i],LOW);
       shift16(0);
+      if(tubeDwell<2800) delayMicroseconds(2800-tubeDwell);
     }
   }
 }
@@ -291,7 +300,7 @@ void pollSerial(){
   while(Serial.available()){
     char c=Serial.read();
     if(c=='\n'){ rxBuf[rxLen]=0;
-      if(rxLen==7||rxLen==8||rxLen==9||rxLen==12||rxLen==19||rxLen==20) applyPacket(rxBuf,rxLen);
+      if(rxLen==7||rxLen==8||rxLen==9||rxLen==12||rxLen==19||rxLen==20||rxLen==21) applyPacket(rxBuf,rxLen);
       else if(rxLen==1&&rxBuf[0]=='X') runDemo();
       else if(rxLen==1&&rxBuf[0]=='S') runSweep();
       else if(rxLen==2&&rxBuf[0]=='A'&&rxBuf[1]>='0'&&rxBuf[1]<='4'){
@@ -299,7 +308,7 @@ void pollSerial(){
         if(animMode==0) restoreLeds();
       }
       rxLen=0; }
-    else if(rxLen<21) rxBuf[rxLen++]=c;
+    else if(rxLen<22) rxBuf[rxLen++]=c;
     else rxLen=0;
   }
 }
@@ -339,6 +348,7 @@ void loop(){
     delayMicroseconds(tubeDwell);
     digitalWrite(ANODE[i],LOW);
     shift16(0);
+    if(tubeDwell<2800) delayMicroseconds(2800-tubeDwell);
   }
   pollSerial();
 }

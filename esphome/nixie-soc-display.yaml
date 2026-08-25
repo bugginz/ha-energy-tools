@@ -95,6 +95,7 @@ select:
     id: led_anim
     options: ["Off", "Wave", "Comet", "Fill", "Flow"]
     initial_option: "Off"
+    restore_value: true
     optimistic: true
     on_value:
       - lambda: |-
@@ -180,9 +181,13 @@ interval:
           if (solar_tenths > 999) solar_tenths = 999;
           char buf[26];
           char tbright = '0' + (int) id(tube_brightness).state;
-          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c\n",
+          char anim = id(led_anim).state == "Wave" ? '1'
+                    : id(led_anim).state == "Comet" ? '2'
+                    : id(led_anim).state == "Fill" ? '3'
+                    : id(led_anim).state == "Flow" ? '4' : '0';
+          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c%c\n",
                    soc, net_tenths, dir, bright, mode, load_tenths,
-                   gsign, grid_tenths, solar_tenths, tbright);
+                   gsign, grid_tenths, solar_tenths, tbright, anim);
           id(nixie_uart).write_str(buf);
           ESP_LOGI("nixie", "soc=%.1f chg=%.2f dis=%.2f -> %s",
                    id(ha_soc).state, id(ha_charge).state, id(ha_discharge).state, buf);
