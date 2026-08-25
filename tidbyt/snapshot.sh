@@ -93,6 +93,14 @@ if house is None or invac is None:
 else:
     grid = house - invac                    # busbar identity, exact by fiat
     adj = grid - grid_c if grid_c is not None else 0.0
+    if abs(grid) < 0.10:
+        # Below ~100W the derived grid figure is just the clamps disagreeing,
+        # and it lands either side of the display's 50W draw threshold from one
+        # tick to the next: the pylon sparked and breathed erratically with no
+        # dots on the wire. Snap it to zero and let house absorb the difference
+        # (tens of watts — invisible at one decimal place in kW) so the balance
+        # stays exact. Real grid flow is orders of magnitude larger than this.
+        house, grid = invac, 0.0
     if night:
         # After dark the inverter's AC output IS the battery. Nothing else can
         # be true, so do not let a stale cloud figure invent solar.
