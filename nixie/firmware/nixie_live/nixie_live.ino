@@ -34,6 +34,7 @@ uint8_t dispMode=0; int lastLoad=0;          // load in 0.1kW
 uint16_t tubeDwell=2800;                     // us per tube per refresh
 int battDisT=0;                              // battery discharge, 0.1kW
 uint8_t animMode=0; uint16_t animPhase=0;    // LED animation; 4 = live flow
+uint8_t animSpeed=6;                         // 1-9, 4 = former baseline
 int gridT=0, solarT=0; bool gridExport=false; // 0.1kW units
 unsigned long lastAnimFrame=0;
 uint8_t socDig[3]; uint8_t socLen=0;         // visible digits, no blanks
@@ -43,7 +44,7 @@ int8_t mover=0;                              // round-robin: which digit steps n
 unsigned long lastWalk=0, lastSpin=0, spinStart=0;
 bool spinning=false;
 
-char rxBuf[23]; uint8_t rxLen=0;
+char rxBuf[24]; uint8_t rxLen=0;
 
 void pwmInit(){ICR1=TOP;OCR1A=0;TCCR1A=_BV(WGM11)|_BV(COM1A1);TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS10);DDRB|=_BV(DDB1);}
 void shift16(uint16_t v){
@@ -175,11 +176,11 @@ void animFrame(){
     // speed scales with total power: crawl near zero, max at ~10kW
     ledC->showLeds(ledBright);
     long spd=2+(tot>100?100:tot)*22/100;   // 2..24 phase units per frame
-    animPhase+=spd;
+    animPhase+=spd*animSpeed/4;
     return;
   }
   ledC->showLeds(ledBright);
-  animPhase+=8;
+  animPhase+=2*animSpeed;
 }
 
 void restoreLeds(){
@@ -209,6 +210,7 @@ void applyPacket(const char* p, uint8_t len){
     uint8_t na=p[20]-'0';
     if(na!=animMode){ animMode=na; if(animMode==0) restoreLeds(); }
   }
+  if(len>=22 && p[21]>='1' && p[21]<='9') animSpeed=p[21]-'0';
   dispMode=newMode;
   digitalWrite(SEP, dispMode==1);         // decimal point on in mode 1
   if(dispMode==1) layoutMode1(); else buildDigits(false);
@@ -300,7 +302,7 @@ void pollSerial(){
   while(Serial.available()){
     char c=Serial.read();
     if(c=='\n'){ rxBuf[rxLen]=0;
-      if(rxLen==7||rxLen==8||rxLen==9||rxLen==12||rxLen==19||rxLen==20||rxLen==21) applyPacket(rxBuf,rxLen);
+      if(rxLen>=7&&rxLen<=22&&rxLen!=10&&rxLen!=11&&rxLen!=13&&rxLen!=14&&rxLen!=15&&rxLen!=16&&rxLen!=17&&rxLen!=18) applyPacket(rxBuf,rxLen);
       else if(rxLen==1&&rxBuf[0]=='X') runDemo();
       else if(rxLen==1&&rxBuf[0]=='S') runSweep();
       else if(rxLen==2&&rxBuf[0]=='A'&&rxBuf[1]>='0'&&rxBuf[1]<='4'){
@@ -308,7 +310,7 @@ void pollSerial(){
         if(animMode==0) restoreLeds();
       }
       rxLen=0; }
-    else if(rxLen<22) rxBuf[rxLen++]=c;
+    else if(rxLen<23) rxBuf[rxLen++]=c;
     else rxLen=0;
   }
 }

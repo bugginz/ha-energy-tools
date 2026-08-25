@@ -55,7 +55,7 @@ binary_sensor:
         - output.turn_on: avr_reset_out    # pull RESET low
         - delay: 100ms
         - output.turn_off: avr_reset_out   # release -> Optiboot runs
-        - delay: 60ms
+        - delay: 300ms
         - lambda: |-                       # drop reset-transient garbage
             uint8_t b;
             while (id(nixie_uart).available()) id(nixie_uart).read_byte(&b);
@@ -112,6 +112,15 @@ select:
     optimistic: true
 
 number:
+  - platform: template
+    name: "Nixie animation speed"
+    id: anim_speed
+    min_value: 1
+    max_value: 9
+    step: 1
+    initial_value: 6
+    restore_value: true
+    optimistic: true
   - platform: template
     name: "Nixie tube brightness"
     id: tube_brightness
@@ -185,9 +194,10 @@ interval:
                     : id(led_anim).state == "Comet" ? '2'
                     : id(led_anim).state == "Fill" ? '3'
                     : id(led_anim).state == "Flow" ? '4' : '0';
-          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c%c\n",
+          char aspd = '0' + (int) id(anim_speed).state;
+          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c%c%c\n",
                    soc, net_tenths, dir, bright, mode, load_tenths,
-                   gsign, grid_tenths, solar_tenths, tbright, anim);
+                   gsign, grid_tenths, solar_tenths, tbright, anim, aspd);
           id(nixie_uart).write_str(buf);
           ESP_LOGI("nixie", "soc=%.1f chg=%.2f dis=%.2f -> %s",
                    id(ha_soc).state, id(ha_charge).state, id(ha_discharge).state, buf);

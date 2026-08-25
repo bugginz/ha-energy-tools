@@ -1,0 +1,44 @@
+# Home Assistant package: nixie SoC display night dimming.
+# Lives at /opt/stack/ha/config/packages/nixie.yaml on the Pi (loaded via
+# `homeassistant: packages:` in configuration.yaml).
+#
+# The display's controls are ESPHome entities on device "nixie-soc-display":
+#   number.living_room_nixie_soc_display_nixie_tube_brightness  0-9 anode duty
+#   number.living_room_nixie_soc_display_nixie_led_brightness   0-9 WS2812
+# This package just drives them on a schedule: dim at sunset, restore at 7am.
+
+automation:
+  - id: nixie_night_dim
+    alias: "Nixie: dim at night"
+    triggers:
+      - trigger: sun
+        event: sunset
+        offset: "00:30:00"
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.living_room_nixie_soc_display_nixie_tube_brightness
+        data:
+          value: 3
+      - action: number.set_value
+        target:
+          entity_id: number.living_room_nixie_soc_display_nixie_led_brightness
+        data:
+          value: 0
+
+  - id: nixie_morning_restore
+    alias: "Nixie: restore in the morning"
+    triggers:
+      - trigger: time
+        at: "07:00:00"
+    actions:
+      - action: number.set_value
+        target:
+          entity_id: number.living_room_nixie_soc_display_nixie_tube_brightness
+        data:
+          value: 9
+      - action: number.set_value
+        target:
+          entity_id: number.living_room_nixie_soc_display_nixie_led_brightness
+        data:
+          value: 9
