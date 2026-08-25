@@ -184,7 +184,14 @@ interval:
           int grid_tenths = isnan(grid_w) ? 0 : (int) round(fabs(grid_w) / 100.0);
           if (grid_tenths > 999) grid_tenths = 999;
           char gsign = (!isnan(grid_w) && grid_w < 0) ? 'E' : 'I';
-          float solar_w = id(ha_solar).state;
+          // solar derived from conservation: load + net battery - grid import.
+          // local clamps are live; the cloud solar sensor lags minutes behind.
+          float solar_w;
+          if (!isnan(load_w) && !isnan(grid_w)) {
+            solar_w = load_w + net_kw * 1000.0 - grid_w;
+          } else {
+            solar_w = id(ha_solar).state;   // cloud fallback
+          }
           int solar_tenths = isnan(solar_w) ? 0 : (int) round(solar_w / 100.0);
           if (solar_tenths < 0) solar_tenths = 0;
           if (solar_tenths > 999) solar_tenths = 999;
