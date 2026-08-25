@@ -76,6 +76,43 @@ button:
       - output.turn_on: avr_reset_out
       - delay: 100ms
       - output.turn_off: avr_reset_out
+  - platform: template
+    name: "Nixie demo mode"
+    on_press:
+      - lambda: |-
+          if (!id(flash_client).state) id(nixie_uart).write_str("X\n");
+
+select:
+  - platform: template
+    name: "Nixie LED animation"
+    id: led_anim
+    options: ["Off", "Wave", "Comet", "Fill", "Flow"]
+    initial_option: "Off"
+    optimistic: true
+    on_value:
+      - lambda: |-
+          if (id(flash_client).state) return;
+          const char* c = x == "Wave" ? "A1\n" : x == "Comet" ? "A2\n"
+                        : x == "Fill" ? "A3\n" : x == "Flow" ? "A4\n" : "A0\n";
+          id(nixie_uart).write_str(c);
+  - platform: template
+    name: "Nixie display mode"
+    id: display_mode
+    options: ["SoC walk", "Load + SoC"]
+    initial_option: "SoC walk"
+    restore_value: true
+    optimistic: true
+
+number:
+  - platform: template
+    name: "Nixie LED brightness"
+    id: led_brightness
+    min_value: 0
+    max_value: 9
+    step: 1
+    initial_value: 9
+    restore_value: true
+    optimistic: true
 
 sensor:
   - platform: homeassistant
@@ -87,6 +124,15 @@ sensor:
   - platform: homeassistant
     id: ha_discharge
     entity_id: sensor.foxess_foxctl_battery_discharge_power
+  - platform: homeassistant
+    id: ha_load
+    entity_id: sensor.circuits_total_power   # watts, local clamps
+  - platform: homeassistant
+    id: ha_solar
+    entity_id: sensor.foxess_foxctl_solar_power
+  - platform: homeassistant
+    id: ha_grid
+    entity_id: sensor.grid_main_power_local  # watts, +import / -export
 
 # Protocol: "SSSPPPD\n" - SoC 3 digits, |net power| in 0.1kW 3 digits,
 # direction char (C=charging, D=discharging). e.g. "065012C" = 65%, 1.2kW in.
@@ -102,8 +148,24 @@ interval:
           int net_tenths = (int) round(fabs(net_kw) * 10.0);
           if (net_tenths > 999) net_tenths = 999;
           char dir = (net_kw >= 0) ? 'C' : 'D';
-          char buf[16];
-          snprintf(buf, sizeof(buf), "%03d%03d%c\n", soc, net_tenths, dir);
+          char bright = '0' + (int) id(led_brightness).state;
+          char mode = (id(display_mode).state == "Load + SoC") ? '1' : '0';
+          float load_w = id(ha_load).state;
+          int load_tenths = isnan(load_w) ? 0 : (int) round(load_w / 100.0);
+          if (load_tenths < 0) load_tenths = 0;
+          if (load_tenths > 999) load_tenths = 999;
+          float grid_w = id(ha_grid).state;
+          int grid_tenths = isnan(grid_w) ? 0 : (int) round(fabs(grid_w) / 100.0);
+          if (grid_tenths > 999) grid_tenths = 999;
+          char gsign = (!isnan(grid_w) && grid_w < 0) ? 'E' : 'I';
+          float solar_w = id(ha_solar).state;
+          int solar_tenths = isnan(solar_w) ? 0 : (int) round(solar_w / 100.0);
+          if (solar_tenths < 0) solar_tenths = 0;
+          if (solar_tenths > 999) solar_tenths = 999;
+          char buf[24];
+          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d\n",
+                   soc, net_tenths, dir, bright, mode, load_tenths,
+                   gsign, grid_tenths, solar_tenths);
           id(nixie_uart).write_str(buf);
-          ESP_LOGI("nixie", "soc_raw=%.1f charge=%.2f discharge=%.2f -> sent: %s",
+          ESP_LOGI("nixie", "soc=%.1f chg=%.2f dis=%.2f -> %s",
                    id(ha_soc).state, id(ha_charge).state, id(ha_discharge).state, buf);
