@@ -48,16 +48,18 @@ binary_sensor:
       id: flash_client
       name: "AVR flash client connected"
       on_press:
-        - lambda: |-
-            id(nixie_uart).set_baud_rate(115200);
-            id(nixie_uart).load_settings();
+        # bootloader runs at 57600, same as the app - no baud switch needed
+        - lambda: |-                       # drop stale bytes before reset
+            uint8_t b;
+            while (id(nixie_uart).available()) id(nixie_uart).read_byte(&b);
         - output.turn_on: avr_reset_out    # pull RESET low
         - delay: 100ms
         - output.turn_off: avr_reset_out   # release -> Optiboot runs
-      on_release:
-        - lambda: |-
-            id(nixie_uart).set_baud_rate(57600);
-            id(nixie_uart).load_settings();
+        - delay: 60ms
+        - lambda: |-                       # drop reset-transient garbage
+            uint8_t b;
+            while (id(nixie_uart).available()) id(nixie_uart).read_byte(&b);
+
 
 output:
   - platform: gpio
@@ -81,6 +83,11 @@ button:
     on_press:
       - lambda: |-
           if (!id(flash_client).state) id(nixie_uart).write_str("X\n");
+  - platform: template
+    name: "Nixie poison sweep"
+    on_press:
+      - lambda: |-
+          if (!id(flash_client).state) id(nixie_uart).write_str("S\n");
 
 select:
   - platform: template
@@ -104,6 +111,15 @@ select:
     optimistic: true
 
 number:
+  - platform: template
+    name: "Nixie tube brightness"
+    id: tube_brightness
+    min_value: 0
+    max_value: 9
+    step: 1
+    initial_value: 9
+    restore_value: true
+    optimistic: true
   - platform: template
     name: "Nixie LED brightness"
     id: led_brightness
@@ -162,10 +178,11 @@ interval:
           int solar_tenths = isnan(solar_w) ? 0 : (int) round(solar_w / 100.0);
           if (solar_tenths < 0) solar_tenths = 0;
           if (solar_tenths > 999) solar_tenths = 999;
-          char buf[24];
-          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d\n",
+          char buf[26];
+          char tbright = '0' + (int) id(tube_brightness).state;
+          snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c\n",
                    soc, net_tenths, dir, bright, mode, load_tenths,
-                   gsign, grid_tenths, solar_tenths);
+                   gsign, grid_tenths, solar_tenths, tbright);
           id(nixie_uart).write_str(buf);
           ESP_LOGI("nixie", "soc=%.1f chg=%.2f dis=%.2f -> %s",
                    id(ha_soc).state, id(ha_charge).state, id(ha_discharge).state, buf);

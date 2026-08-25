@@ -19,7 +19,7 @@
 CRGB leds[NUM_LEDS];
 CLEDController *ledC;
 
-const uint16_t TOP=511; const int16_t BT=280;
+const uint16_t TOP=511; const int16_t BT=320;
 const uint8_t DPIN=A0,KPIN=A3,LPIN=A1,EN=A2,SEP=3;
 const uint8_t ANODE[6]={10,8,7,6,5,4};       // tube1(left)..tube6(right)
 
@@ -31,6 +31,7 @@ const unsigned long SPIN_FRAME_MS = 65;
 uint8_t digitVal[6]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};  // 0xFF = blank
 int lastSoc=-1; uint8_t ledBright=255;
 uint8_t dispMode=0; int lastLoad=0;          // load in 0.1kW
+uint16_t tubeDwell=2800;                     // us per tube per refresh
 int battDisT=0;                              // battery discharge, 0.1kW
 uint8_t animMode=0; uint16_t animPhase=0;    // LED animation; 4 = live flow
 int gridT=0, solarT=0; bool gridExport=false; // 0.1kW units
@@ -42,7 +43,7 @@ int8_t mover=0;                              // round-robin: which digit steps n
 unsigned long lastWalk=0, lastSpin=0, spinStart=0;
 bool spinning=false;
 
-char rxBuf[21]; uint8_t rxLen=0;
+char rxBuf[22]; uint8_t rxLen=0;
 
 void pwmInit(){ICR1=TOP;OCR1A=0;TCCR1A=_BV(WGM11)|_BV(COM1A1);TCCR1B=_BV(WGM13)|_BV(WGM12)|_BV(CS10);DDRB|=_BV(DDB1);}
 void shift16(uint16_t v){
@@ -167,6 +168,11 @@ void animFrame(){
       uint8_t b=sin8((uint8_t)(animPhase>>2)-i*42);
       leds[i].nscale8(b<70?70:b);
     }
+    // speed scales with total power: crawl near zero, max at ~10kW
+    ledC->showLeds(ledBright);
+    long spd=2+(tot>100?100:tot)*22/100;   // 2..24 phase units per frame
+    animPhase+=spd;
+    return;
   }
   ledC->showLeds(ledBright);
   animPhase+=8;
@@ -193,6 +199,8 @@ void applyPacket(const char* p, uint8_t len){
     gridT=(p[13]-'0')*100+(p[14]-'0')*10+(p[15]-'0');
     solarT=(p[16]-'0')*100+(p[17]-'0')*10+(p[18]-'0');
   }
+  if(len>=20 && p[19]>='0' && p[19]<='9')
+    tubeDwell=600+(uint16_t)(p[19]-'0')*250;   // 600..2850us
   dispMode=newMode;
   digitalWrite(SEP, dispMode==1);         // decimal point on in mode 1
   if(dispMode==1) layoutMode1(); else buildDigits(false);
@@ -206,11 +214,49 @@ void mux(unsigned long ms){
       if(digitVal[i]>9) continue;
       shift16(1U<<digitVal[i]);
       digitalWrite(ANODE[i],HIGH);
-      delayMicroseconds(2800);
+      delayMicroseconds(tubeDwell);
       digitalWrite(ANODE[i],LOW);
       shift16(0);
     }
   }
+}
+
+void runSweep(){
+  uint8_t saved[6];
+  for(uint8_t i=0;i<6;i++) saved[i]=digitVal[i];
+  // 1: wave sweeps left->right, each tube counting up to 9 (staggered)
+  for(int8_t ph=0; ph<=9+2*5; ph++){
+    for(uint8_t i=0;i<6;i++){
+      int8_t v=ph-2*i;
+      digitVal[i] = (v<0) ? saved[i] : (v>9?9:v);
+    }
+    mux(150);
+  }
+  // 2: random decay 9->0, each tube at its own pace (~4-10s)
+  uint8_t val[6]; unsigned long per[6], nxt[6];
+  unsigned long t0=millis();
+  for(uint8_t i=0;i<6;i++){ val[i]=9; per[i]=random(400,1100); nxt[i]=t0+per[i]; digitVal[i]=9; }
+  bool busy=true;
+  while(busy){
+    busy=false;
+    unsigned long now=millis();
+    for(uint8_t i=0;i<6;i++){
+      if(val[i]>0){
+        busy=true;
+        if(now>=nxt[i]){ val[i]--; nxt[i]+=per[i]; digitVal[i]=val[i]; }
+      }
+    }
+    mux(30);
+  }
+  mux(400);
+  // 3: blanks go blank; live digits grow 0 -> current value
+  for(int8_t ph=0; ph<=9; ph++){
+    for(uint8_t i=0;i<6;i++){
+      digitVal[i] = (saved[i]>9) ? 0xFF : (ph<saved[i]?ph:saved[i]);
+    }
+    mux(80);
+  }
+  for(uint8_t i=0;i<6;i++) digitVal[i]=saved[i];
 }
 
 void runDemo(){
@@ -245,14 +291,15 @@ void pollSerial(){
   while(Serial.available()){
     char c=Serial.read();
     if(c=='\n'){ rxBuf[rxLen]=0;
-      if(rxLen==7||rxLen==8||rxLen==9||rxLen==12||rxLen==19) applyPacket(rxBuf,rxLen);
+      if(rxLen==7||rxLen==8||rxLen==9||rxLen==12||rxLen==19||rxLen==20) applyPacket(rxBuf,rxLen);
       else if(rxLen==1&&rxBuf[0]=='X') runDemo();
+      else if(rxLen==1&&rxBuf[0]=='S') runSweep();
       else if(rxLen==2&&rxBuf[0]=='A'&&rxBuf[1]>='0'&&rxBuf[1]<='4'){
         animMode=rxBuf[1]-'0';
         if(animMode==0) restoreLeds();
       }
       rxLen=0; }
-    else if(rxLen<20) rxBuf[rxLen++]=c;
+    else if(rxLen<21) rxBuf[rxLen++]=c;
     else rxLen=0;
   }
 }
@@ -269,6 +316,7 @@ void setup(){
   ledC=&FastLED.addLeds<WS2812,11,GRB>(leds,NUM_LEDS);
   fill_solid(leds,NUM_LEDS,CRGB::Black);
   ledC->showLeds(255);
+  randomSeed(analogRead(A6)^micros());
   lastWalk=lastSpin=millis();
 }
 
@@ -276,19 +324,10 @@ void loop(){
   pollSerial();
   unsigned long now=millis();
 
-  if(spinning){
-    if(now-spinStart>=SPIN_LEN_MS){ spinning=false;
-      if(dispMode==1) layoutMode1(); else layoutSoc(); }
-    else{
-      uint8_t frame=(now-spinStart)/SPIN_FRAME_MS;
-      for(uint8_t i=0;i<6;i++) digitVal[i]=(frame+i)%10;
-    }
-  } else {
-    if(now-lastSpin>=SPIN_EVERY_MS){ spinning=true; spinStart=now; lastSpin=now; }
-    else if(dispMode==0 && now-lastWalk>=WALK_STEP_MS){
-      lastWalk=now;
-      walkStep();
-    }
+  if(now-lastSpin>=SPIN_EVERY_MS){ lastSpin=now; runSweep(); }
+  else if(dispMode==0 && now-lastWalk>=WALK_STEP_MS){
+    lastWalk=now;
+    walkStep();
   }
 
   if(animMode>0 && now-lastAnimFrame>=40){ lastAnimFrame=now; animFrame(); }
@@ -297,7 +336,7 @@ void loop(){
     if(digitVal[i]>9) continue;
     shift16(1U<<digitVal[i]);
     digitalWrite(ANODE[i],HIGH);
-    delayMicroseconds(2800);
+    delayMicroseconds(tubeDwell);
     digitalWrite(ANODE[i],LOW);
     shift16(0);
   }
