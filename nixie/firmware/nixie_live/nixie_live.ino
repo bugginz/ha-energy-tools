@@ -32,7 +32,7 @@ uint8_t digitVal[6]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};  // 0xFF = blank
 int lastSoc=-1; uint8_t ledBright=255;
 uint8_t dispMode=0; int lastLoad=0;          // load in 0.1kW
 uint16_t tubeDwell=2800;                     // us per tube per refresh
-int battDisT=0;                              // battery discharge, 0.1kW
+int battDisT=0, battChgT=0;                  // battery discharge/charge, 0.1kW
 uint8_t animMode=0; uint16_t animPhase=0;    // LED animation; 4 = live flow
 uint8_t animSpeed=6;                         // 1-9, 4 = former baseline
 int gridT=0, solarT=0; bool gridExport=false; // 0.1kW units
@@ -179,6 +179,41 @@ void animFrame(){
     long spd=2L*animSpeed+(tot>100?100:tot)*24/100;
     animPhase+=spd;
     return;
+  } else if(animMode==5){
+    // battery-centric encoding (docs/nixie-led-design.md):
+    // charging = chase inward, colour of the charging source; discharging =
+    // green chase outward; idle = off with a faint 5s heartbeat breathe.
+    const CRGB YEL=CRGB(252,211,77), VIO=CRGB(167,139,250), GRN=CRGB(34,197,94);
+    int pw = battChgT>0 ? battChgT : battDisT;
+    fill_solid(leds,NUM_LEDS,CRGB::Black);
+    if(pw<1){                             // idle heartbeat on one LED
+      uint16_t t=millis()%5000;
+      if(t<1000){
+        uint8_t b=(t<500)?(uint8_t)(t*255/500):(uint8_t)((1000-t)*255/500);
+        leds[2]=GRN; leds[2].nscale8(b/4+8);
+      }
+      ledC->showLeds(ledBright); return;
+    }
+    // rate encoded twice: pairs lit (1-3 mirrored) and cycle time 2.0s->0.4s
+    uint8_t cnt = pw<5?1: pw<10?2: pw<20?3: pw<35?4: pw<50?5:6;
+    uint8_t pairs = cnt<=2?1: cnt<=4?2:3;
+    int cyc = pw<=2?2000: pw>=50?400: (int)(2000-((long)(pw-2)*1600)/48);
+    CRGB base[6];
+    if(battChgT>0){
+      int gShare=(!gridExport && gridT>0) ? (gridT<battChgT?gridT:battChgT) : 0;
+      uint8_t nV=(uint8_t)((6L*gShare+battChgT/2)/battChgT);
+      if(gShare>0&&nV==0)nV=1; if(nV>6)nV=6;
+      for(uint8_t i=0;i<6;i++) base[i]=(i>=6-nV)?VIO:YEL;
+    } else for(uint8_t i=0;i<6;i++) base[i]=GRN;
+    uint8_t step=(uint8_t)(((uint32_t)(millis()%cyc))*3/cyc);   // 0..2
+    for(uint8_t k=0;k<pairs;k++){
+      int8_t q=(int8_t)step-k; if(q<0)q+=3;
+      uint8_t li = battChgT>0 ? q : 2-q;  // inward when charging, outward when not
+      uint8_t fade = 255>>k;              // head bright, trail dimmer
+      leds[li]=base[li];       leds[li].nscale8(fade);
+      leds[5-li]=base[5-li];   leds[5-li].nscale8(fade);
+    }
+    ledC->showLeds(ledBright); return;
   }
   ledC->showLeds(ledBright);
   animPhase+=2*animSpeed;
@@ -200,6 +235,8 @@ void applyPacket(const char* p, uint8_t len){
   if(len>=12) lastLoad=(p[9]-'0')*100+(p[10]-'0')*10+(p[11]-'0');
   int pw=(p[3]-'0')*100+(p[4]-'0')*10+(p[5]-'0');
   battDisT=(p[6]=='D')?pw:0;
+  battChgT=(p[6]=='C')?pw:0;
+  battChgT=(p[6]=='C')?pw:0;
   if(len>=19){
     gridExport=(p[12]=='E');
     gridT=(p[13]-'0')*100+(p[14]-'0')*10+(p[15]-'0');
@@ -207,7 +244,7 @@ void applyPacket(const char* p, uint8_t len){
   }
   if(len>=20 && p[19]>='0' && p[19]<='9')
     tubeDwell=600+(uint16_t)(p[19]-'0')*250;   // 600..2850us
-  if(len>=21 && p[20]>='0' && p[20]<='4'){
+  if(len>=21 && p[20]>='0' && p[20]<='5'){
     uint8_t na=p[20]-'0';
     if(na!=animMode){ animMode=na; if(animMode==0) restoreLeds(); }
   }
@@ -306,7 +343,7 @@ void pollSerial(){
       if(rxLen>=7&&rxLen<=22&&rxLen!=10&&rxLen!=11&&rxLen!=13&&rxLen!=14&&rxLen!=15&&rxLen!=16&&rxLen!=17&&rxLen!=18) applyPacket(rxBuf,rxLen);
       else if(rxLen==1&&rxBuf[0]=='X') runDemo();
       else if(rxLen==1&&rxBuf[0]=='S') runSweep();
-      else if(rxLen==2&&rxBuf[0]=='A'&&rxBuf[1]>='0'&&rxBuf[1]<='4'){
+      else if(rxLen==2&&rxBuf[0]=='A'&&rxBuf[1]>='0'&&rxBuf[1]<='5'){
         animMode=rxBuf[1]-'0';
         if(animMode==0) restoreLeds();
       }

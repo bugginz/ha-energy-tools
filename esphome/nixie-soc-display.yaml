@@ -93,7 +93,7 @@ select:
   - platform: template
     name: "Nixie LED animation"
     id: led_anim
-    options: ["Off", "Wave", "Comet", "Fill", "Flow"]
+    options: ["Off", "Wave", "Comet", "Fill", "Flow", "Battery"]
     initial_option: "Off"
     restore_value: true
     optimistic: true
@@ -101,7 +101,8 @@ select:
       - lambda: |-
           if (id(flash_client).state) return;
           const char* c = x == "Wave" ? "A1\n" : x == "Comet" ? "A2\n"
-                        : x == "Fill" ? "A3\n" : x == "Flow" ? "A4\n" : "A0\n";
+                        : x == "Fill" ? "A3\n" : x == "Flow" ? "A4\n"
+                        : x == "Battery" ? "A5\n" : "A0\n";
           id(nixie_uart).write_str(c);
   - platform: template
     name: "Nixie display mode"
@@ -139,6 +140,11 @@ number:
     initial_value: 9
     restore_value: true
     optimistic: true
+
+text_sensor:
+  - platform: homeassistant
+    id: ha_sun
+    entity_id: sun.sun
 
 sensor:
   - platform: homeassistant
@@ -192,6 +198,9 @@ interval:
           } else {
             solar_w = id(ha_solar).state;   // cloud fallback
           }
+          // derivation error shows up as phantom solar: zero it when the sun
+          // is down, and deadband small readings during the day
+          if (id(ha_sun).state == "below_horizon" || solar_w < 250.0) solar_w = 0;
           int solar_tenths = isnan(solar_w) ? 0 : (int) round(solar_w / 100.0);
           if (solar_tenths < 0) solar_tenths = 0;
           if (solar_tenths > 999) solar_tenths = 999;
@@ -200,7 +209,8 @@ interval:
           char anim = id(led_anim).state == "Wave" ? '1'
                     : id(led_anim).state == "Comet" ? '2'
                     : id(led_anim).state == "Fill" ? '3'
-                    : id(led_anim).state == "Flow" ? '4' : '0';
+                    : id(led_anim).state == "Flow" ? '4'
+                    : id(led_anim).state == "Battery" ? '5' : '0';
           char aspd = '0' + (int) id(anim_speed).state;
           snprintf(buf, sizeof(buf), "%03d%03d%c%c%c%03d%c%03d%03d%c%c%c\n",
                    soc, net_tenths, dir, bright, mode, load_tenths,

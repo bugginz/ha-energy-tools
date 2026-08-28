@@ -24,7 +24,7 @@ automation:
         target:
           entity_id: number.living_room_nixie_soc_display_nixie_led_brightness
         data:
-          value: 0
+          value: 1   # not 0: keep the idle heartbeat faintly visible at night
 
   - id: nixie_morning_restore
     alias: "Nixie: restore in the morning"
