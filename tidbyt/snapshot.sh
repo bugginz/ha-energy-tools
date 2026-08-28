@@ -67,12 +67,23 @@ SUN_STATE=$(get sun.sun 2>/dev/null || echo below_horizon)
 #     busbar:   house = invac + grid          (grid +import / -export)
 #     inverter: invac = solar - batt          (batt +charging / -discharging)
 # The clamps are three measurements of a two-degree-of-freedom system, so they
-# over-determine it and disagree by ~25W. We keep the two headline numbers
-# measured (house from the circuit clamps, inverter from its own clamp) and let
-# the disagreement land on grid, which is the physical balancing point anyway.
+# over-determine it and disagree by ~40W. GRID IS THE ARBITER OF ITSELF: the ch1
+# CT measures it directly, so the diagram draws grid flow only when that clamp
+# sees it — deriving grid as house - invac invented 149 phantom import events in
+# one night (worst 1.47kW) from sampling skew between two other clamps, while
+# the real clamp saw exactly one (318W of battery ramp lag). Inverter stays
+# measured too (its clamp feeds the battery figure at night); the ~40W
+# disagreement lands on house, where it is invisible at one decimal place.
 # The cloud is then used for ONE thing: how to split the inverter's output
 # between solar and battery. Everything else follows by arithmetic.
-read -r LOAD GRID NET SOLAR BAL BAL_ADJ < <(python3 -c "
+# Blip suppression state: the raw grid clamp reading from the PREVIOUS tick.
+# A real import event must hold for two consecutive ticks (~60s) before it is
+# drawn; battery ramp lag lasts seconds and never shows. Lives in tmpfs beside
+# the snapshot, so a reboot forgets it harmlessly.
+GRID_PREV_FILE=/dev/shm/tronbyt/grid_prev
+GRID_PREV=$(cat "$GRID_PREV_FILE" 2>/dev/null || echo 0)
+
+read -r LOAD GRID NET SOLAR BAL BAL_ADJ GRID_RAW < <(python3 -c "
 PV_MAX = 7.0                                # array peaks at 5.64kW; a stale
                                             # cloud figure must not exceed this
 def w(v):
@@ -89,18 +100,25 @@ if house is None or invac is None:
     if night:
         solar, batt = 0.0, -(house - (float('$GRIDIN') - float('$GRIDOUT')))
     grid = house + batt - solar
+    graw = grid
     adj = 0.0
 else:
-    grid = house - invac                    # busbar identity, exact by fiat
-    adj = grid - grid_c if grid_c is not None else 0.0
-    if abs(grid) < 0.10:
-        # Below ~100W the derived grid figure is just the clamps disagreeing,
-        # and it lands either side of the display's 50W draw threshold from one
-        # tick to the next: the pylon sparked and breathed erratically with no
-        # dots on the wire. Snap it to zero and let house absorb the difference
-        # (tens of watts — invisible at one decimal place in kW) so the balance
-        # stays exact. Real grid flow is orders of magnitude larger than this.
-        house, grid = invac, 0.0
+    # Grid from its own CT, gated twice: a deadband (under 100W the clamp is
+    # reading meter offset, not flow) and two-tick persistence (a figure only
+    # counts if the PREVIOUS tick also saw it, so a seconds-long battery-lag
+    # blip cannot flicker the pylon; sustained flow appears one tick late,
+    # which nobody can see).
+    graw = grid_c if grid_c is not None else house - invac
+    prev = float('$GRID_PREV')
+    grid = graw
+    if abs(graw) < 0.10 or abs(prev) < 0.10 or (graw > 0) != (prev > 0):
+        grid = 0.0
+    # House absorbs the clamp disagreement so the busbar identity holds
+    # exactly. adj records how much it had to move — sustained growth here
+    # means a CT is lying.
+    house_meas = house
+    house = invac + grid
+    adj = house_meas - house
     if night:
         # After dark the inverter's AC output IS the battery. Nothing else can
         # be true, so do not let a stale cloud figure invent solar.
@@ -119,8 +137,9 @@ err = (solar + max(-batt, 0.0) + max(grid, 0.0)) - (house + max(batt, 0.0) + max
 # adj = how far the grid clamp had to move to close the busbar identity. Normally
 # tens of watts (meter offset); a sustained large value means a CT is lying.
 print(round(house, 2), round(grid, 2), round(batt, 2), round(solar, 2),
-      round(err, 3), round(adj, 3))
+      round(err, 3), round(adj, 3), round(graw if 'graw' in dir() else 0.0, 3))
 ")
+echo "$GRID_RAW" > "$GRID_PREV_FILE"
 
 # Which source is carrying the house right now — drives the icon on both faces.
 SRC=$(python3 -c "
