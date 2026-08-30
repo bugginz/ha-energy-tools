@@ -111,7 +111,15 @@ else:
     graw = grid_c if grid_c is not None else house - invac
     prev = float('$GRID_PREV')
     grid = graw
-    if abs(graw) < 0.10 or abs(prev) < 0.10 or (graw > 0) != (prev > 0):
+    if abs(graw) < 0.10:
+        grid = 0.0
+    elif abs(graw) < 0.50 and (abs(prev) < 0.10 or (graw > 0) != (prev > 0)):
+        # Persistence applies ONLY to small readings — battery-lag blips are a
+        # few hundred watts for a few seconds. A large reading is trusted
+        # immediately: on 2026-08-30 the free-window charge ramped to 13.6kW
+        # and the gate held grid at 0 for a tick, which forced the busbar
+        # identity to publish house = invac = -7.3kW. A 13kW figure on a
+        # direct, seconds-fresh CT is not a blip.
         grid = 0.0
     # House absorbs the clamp disagreement so the busbar identity holds
     # exactly. adj records how much it had to move — sustained growth here
@@ -174,6 +182,28 @@ except Exception:
 PYEOF
 )
 
+# Car draw, kW — direct from the Ogemray plug (seconds fresh). The charger is
+# on a clamped circuit, so this is a SUBSET of LOAD; the 5-node displays
+# subtract it to get house-without-car. Zero when the switch is off or the
+# draw is under 100W (the plug's own idle burn is not the car charging).
+CH_SW=$(get switch.ogemray25a_70af09ed9950 2>/dev/null || echo off)
+CH_W=$(getn sensor.ogemray25a_70af09ed9950_power 0)
+CARKW=$(python3 -c "print(round(float('$CH_W') / 1000.0, 2) if '$CH_SW' == 'on' and float('$CH_W') > 100 else 0.0)")
+
+# Is foxctl deliberately steering surplus into the car right now? Decides
+# whether solar is attributed to the car FIRST on the flow diagrams. The
+# api/state ev_divert field is a human-readable sentence; 'charger ON' at the
+# front is its machine-readable part (fragile by design — if foxctl reworks
+# the wording, this quietly reverts to house-first attribution, which is the
+# safe default).
+EVDIV=$(curl -sf -m 5 localhost:8770/api/state 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+print(1 if 'charger ON' in str(d.get('ev_divert') or '') else 0)" || echo 0)
+
 mkdir -p "$(dirname "$OUT")"
 TMP=$(mktemp "$OUT.XXXXXX")
 cat > "$TMP" << EOF
@@ -188,6 +218,8 @@ NET=$NET
 SOLAR=$SOLAR
 SRC=$SRC
 CAR=$CAR
+CARKW=$CARKW
+EVDIV=$EVDIV
 COAST=$COAST
 KWH=$KWH
 TNOW=$TNOW
