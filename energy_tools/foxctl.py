@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.76.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -139,6 +139,8 @@ DEFAULT_CONFIG = {
         "auto_apply": False,        # let the loop apply without a human pressing apply
         "set_work_mode": True,      # may change work mode
         "set_force_charge": False,  # may push grid force-charge windows (more invasive)
+        "transport": "modbus",      # "modbus" = RS485 via foxess_modbus, cloud as fallback;
+                                    # "cloud" pins every read/write to the FoxESS OpenAPI
     },
     # Push notifications when a decision is worth a human look (via HA notify service).
     "notify": {"enabled": False, "service": "notify.mobile_app_phoney",
@@ -930,6 +932,283 @@ def scheduler_clear_own(cfg, fox):
     _SCHED["mine_key"] = None
     _sched_save(cfg)
     return r
+
+
+# --- Direct inverter control over RS485 (foxess_modbus in HA) -----------------
+# PRIMARY transport for dynamic force-charge/discharge and telemetry since
+# v1.77.0; every cloud call it replaces stays in place as the automatic
+# fallback (control.transport="cloud" forces the old path entirely).
+#
+# The modbus remote-control modes are IMMEDIATE — no end time on the inverter —
+# so the window/cap that the cloud scheduler used to enforce in hardware is
+# enforced in three layers instead:
+#   1. the inverter's own remote-control watchdog: the integration re-asserts
+#      the mode every poll with a ~20s timeout, so HA/link death self-reverts;
+#   2. modbus_ctl_tick() below: foxctl stops the mode when the recorded window
+#      elapses or the SoC cap is reached (every ~2min cycle);
+#   3. an HA automation ("foxctl stuck force mode watchdog") that reverts a
+#      force mode held for hours with foxctl dead.
+# The BASE free-window group (10:00-14:00 fill) deliberately STAYS on the cloud
+# scheduler: it must keep working with HA down, and this KH firmware (KH_133,
+# master 1.60) exposes no charge-period registers over modbus.
+
+MB_ENTITIES = {
+    "soc": "sensor.battery_soc", "pv": "sensor.solar_power_local",
+    "load": "sensor.load_power", "grid_in": "sensor.grid_consumption",
+    "feed_in": "sensor.feed_in", "chg": "sensor.battery_charge",
+    "dis": "sensor.battery_discharge", "conn": "sensor.connection_status",
+    "work_mode": "select.work_mode", "min_soc_on_grid": "number.min_soc_on_grid",
+    "fc_power": "number.force_charge_power", "fd_power": "number.force_discharge_power",
+    "pv1": "sensor.pv1_power", "pv2": "sensor.pv2_power",
+    "pv3": "sensor.pv3_power", "pv4": "sensor.pv4_power",
+}
+# select option <-> FoxESS cloud mode name
+MB_FORCE_SELECT = {"ForceCharge": "Force Charge", "ForceDischarge": "Force Discharge"}
+MB_SELECT_TO_CLOUD = {"Self Use": "SelfUse", "Feed-in First": "Feedin", "Back-up": "Backup",
+                      "Force Charge": "ForceCharge", "Force Discharge": "ForceDischarge"}
+MB_CLOUD_TO_SELECT = {v: k for k, v in MB_SELECT_TO_CLOUD.items()}
+
+_MBCTL = {"active": None, "start": None, "until": 0.0, "cap": None, "power_w": None, "restore": None, "loaded": False}
+_MB = {"inst": None}
+
+
+class ModbusInverter:
+    """foxess_modbus control/telemetry via the HA REST API (reuses the HA token)."""
+
+    def __init__(self, cfg):
+        self.url = cfg["ha"]["url"].rstrip("/")
+        self.token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+
+    def _get(self, key):
+        req = urllib.request.Request(f"{self.url}/api/states/{MB_ENTITIES[key]}",
+                                     headers={"Authorization": "Bearer " + self.token})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return json.loads(r.read().decode())
+        except Exception:
+            return None
+
+    def _svc(self, domain, service, data):
+        req = urllib.request.Request(f"{self.url}/api/services/{domain}/{service}",
+                                     data=json.dumps(data).encode(), method="POST",
+                                     headers={"Authorization": "Bearer " + self.token,
+                                              "Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=15).read()
+
+    def state(self, key):
+        d = self._get(key)
+        return d.get("state") if d else None
+
+    def num(self, key):
+        try:
+            return float(self.state(key))
+        except (TypeError, ValueError):
+            return None
+
+    def available(self) -> bool:
+        """Live link + a numeric, fresh SoC — the gate every modbus-first path checks."""
+        if self.state("conn") != "Connected":
+            return False
+        d = self._get("soc")
+        try:
+            float(d["state"])
+            age = time.time() - datetime.fromisoformat(
+                d["last_updated"].replace("Z", "+00:00")).timestamp()
+            return age < 180
+        except Exception:
+            return False
+
+    def telemetry(self):
+        """Cloud-shaped VARS dict from the modbus sensors, or None if the link is down."""
+        if not self.available():
+            return None
+        v = {k: self.num(k) for k in ("soc", "pv", "load", "grid_in", "feed_in", "chg", "dis",
+                                      "pv1", "pv2", "pv3", "pv4")}
+        if v["soc"] is None:
+            return None
+        out = {"SoC": v["soc"], "pvPower": v["pv"], "loadsPower": v["load"],
+               "gridConsumptionPower": v["grid_in"], "feedinPower": v["feed_in"],
+               "batChargePower": v["chg"], "batDischargePower": v["dis"],
+               "pv5Power": 0.0, "pv6Power": 0.0}
+        for i in range(1, 5):
+            out[f"pv{i}Power"] = v[f"pv{i}"]
+        # pv total: the template sensor can lag a reload — fall back to the string sum
+        if out["pvPower"] is None:
+            out["pvPower"] = sum(v[f"pv{i}"] or 0.0 for i in range(1, 5))
+        return {k: (0.0 if x is None else x) for k, x in out.items()}
+
+    def work_mode_select(self):
+        return self.state("work_mode")
+
+    def work_mode_cloud_name(self):
+        """Underlying work mode in cloud naming. While OUR force mode is asserted, report the
+        mode it will revert to — matching what the cloud WorkMode setting reports during a
+        scheduler window, so downstream compare/set logic keeps its old semantics."""
+        s = self.work_mode_select()
+        if s in ("Force Charge", "Force Discharge"):
+            return _MBCTL.get("restore") or "SelfUse"
+        return MB_SELECT_TO_CLOUD.get(s)
+
+    def start_force(self, cloud_mode, power_kw):
+        power = MB_ENTITIES["fc_power" if cloud_mode == "ForceCharge" else "fd_power"]
+        self._svc("number", "set_value", {"entity_id": power, "value": round(float(power_kw), 1)})
+        self._svc("select", "select_option",
+                  {"entity_id": MB_ENTITIES["work_mode"], "option": MB_FORCE_SELECT[cloud_mode]})
+
+    def stop_force(self, restore_cloud_mode=None):
+        option = MB_CLOUD_TO_SELECT.get(restore_cloud_mode or "SelfUse", "Self Use")
+        self._svc("select", "select_option",
+                  {"entity_id": MB_ENTITIES["work_mode"], "option": option})
+
+    def set_plain_mode(self, cloud_mode):
+        self._svc("select", "select_option",
+                  {"entity_id": MB_ENTITIES["work_mode"], "option": MB_CLOUD_TO_SELECT[cloud_mode]})
+
+
+def _modbus(cfg):
+    """The shared ModbusInverter, or None when control.transport='cloud' pins the old path."""
+    if (cfg.get("control") or {}).get("transport", "modbus") != "modbus":
+        return None
+    if _MB["inst"] is None:
+        try:
+            _MB["inst"] = ModbusInverter(cfg)
+        except Exception as e:
+            print(f"modbus transport init failed: {e}", file=sys.stderr)
+            return None
+    return _MB["inst"]
+
+
+def _mbctl_load(cfg):
+    if not _MBCTL["loaded"]:
+        try:
+            d = json.loads((_state_dir(cfg) / "modbus_ctl.json").read_text())
+            for k in ("active", "start", "until", "cap", "power_w", "restore"):
+                _MBCTL[k] = d.get(k) if k != "until" else float(d.get(k) or 0.0)
+        except Exception:
+            pass
+        _MBCTL["loaded"] = True
+
+
+def _mbctl_save(cfg):
+    try:
+        (_state_dir(cfg) / "modbus_ctl.json").write_text(json.dumps(
+            {k: _MBCTL[k] for k in ("active", "start", "until", "cap", "power_w", "restore")}))
+    except Exception as e:
+        print(f"modbus_ctl persist failed: {e}", file=sys.stderr)
+
+
+def _window_end_epoch(group):
+    now = datetime.now()
+    end = now.replace(hour=int(group.get("endHour") or 0),
+                      minute=int(group.get("endMinute") or 0), second=0, microsecond=0)
+    if end <= now:
+        end += timedelta(days=1)
+    return end.timestamp()
+
+
+def control_write_own(cfg, fox, group):
+    """Start the force window in `group`: modbus remote control when the link is up,
+    else the cloud scheduler exactly as before. Same return contract as
+    scheduler_write_own (None = deferred/failed, callers keep their messaging)."""
+    mb = _modbus(cfg)
+    if mb is None or not mb.available():
+        return scheduler_write_own(cfg, fox, group)
+    _mbctl_load(cfg)
+    restore = mb.work_mode_cloud_name() or "SelfUse"
+    try:
+        mb.start_force(group["workMode"], group["fdPwr"] / 1000.0)
+    except Exception as e:
+        print(f"modbus force start failed → cloud fallback: {e}", file=sys.stderr)
+        return scheduler_write_own(cfg, fox, group)
+    now = datetime.now()
+    _MBCTL.update({"active": group["workMode"], "start": f"{now.hour:02d}:{now.minute:02d}",
+                   "until": _window_end_epoch(group), "cap": int(group.get("fdSoc") or 100),
+                   "power_w": int(group.get("fdPwr") or 0),
+                   "restore": restore if restore not in ("ForceCharge", "ForceDischarge") else "SelfUse"})
+    _mbctl_save(cfg)
+    if _SCHED.get("mine_key"):
+        scheduler_clear_own(cfg, fox)          # never leave a cloud twin fighting the modbus mode
+    return {"transport": "modbus"}
+
+
+def control_clear_own(cfg, fox):
+    """Stop foxctl's force mode wherever it lives: modbus mode if one is asserted, and any
+    cloud group of ours (scheduler_clear_own is already a safe no-op when there is none)."""
+    _mbctl_load(cfg)
+    r = None
+    mb = _modbus(cfg)
+    cur = mb.work_mode_select() if mb is not None else None
+    if _MBCTL.get("active") or cur in ("Force Charge", "Force Discharge"):
+        if mb is not None:
+            try:
+                mb.stop_force(_MBCTL.get("restore"))
+                r = {"transport": "modbus"}
+            except Exception as e:
+                # The integration stops asserting the mode when HA/link dies, and the
+                # inverter's ~20s watchdog reverts it — safe to just log and move on.
+                print(f"modbus force stop failed (inverter watchdog will revert): {e}", file=sys.stderr)
+        _MBCTL.update({"active": None, "start": None, "until": 0.0, "cap": None})
+        _mbctl_save(cfg)
+    cr = scheduler_clear_own(cfg, fox)
+    return r if r is not None else cr
+
+
+def modbus_ctl_tick(cfg, soc):
+    """Per-cycle software window for the modbus force modes (they have no end time on the
+    inverter): stop on window elapse or SoC cap, and drop our state if the mode was ended
+    externally (app/HA user). Returns a status message or None."""
+    _mbctl_load(cfg)
+    if not _MBCTL.get("active"):
+        return None
+    mb = _modbus(cfg)
+    if mb is None:
+        _MBCTL.update({"active": None, "start": None, "until": 0.0, "cap": None}); _mbctl_save(cfg)
+        return "modbus force state dropped (transport switched to cloud)"
+    cur = mb.work_mode_select()
+    if cur not in ("Force Charge", "Force Discharge"):
+        _MBCTL.update({"active": None, "start": None, "until": 0.0, "cap": None}); _mbctl_save(cfg)
+        log_event("disable", "modbus force mode ended externally")
+        return "modbus force mode ended externally"
+    if time.time() >= _MBCTL["until"]:
+        reason = "window elapsed"
+    elif (_MBCTL["active"] == "ForceCharge" and isinstance(soc, (int, float))
+          and _MBCTL.get("cap") and soc >= _MBCTL["cap"]):
+        reason = f"cap {_MBCTL['cap']}% reached"
+    else:
+        return None
+    try:
+        mb.stop_force(_MBCTL.get("restore"))
+    except Exception as e:
+        print(f"modbus force stop failed ({reason}), retrying next cycle: {e}", file=sys.stderr)
+        return None
+    _MBCTL.update({"active": None, "start": None, "until": 0.0, "cap": None})
+    _mbctl_save(cfg)
+    _CHARGE["until"] = 0.0
+    log_event("disable", f"modbus force stop — {reason}")
+    return f"modbus force stop — {reason}"
+
+
+def control_status(cfg, fox):
+    """Scheduler view with the modbus force mode overlaid, so 'already charging/selling',
+    ev_divert gating and the dashboards see one truth regardless of transport. A cloud
+    read failure no longer kills the cycle — modbus may still be in charge."""
+    try:
+        sched = fox.scheduler_status()
+    except Exception as e:
+        print(f"scheduler read failed: {e}", file=sys.stderr)
+        sched = {"enabled": False, "active": None, "segment": None, "groups": [], "read_ok": False}
+    _mbctl_load(cfg)
+    if _MBCTL.get("active"):
+        mb = _modbus(cfg)
+        cur = mb.work_mode_select() if mb is not None else None
+        if cur in ("Force Charge", "Force Discharge"):
+            end = datetime.fromtimestamp(_MBCTL["until"])
+            seg = {"mode": _MBCTL["active"],
+                   "window": f"{_MBCTL.get('start') or '?'}-{end:%H:%M}",
+                   "fdSoc": _MBCTL.get("cap"), "fdPwr": _MBCTL.get("power_w"), "transport": "modbus"}
+            sched = {**sched, "enabled": True, "active": seg,
+                     "segment": sched.get("segment") or seg, "read_ok": True}
+    return sched
 
 
 def load_ov(cfg):
@@ -2632,24 +2911,38 @@ def gather_and_decide(cfg: dict) -> dict:
     # Local grid-main CT (A1 clamp, seconds-fresh, +import/−export) — None if absent/stale.
     gp_live, gp_live_age = ha.get_power_kw_fresh(cfg["ha"].get("grid_power_entity"), 180.0)
 
-    # foxctl is the SINGLE FoxESS poller: telemetry comes straight from the FoxESS API each cycle
-    # (one call), is published to MQTT for the dashboards, and on a fetch failure we reuse the last
-    # good values (cached) and flag stale so control holds. No dependency on the foxess-ha integration.
+    # Telemetry: modbus-first (foxess_modbus sensors in HA, 10s polls), FoxESS cloud as the
+    # fallback — the cloud serves one identical snapshot for ~2min, so decisions made from it
+    # lag ramps by minutes. Whichever source wins is published to MQTT for the dashboards; on
+    # a total fetch failure we reuse the last good values (cached) and flag stale so control holds.
     VARS = ["SoC", "pvPower", "loadsPower", "gridConsumptionPower", "feedinPower",
             "batChargePower", "batDischargePower",
             "pv1Power", "pv2Power", "pv3Power", "pv4Power", "pv5Power", "pv6Power"]
     real = {}; tsrc = "FoxESS"
-    try:
-        real = fox.real(VARS)
-        _TELE["last"] = real
-        _TELE["ts"] = time.time()
-        soc_ts = _TELE["ts"]
-        refresh_fox_quota(fox)          # hourly, and only once the API has proven reachable
-    except Exception as e:
-        print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
-        real = _TELE.get("last") or {}
-        soc_ts = _TELE.get("ts")
-        tsrc = "FoxESS(stale)" if real else "FoxESS(down)"
+    mb = _modbus(cfg)
+    if mb is not None:
+        mreal = mb.telemetry()
+        if mreal is not None:
+            real, tsrc = mreal, "Modbus"
+            _TELE["last"] = real
+            _TELE["ts"] = time.time()
+            soc_ts = _TELE["ts"]
+            try:
+                refresh_fox_quota(fox)  # keep proving the cloud fallback still answers
+            except Exception:
+                pass
+    if not real:
+        try:
+            real = fox.real(VARS)
+            _TELE["last"] = real
+            _TELE["ts"] = time.time()
+            soc_ts = _TELE["ts"]
+            refresh_fox_quota(fox)          # hourly, and only once the API has proven reachable
+        except Exception as e:
+            print(f"FoxESS telemetry fetch failed: {e}", file=sys.stderr)
+            real = _TELE.get("last") or {}
+            soc_ts = _TELE.get("ts")
+            tsrc = "FoxESS(stale)" if real else "FoxESS(down)"
     soc = float(real.get("SoC") or 0)
     pv = float(real.get("pvPower") or 0)
     load = float(real.get("loadsPower") or 0)
@@ -2671,7 +2964,7 @@ def gather_and_decide(cfg: dict) -> dict:
     # Cumulative energy counters (kWh, total_increasing) for the HA Energy dashboard.
     energy = update_energy(cfg, {"grid_import": grid_power, "grid_export": feedin_power,
                                  "battery_charge": bat_charge_power, "battery_discharge": bat_discharge_power,
-                                 "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc == "FoxESS" else _ENERGY.get("totals", {})
+                                 "solar": pv, "load": load, "ev": ev_kw or 0.0}) if tsrc in ("FoxESS", "Modbus") else _ENERGY.get("totals", {})
     # Actual car-charge session log (when + how much), from the live EV draw + cumulative EV kWh.
     car_sessions = track_charge_session(cfg, ev_kw, (energy or {}).get("ev"))
     # The car's SoC comes from WiCAN over OBD, which only reports while the ECU is awake —
@@ -2686,13 +2979,18 @@ def gather_and_decide(cfg: dict) -> dict:
     refresh = int(cfg.get("work_mode_refresh_cycles", 3))
     _WM["i"] += 1
     if _WM["value"] is None or _WM["i"] % refresh == 0:
-        try:                                  # don't let a flaky/rate-limited settings read crash the cycle
-            w = fox.work_mode()               # (which would freeze the cached value indefinitely)
-            _WM["value"], _WM["options"], _WM["ts"] = w.get("value"), w.get("enumList"), time.time()
-        except Exception as e:
-            print(f"work mode read failed (keeping cached '{_WM.get('value')}'): {e}", file=sys.stderr)
+        wmv = mb.work_mode_cloud_name() if mb is not None else None
+        if wmv is not None:                   # modbus select, seconds fresh and free
+            _WM["value"], _WM["options"], _WM["ts"] = wmv, WORK_MODES, time.time()
+        else:
+            try:                              # don't let a flaky/rate-limited settings read crash the cycle
+                w = fox.work_mode()           # (which would freeze the cached value indefinitely)
+                _WM["value"], _WM["options"], _WM["ts"] = w.get("value"), w.get("enumList"), time.time()
+            except Exception as e:
+                print(f"work mode read failed (keeping cached '{_WM.get('value')}'): {e}", file=sys.stderr)
         try:                                  # piggyback: detect a stranded high device min-SoC (legacy bug)
-            ms = fox.get_min_soc()
+            ms = mb.num("min_soc_on_grid") if mb is not None else None
+            ms = int(ms) if ms is not None else fox.get_min_soc()
             if ms is not None:
                 _WM["min_soc"] = ms
                 if ms > int(cfg["strategy"].get("inverter_min_soc", 10)) + 1:
@@ -2702,7 +3000,10 @@ def gather_and_decide(cfg: dict) -> dict:
         except Exception:
             pass
     wm = {"value": _WM["value"], "enumList": _WM["options"]}
-    sched = fox.scheduler_status()
+    # Enforce the modbus force window BEFORE building the scheduler view, so an elapsed/
+    # capped window never survives into this cycle's 'already charging' decision.
+    modbus_ctl_tick(cfg, soc)
+    sched = control_status(cfg, fox)
     sched_active = bool(sched["enabled"] and sched["active"] and sched["active"]["mode"] == "ForceCharge")
     # Persistence: if WE started a force-charge whose window hasn't elapsed, treat as charging even if
     # this scheduler read came back flaky — so hysteresis doesn't drop a charge mid-window (see 11:22 bug).
@@ -2996,7 +3297,7 @@ def manual_tick(cfg, snap):
     now = time.time()
     if now >= mo["until"]:                      # expired → revert to auto
         try:
-            scheduler_clear_own(cfg, fox)
+            control_clear_own(cfg, fox)
         except Exception as e:
             print(f"manual revert failed: {e}", file=sys.stderr)
         _CHARGE["until"] = 0.0
@@ -3010,7 +3311,7 @@ def manual_tick(cfg, snap):
     soc_now = snap.get("soc")
     if mo["mode"] == "sell" and isinstance(soc_now, (int, float)) and soc_now <= mo.get("min_soc", inv_floor):
         try:
-            scheduler_clear_own(cfg, fox)
+            control_clear_own(cfg, fox)
         except Exception as e:
             print(f"manual sell floor revert failed: {e}", file=sys.stderr)
         _OV["manual"] = None; save_ov(cfg)
@@ -3023,11 +3324,11 @@ def manual_tick(cfg, snap):
         return f"MANUAL {mo['mode']} until {hhmm} (active)"
     nd = datetime.now()
     if mo["mode"] == "charge":
-        scheduler_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
+        control_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
                                                    "ForceCharge", inv_floor, mo["cap"], mo["power"]))
         _CHARGE["until"] = mo["until"]
     else:
-        scheduler_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
+        control_write_own(cfg, fox, _sched_group((nd.hour, nd.minute), (end.hour, end.minute),
                                                    "ForceDischarge", inv_floor, inv_floor, mo["power"]))
     msg = f"MANUAL {mo['mode']} START until {hhmm} @ {mo['power']}kW"
     log_event("override", msg)
@@ -3275,14 +3576,14 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
             tot = now.hour * 60 + now.minute + mins
             eh, em = (tot // 60) % 24, tot % 60
             inv_floor = int(strat.get("inverter_min_soc", 10))   # constant device floor — never the survival number
-            scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
+            control_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
                                 "ForceDischarge", inv_floor, inv_floor, strat["force_charge_power_kw"]))
             m = (f"AUTO-SELL START until ~{eh:02d}:{em:02d} (sells toward {rec.get('sell_floor')}% survival "
                  f"[software-stopped]; inverter hard floor {inv_floor}% @ {strat['force_charge_power_kw']}kW)")
             msgs.append(m); log_event("sell", m, {"feedin_kw": snap.get("feedin_power"), "soc": snap.get("soc")})
         return "; ".join(msgs) or "selling"
     if already_selling and not rec.get("force_discharge"):
-        scheduler_clear_own(cfg, fox)
+        control_clear_own(cfg, fox)
         msgs.append("auto-sell STOP → removed foxctl's schedule group")
         log_event("disable", "auto-sell STOP → removed foxctl's schedule group")
     if rec["force_charge"]:
@@ -3311,14 +3612,15 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
                 # schedule (2026-07-13: it did, repeatedly). Clear any leftover own group so
                 # the guardian can install the base group next cycle.
                 _sched_load(cfg)
-                if _SCHED.get("mine_key"):
-                    scheduler_clear_own(cfg, fox)
+                _mbctl_load(cfg)
+                if _SCHED.get("mine_key") or _MBCTL.get("active"):
+                    control_clear_own(cfg, fox)
                 msgs.append("free window — base schedule owns the fill (no foxctl write)")
             elif psm is not None and 0 <= psm - nowm < 10:
                 msgs.append("force-charge wanted but <10min to peak — skipped")
             else:
                 eh, em = (tot // 60) % 24, tot % 60
-                r = scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
+                r = control_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),
                                         "ForceCharge", int(strat.get("inverter_min_soc", 10)),
                                         eff_target, strat["force_charge_power_kw"]))
                 if r is None:
@@ -3331,16 +3633,25 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
         # Stop only on the transition out of charging — one write, not every cycle. Removes OUR
         # group only (user schedule untouched); mine_key also catches a lingering group post-restart.
         _sched_load(cfg)
+        _mbctl_load(cfg)
         if ctrl.get("set_force_charge") and (already_charging or time.time() < _CHARGE["until"]
-                                             or _SCHED.get("mine_key")):
-            r = scheduler_clear_own(cfg, fox)
+                                             or _SCHED.get("mine_key") or _MBCTL.get("active")):
+            r = control_clear_own(cfg, fox)
             _CHARGE["until"] = 0.0
             if r is not None:
                 msgs.append("force-charge STOP → removed foxctl's schedule group")
                 log_event("disable", "force-charge STOP → removed foxctl's schedule group", {"band": rec.get("band")})
     if rec["action"] in ("SET_MODE", "FORCE_CHARGE") and ctrl.get("set_work_mode"):
         if snap["work_mode"] != rec["target_mode"]:
-            fox.set_work_mode(rec["target_mode"])
+            mb = _modbus(cfg)
+            if mb is not None and mb.available():
+                try:
+                    mb.set_plain_mode(rec["target_mode"])
+                except Exception as e:
+                    print(f"modbus work-mode write failed → cloud fallback: {e}", file=sys.stderr)
+                    fox.set_work_mode(rec["target_mode"])
+            else:
+                fox.set_work_mode(rec["target_mode"])
             msgs.append(f"work mode {snap['work_mode']} → {rec['target_mode']}")
             log_event("work_mode", f"{snap['work_mode']} → {rec['target_mode']}", {"band": rec.get("band")})
         else:
@@ -3357,7 +3668,7 @@ def force_charge_test(cfg: dict, minutes: int = 10) -> str:
     now = datetime.now()
     tot = now.hour * 60 + now.minute + max(1, int(minutes))
     eh, em = (tot // 60) % 24, tot % 60
-    scheduler_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em), "ForceCharge",
+    control_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em), "ForceCharge",
                         int(strat.get("inverter_min_soc", 10)), strat.get("max_soc", 90),
                         strat["force_charge_power_kw"]))
     msg = (f"force-charge TEST enabled {now.hour:02d}:{now.minute:02d}→{eh:02d}:{em:02d} "
@@ -3369,7 +3680,7 @@ def force_charge_test(cfg: dict, minutes: int = 10) -> str:
 def scheduler_off(cfg: dict) -> str:
     if not cfg["control"].get("allow_control"):
         return "control disabled (control.allow_control=false)"
-    scheduler_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
+    control_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
     _CHARGE["until"] = 0.0
     log_event("disable", "manual: removed foxctl's schedule group (user schedule untouched)")
     return "removed foxctl's schedule group (user schedule untouched)"
@@ -4387,7 +4698,7 @@ def make_handler(cfg):
                 try:
                     set_manual(cfg, None, 0, 0, 0)
                     if cfg["control"].get("allow_control"):
-                        scheduler_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
+                        control_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
                     _CHARGE["until"] = 0.0
                     snap = run_once(cfg, do_apply=True)
                     self._send(200, json.dumps({"cancelled": True, "applied": snap.get("applied")},

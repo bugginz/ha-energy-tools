@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.77.0 — inverter control and telemetry go direct over RS485; cloud demoted to fallback
+
+The foxess_modbus integration (Waveshare RS485→ETH, 10s polls) becomes the PRIMARY
+transport for everything foxctl does with the inverter; every cloud call it replaces
+stays in place and is used automatically whenever the modbus link is down
+(`control.transport: "cloud"` pins the old path entirely — the kill switch).
+
+**Telemetry**: `gather_and_decide` reads SoC/PV/load/grid/battery from the modbus HA
+sensors first (`telemetry_source: "Modbus"`), falling back to `fox.real()`. Decisions now
+see ramps in seconds instead of the cloud's ~2-minute snapshot cadence. Work mode and
+min-SoC reads likewise. `refresh_fox_quota` still runs on the modbus path so the fallback
+keeps proving itself reachable.
+
+**Dynamic force windows**: every `scheduler_write_own`/`scheduler_clear_own` call site
+(auto-sell, force-charge, manual overrides, force-charge test, cancel) now routes through
+`control_write_own`/`control_clear_own`: modbus remote control (`select.work_mode`
+Force Charge/Force Discharge + power numbers) when the link is up, the cloud scheduler
+group exactly as before when it is not. The modbus modes have no end time on the
+inverter, so the window/cap the cloud enforced in hardware is enforced in three layers:
+the inverter's own ~20s remote-control watchdog (HA/link death self-reverts), foxctl's
+`modbus_ctl_tick` (stops on window elapse / SoC cap each cycle, state persisted in
+`modbus_ctl.json` across restarts), and an HA automation that reverts a force mode held
+for hours with foxctl dead.
+
+**Deliberately still cloud**: the base 10:00–14:00 free-window fill group and its
+guardian (`ensure_base_schedule`/`smart_fill_tick`) — a standing schedule must keep
+working with HA down, and KH firmware 1.60 (KH_133) exposes no charge-period registers
+over modbus (they were dropped after KH_PRE119).
+
+`control_status` overlays the modbus mode onto the scheduler view so `already
+charging/selling`, ev_divert gating and the dashboards see one truth regardless of
+transport — and a cloud scheduler read failure no longer kills the cycle.
+
 ## 1.76.0 — record the API quota; poll at the cloud's actual refresh rate
 
 Two related changes, both from measuring rather than assuming.

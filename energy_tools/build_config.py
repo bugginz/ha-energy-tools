@@ -111,6 +111,8 @@ C = fc["control"]
 for k in ("allow_control", "auto_apply", "set_work_mode", "set_force_charge"):
     if k in opt:
         C[k] = bool(opt[k])
+if opt.get("control_transport") in ("modbus", "cloud"):
+    C["transport"] = opt["control_transport"]
 
 # ---- notifications ----
 N = fc.setdefault("notify", {})
