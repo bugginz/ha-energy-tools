@@ -1061,8 +1061,17 @@ class ModbusInverter:
         return MB_SELECT_TO_CLOUD.get(s)
 
     def start_force(self, cloud_mode, power_kw):
-        power = MB_ENTITIES["fc_power" if cloud_mode == "ForceCharge" else "fd_power"]
-        self._svc("number", "set_value", {"entity_id": power, "value": round(float(power_kw), 1)})
+        key = "fc_power" if cloud_mode == "ForceCharge" else "fd_power"
+        # Clamp to the entity's own range: the KH exposes 0-10.0kW here, while strategy
+        # power is 10.5 (the cloud scheduler accepted W) — an out-of-range set_value is
+        # an HA 500 and the whole start bounces to cloud (2026-09-04 first sell test).
+        a = (self._get(key) or {}).get("attributes") or {}
+        val = float(power_kw)
+        if isinstance(a.get("max"), (int, float)):
+            val = min(val, float(a["max"]))
+        if isinstance(a.get("min"), (int, float)):
+            val = max(val, float(a["min"]))
+        self._svc("number", "set_value", {"entity_id": MB_ENTITIES[key], "value": round(val, 1)})
         self._svc("select", "select_option",
                   {"entity_id": MB_ENTITIES["work_mode"], "option": MB_FORCE_SELECT[cloud_mode]})
 
