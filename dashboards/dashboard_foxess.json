@@ -1,0 +1,1390 @@
+{
+ "views": [
+  {
+   "type": "sections",
+   "max_columns": 2,
+   "sections": [
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Live",
+       "icon": "mdi:solar-power-variant"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_soc",
+       "name": "Battery SoC",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/dashboard-foxess/battery"
+       }
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_energy",
+       "name": "In the pack"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.inverter_state",
+       "name": "Inverter"
+      },
+      {
+       "type": "tile",
+       "entity": "select.work_mode",
+       "name": "Work mode"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.connection_status",
+       "name": "RS485 link"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.solar_power_local",
+       "name": "Solar now"
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Power",
+       "icon": "mdi:transmission-tower"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Energy balance \u2014 supply above, use below (kW)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 340,
+         "stacked": true,
+         "type": "area"
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 1,
+         "curve": "smooth"
+        },
+        "fill": {
+         "type": "solid",
+         "opacity": 0.55
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ],
+        "annotations": {
+         "yaxis": [
+          {
+           "y": 0,
+           "borderColor": "#94a3b8"
+          }
+         ]
+        }
+       },
+       "all_series_config": {
+        "type": "area",
+        "stroke_width": 1,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.solar_power_local",
+         "name": "Solar",
+         "color": "#fbbf24"
+        },
+        {
+         "entity": "sensor.battery_discharge",
+         "name": "Battery out",
+         "color": "#22c55e"
+        },
+        {
+         "entity": "sensor.grid_consumption",
+         "name": "Grid in",
+         "color": "#a78bfa"
+        },
+        {
+         "entity": "sensor.load_power",
+         "name": "House",
+         "color": "#38bdf8",
+         "invert": true
+        },
+        {
+         "entity": "sensor.battery_charge",
+         "name": "Battery in",
+         "color": "#16a34a",
+         "invert": true
+        },
+        {
+         "entity": "sensor.feed_in",
+         "name": "Grid out",
+         "color": "#c084fc",
+         "invert": true
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 flows history",
+       "heading_style": "subtitle",
+       "icon": "mdi:chart-areaspline",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.solar_power_local,sensor.load_power,sensor.battery_discharge,sensor.battery_charge,sensor.grid_consumption,sensor.feed_in"
+       }
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "7d",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Daily energy \u2014 last 7 days (kWh)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 0
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ],
+        "plotOptions": {
+         "bar": {
+          "borderRadius": 2,
+          "columnWidth": "55%"
+         }
+        },
+        "xaxis": {
+         "labels": {
+          "datetimeUTC": false,
+          "format": "ddd"
+         }
+        }
+       },
+       "all_series_config": {
+        "type": "column",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "max",
+         "duration": "1d"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.solar_energy_today",
+         "name": "Solar",
+         "color": "#fbbf24"
+        },
+        {
+         "entity": "sensor.load_energy_today",
+         "name": "House",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.grid_consumption_energy_today",
+         "name": "Grid in",
+         "color": "#a78bfa"
+        },
+        {
+         "entity": "sensor.feed_in_energy_today",
+         "name": "Grid out",
+         "color": "#c084fc"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 energy counters",
+       "heading_style": "subtitle",
+       "icon": "mdi:counter",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.solar_energy_today,sensor.load_energy_today,sensor.grid_consumption_energy_today,sensor.feed_in_energy_today"
+       }
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Battery",
+       "icon": "mdi:battery-high"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "State of charge \u2014 device floor dashed (%)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "min": 0,
+          "max": 100,
+          "tickAmount": 4,
+          "decimalsInFloat": 0
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.battery_soc",
+         "name": "SoC",
+         "color": "#22c55e",
+         "stroke_width": 3,
+         "extend_to": "now"
+        },
+        {
+         "entity": "sensor.min_soc_on_grid",
+         "name": "Floor",
+         "color": "#94a3b8",
+         "stroke_width": 1,
+         "stroke_dash": 4
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 battery over 7 days",
+       "heading_style": "subtitle",
+       "icon": "mdi:battery-clock",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/dashboard-foxess/battery"
+       }
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Battery power \u2014 charge above, discharge below (kW)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280,
+         "type": "area"
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ],
+        "fill": {
+         "type": "solid",
+         "opacity": 0.45
+        },
+        "annotations": {
+         "yaxis": [
+          {
+           "y": 0,
+           "borderColor": "#94a3b8"
+          }
+         ]
+        }
+       },
+       "all_series_config": {
+        "type": "area",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.battery_charge",
+         "name": "Charging",
+         "color": "#16a34a"
+        },
+        {
+         "entity": "sensor.battery_discharge",
+         "name": "Discharging",
+         "color": "#fb923c",
+         "invert": true
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 battery power history",
+       "heading_style": "subtitle",
+       "icon": "mdi:battery-charging",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.battery_charge,sensor.battery_discharge,sensor.invbatpower"
+       }
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Solar strings",
+       "icon": "mdi:solar-panel"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "PV strings \u2014 per-MPPT power (kW)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 300
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.pv1_power",
+         "name": "PV1",
+         "color": "#fbbf24"
+        },
+        {
+         "entity": "sensor.pv2_power",
+         "name": "PV2",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.pv3_power",
+         "name": "PV3",
+         "color": "#a78bfa"
+        },
+        {
+         "entity": "sensor.pv4_power",
+         "name": "PV4",
+         "color": "#f87171"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 strings over 7 days",
+       "heading_style": "subtitle",
+       "icon": "mdi:solar-panel-large",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/dashboard-foxess/pv"
+       }
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Health",
+       "icon": "mdi:heart-pulse"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Cell voltage spread \u2014 high vs low cell (mV)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 260
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.bms_cell_mv_high",
+         "name": "Highest cell",
+         "color": "#fb923c"
+        },
+        {
+         "entity": "sensor.bms_cell_mv_low",
+         "name": "Lowest cell",
+         "color": "#38bdf8"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 cells over 7 days",
+       "heading_style": "subtitle",
+       "icon": "mdi:battery-heart-variant",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/dashboard-foxess/battery"
+       }
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Battery temperature \u2014 pack and cell spread (\u00b0C)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 260
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.battery_temp",
+         "name": "Pack",
+         "color": "#22c55e"
+        },
+        {
+         "entity": "sensor.bms_cell_temp_high",
+         "name": "Hottest cell",
+         "color": "#fb923c"
+        },
+        {
+         "entity": "sensor.bms_cell_temp_low",
+         "name": "Coolest cell",
+         "color": "#38bdf8"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 battery temps",
+       "heading_style": "subtitle",
+       "icon": "mdi:thermometer",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.battery_temp,sensor.bms_cell_temp_high,sensor.bms_cell_temp_low"
+       }
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Inverter temperature \u2014 vs ambient (\u00b0C)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 260
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.invtemp",
+         "name": "Inverter",
+         "color": "#f87171"
+        },
+        {
+         "entity": "sensor.ambtemp",
+         "name": "Ambient",
+         "color": "#94a3b8"
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 inverter temps",
+       "heading_style": "subtitle",
+       "icon": "mdi:thermometer-lines",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.invtemp,sensor.ambtemp"
+       }
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "All entities",
+       "icon": "mdi:view-grid-outline"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.ambtemp"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_charge"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_charge_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_charge_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_discharge"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_discharge_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_discharge_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_soc"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_soh"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.battery_temp"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.bms_cell_mv_high"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.bms_cell_mv_low"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.bms_cell_temp_high"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.bms_cell_temp_low"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.bms_kwh_remaining"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.connection_status"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.ct2_meter"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.export_power_limit"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.feed_in"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.feed_in_energy_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.feed_in_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.grid_consumption"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.grid_consumption_energy_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.grid_consumption_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.grid_ct"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.import_power_limit"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.input_energy_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.input_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.invbatcurrent"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.invbatpower"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.invbatvolt"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.rcurrent"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.inverter_fault_code"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.rpower"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.inverter_state"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.invtemp"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.load_energy_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.load_power_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.load_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.max_charge_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.max_discharge_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.max_soc"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.min_soc"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.min_soc_on_grid"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.foxess_modbus_pv_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv1_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv1_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv1_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv1_voltage"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv2_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv2_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv2_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv2_voltage"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv3_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv3_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv3_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv3_voltage"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv4_current"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv4_power"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv4_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.pv4_voltage"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.solar_energy_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.solar_energy_total"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.manager_version"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.master_version"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.slave_version"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.total_yield_today"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.total_yield_total"
+      }
+     ],
+     "title": "FoxESS - Modbus"
+    }
+   ]
+  },
+  {
+   "title": "Battery detail",
+   "path": "battery",
+   "subview": true,
+   "icon": "mdi:battery-heart",
+   "sections": [
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Battery \u2014 7 days",
+       "icon": "mdi:battery-heart"
+      },
+      {
+       "type": "heading",
+       "heading": "Now",
+       "heading_style": "subtitle",
+       "badges": [
+        {
+         "type": "entity",
+         "entity": "sensor.battery_soc"
+        },
+        {
+         "type": "entity",
+         "entity": "sensor.bms_kwh_remaining"
+        },
+        {
+         "type": "entity",
+         "entity": "sensor.battery_soh"
+        },
+        {
+         "type": "entity",
+         "entity": "sensor.battery_temp"
+        },
+        {
+         "type": "entity",
+         "entity": "sensor.invbatvolt"
+        }
+       ]
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "7d",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "State of charge \u2014 7 days (%)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 300
+        },
+        "legend": {
+         "show": false,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "min": 0,
+          "max": 100,
+          "tickAmount": 4,
+          "decimalsInFloat": 0
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.battery_soc",
+         "name": "SoC",
+         "color": "#22c55e",
+         "stroke_width": 2,
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        }
+       ]
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "7d",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Battery power \u2014 7 days (kW)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280,
+         "type": "area"
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ],
+        "fill": {
+         "type": "solid",
+         "opacity": 0.45
+        }
+       },
+       "all_series_config": {
+        "type": "area",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.battery_charge",
+         "name": "Charging",
+         "color": "#16a34a",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        },
+        {
+         "entity": "sensor.battery_discharge",
+         "name": "Discharging",
+         "color": "#fb923c",
+         "invert": true,
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        }
+       ]
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "7d",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Cell voltage spread \u2014 7 days (mV)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.bms_cell_mv_high",
+         "name": "Highest cell",
+         "color": "#fb923c",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        },
+        {
+         "entity": "sensor.bms_cell_mv_low",
+         "name": "Lowest cell",
+         "color": "#38bdf8",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        }
+       ]
+      },
+      {
+       "type": "markdown",
+       "content": "Cell spread is the battery's honesty metric: high and low cell tracking together is a balanced pack; a growing gap under load points at a weak cell. Data arrives over RS485 every 10s \u2014 the cloud never exposed it."
+      },
+      {
+       "type": "heading",
+       "heading": "Arbitrary ranges \u2014 History",
+       "heading_style": "subtitle",
+       "icon": "mdi:history",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.battery_soc,sensor.bms_cell_mv_high,sensor.bms_cell_mv_low,sensor.battery_temp"
+       }
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "title": "PV detail",
+   "path": "pv",
+   "subview": true,
+   "icon": "mdi:solar-panel-large",
+   "sections": [
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Solar strings \u2014 7 days",
+       "icon": "mdi:solar-panel-large"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "7d",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Per-string power \u2014 7 days (kW)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 320
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.pv1_power",
+         "name": "PV1",
+         "color": "#fbbf24",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        },
+        {
+         "entity": "sensor.pv2_power",
+         "name": "PV2",
+         "color": "#38bdf8",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        },
+        {
+         "entity": "sensor.pv3_power",
+         "name": "PV3",
+         "color": "#a78bfa",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        },
+        {
+         "entity": "sensor.pv4_power",
+         "name": "PV4",
+         "color": "#f87171",
+         "statistics": {
+          "type": "mean",
+          "period": "hour"
+         }
+        }
+       ]
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "String voltage \u2014 MPPT tracking (V)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 280
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 1,
+          "forceNiceScale": true
+         }
+        ]
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.pv1_voltage",
+         "name": "PV1",
+         "color": "#fbbf24"
+        },
+        {
+         "entity": "sensor.pv2_voltage",
+         "name": "PV2",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.pv3_voltage",
+         "name": "PV3",
+         "color": "#a78bfa"
+        },
+        {
+         "entity": "sensor.pv4_voltage",
+         "name": "PV4",
+         "color": "#f87171"
+        }
+       ]
+      },
+      {
+       "type": "markdown",
+       "content": "A string whose voltage collapses while its siblings hold is shaded or faulty; a string pinned at open-circuit voltage with no power is not being tracked. PV4 is unused on this inverter."
+      },
+      {
+       "type": "heading",
+       "heading": "Arbitrary ranges \u2014 History",
+       "heading_style": "subtitle",
+       "icon": "mdi:history",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.pv1_power,sensor.pv2_power,sensor.pv3_power,sensor.pv1_voltage,sensor.pv2_voltage,sensor.pv3_voltage"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
