@@ -1006,17 +1006,28 @@ class ModbusInverter:
             return None
 
     def available(self) -> bool:
-        """Live link + a numeric, fresh SoC — the gate every modbus-first path checks."""
+        """Live link + numeric SoC + a fresh reading — the gate every modbus-first path
+        checks. Freshness is judged on the FAST movers (load/feed-in jitter every 10s
+        poll): HA only bumps last_updated when a VALUE changes, so a stable SoC looks
+        minutes old while the link is perfectly healthy (2026-09-04 deploy bug)."""
         if self.state("conn") != "Connected":
             return False
         d = self._get("soc")
         try:
             float(d["state"])
-            age = time.time() - datetime.fromisoformat(
-                d["last_updated"].replace("Z", "+00:00")).timestamp()
-            return age < 180
-        except Exception:
+        except (TypeError, ValueError, KeyError):
             return False
+        now = time.time()
+        for key in ("load", "feed_in", "grid_in"):
+            e = self._get(key)
+            try:
+                age = now - datetime.fromisoformat(
+                    e["last_updated"].replace("Z", "+00:00")).timestamp()
+                if age < 120:
+                    return True
+            except Exception:
+                continue
+        return False
 
     def telemetry(self):
         """Cloud-shaped VARS dict from the modbus sensors, or None if the link is down."""
