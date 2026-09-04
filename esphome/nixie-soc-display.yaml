@@ -146,22 +146,24 @@ text_sensor:
     id: ha_sun
     entity_id: sun.sun
 
+# Inverter figures come from foxess_modbus (RS485, 10s polls) as of 2026-09-04
+# — the sensor.foxess_foxctl_* cloud versions lag ~2min and go stale.
 sensor:
   - platform: homeassistant
     id: ha_soc
-    entity_id: sensor.foxess_foxctl_battery_soc
+    entity_id: sensor.battery_soc
   - platform: homeassistant
     id: ha_charge
-    entity_id: sensor.foxess_foxctl_battery_charge_power
+    entity_id: sensor.battery_charge
   - platform: homeassistant
     id: ha_discharge
-    entity_id: sensor.foxess_foxctl_battery_discharge_power
+    entity_id: sensor.battery_discharge
   - platform: homeassistant
     id: ha_load
     entity_id: sensor.circuits_total_power   # watts, local clamps
   - platform: homeassistant
     id: ha_solar
-    entity_id: sensor.foxess_foxctl_solar_power
+    entity_id: sensor.solar_power_local      # kW, pv1-4 sum (template.yaml)
   - platform: homeassistant
     id: ha_grid
     entity_id: sensor.grid_main_power_local  # watts, +import / -export
@@ -196,7 +198,7 @@ interval:
           if (!isnan(load_w) && !isnan(grid_w)) {
             solar_w = load_w + net_kw * 1000.0 - grid_w;
           } else {
-            solar_w = id(ha_solar).state;   // cloud fallback
+            solar_w = id(ha_solar).state * 1000.0;   // fallback sensor is kW
           }
           // derivation error shows up as phantom solar: zero it when the sun
           // is down, and deadband small readings during the day

@@ -34,21 +34,31 @@ getn() {
   python3 -c "print(float('$v'))" 2>/dev/null || echo "$2"
 }
 
+# Numeric fetch, two sources: live modbus first, FoxESS cloud second. The RS485
+# link (foxess_modbus, 10s polls) is new; the cloud sensors are the same figures
+# minutes late, so they are the right degraded mode if the adapter goes away.
+getn2() {
+  local v
+  v=$(get "$1" 2>/dev/null)
+  python3 -c "print(float('$v'))" 2>/dev/null || getn "$2" "$3"
+}
+
 # AC flows come from the LOCAL Meross 18ch clamps (seconds cadence), not the
 # FoxESS cloud: the cloud takes one instantaneous sample every ~2min, so a
 # cycling load (oven thermostat) makes it flip between 0.5 and 3.6kW while the
-# real average was 2.4kW. The cloud keeps what only it knows — solar (DC side,
-# no clamp on it), SoC, coast — and is the fallback if the clamps go away.
-SOC=$(getn sensor.foxess_foxctl_battery_soc 0)
+# real average was 2.4kW. What only the inverter knows — SoC, the battery
+# split, DC solar — now comes LIVE over RS485 (foxess_modbus, 10s polls); the
+# cloud is the fallback for those if the link goes away.
+SOC=$(getn2 sensor.battery_soc sensor.foxess_foxctl_battery_soc 0)
 HOUSE_W=$(getn sensor.circuits_total_power NA)
 GRID_W=$(getn sensor.grid_main_power_local NA)
 INV_W=$(getn sensor.inverter_ac_power_local NA)
-CHG=$(getn sensor.foxess_foxctl_battery_charge_power 0)
-DIS=$(getn sensor.foxess_foxctl_battery_discharge_power 0)
-SOLAR_CLOUD=$(getn sensor.foxess_foxctl_solar_power 0)
-GRIDIN=$(getn sensor.foxess_foxctl_grid_import 0)
-GRIDOUT=$(getn sensor.foxess_foxctl_grid_export 0)
-LOAD_CLOUD=$(getn sensor.foxess_foxctl_house_load 0)
+CHG=$(getn2 sensor.battery_charge sensor.foxess_foxctl_battery_charge_power 0)
+DIS=$(getn2 sensor.battery_discharge sensor.foxess_foxctl_battery_discharge_power 0)
+SOLAR_LIVE=$(getn2 sensor.solar_power_local sensor.foxess_foxctl_solar_power 0)
+GRIDIN=$(getn2 sensor.grid_consumption sensor.foxess_foxctl_grid_import 0)
+GRIDOUT=$(getn2 sensor.feed_in sensor.foxess_foxctl_grid_export 0)
+LOAD_CLOUD=$(getn2 sensor.load_power sensor.foxess_foxctl_house_load 0)
 COAST=$(getn sensor.battery_coast_margin 0)
 KWH=$(getn sensor.battery_energy 0)
 TNOW=$(get sensor.living_room_ac_outside 2>/dev/null || echo '?')
@@ -89,14 +99,14 @@ PV_MAX = 7.0                                # array peaks at 5.64kW; a stale
 def w(v):
     return None if v == 'NA' else float(v) / 1000.0
 chg, dis = float('$CHG'), float('$DIS')
-batt_cloud = chg - dis                      # + charging / - discharging
+batt_live = chg - dis                       # + charging / - discharging
 house, grid_c, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
 night = '$SUN_STATE' == 'below_horizon'
 
 if house is None or invac is None:
-    # Clamps down. The cloud's own trio came from one snapshot, so it is at
-    # least internally consistent; derive grid from it to close the balance.
-    house, solar, batt = float('$LOAD_CLOUD'), float('$SOLAR_CLOUD'), batt_cloud
+    # Clamps down. The inverter's own trio came from one modbus poll, so it is
+    # at least internally consistent; derive grid from it to close the balance.
+    house, solar, batt = float('$LOAD_CLOUD'), float('$SOLAR_LIVE'), batt_live
     if night:
         solar, batt = 0.0, -(house - (float('$GRIDIN') - float('$GRIDOUT')))
     grid = house + batt - solar
@@ -132,11 +142,11 @@ else:
         # be true, so do not let a stale cloud figure invent solar.
         solar = 0.0
     else:
-        # Daytime: the cloud supplies the split. It is minutes old, so during a
-        # ramp it mis-attributes between solar and battery — but bounding it and
-        # re-deriving the battery below keeps the SET consistent, so the diagram
-        # stays drawable even while the split is briefly off.
-        solar = min(max(invac + batt_cloud, 0.0), PV_MAX)
+        # Daytime: the inverter supplies the split, live over modbus (10s
+        # polls — the cloud used to sit here, minutes behind, mis-attributing
+        # ramps between solar and battery). Still bounded, and the battery is
+        # still re-derived below so the SET stays exactly consistent.
+        solar = min(max(invac + batt_live, 0.0), PV_MAX)
     batt = solar - invac                    # inverter identity, exact by fiat
 
 # Proof the set balances; published so a drift shows up as a number, not a
