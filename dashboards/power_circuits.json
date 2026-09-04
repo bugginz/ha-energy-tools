@@ -1,0 +1,2178 @@
+{
+ "views": [
+  {
+   "title": "Circuits",
+   "type": "sections",
+   "max_columns": 4,
+   "sections": [
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Live"
+      },
+      {
+       "type": "tile",
+       "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_signal_strength"
+      },
+      {
+       "type": "tile",
+       "entity": "button.em16p_26041762237810740701c4e7ae2e4c89_refresh"
+      },
+      {
+       "type": "tile",
+       "entity": "button.em16p_26041762237810740701c4e7ae2e4c89_reload"
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "column_span": 4,
+     "cards": [
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "header": {
+        "show": true,
+        "title": "Circuits stacked \u2014 last 24 h (W)"
+       },
+       "apex_config": {
+        "chart": {
+         "stacked": true,
+         "height": 420
+        },
+        "legend": {
+         "show": true
+        },
+        "dataLabels": {
+         "enabled": false
+        }
+       },
+       "all_series_config": {
+        "type": "area",
+        "stroke_width": 1,
+        "opacity": 0.7,
+        "fill_raw": "last",
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1",
+         "name": "Grid main"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_7",
+         "name": "Inverter"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
+         "name": "A/C"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9",
+         "name": "Hot water"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
+         "name": "Oven"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11",
+         "name": "Upstairs"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+         "name": "Downstairs"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_14",
+         "name": "Lights"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
+         "name": "Cooktop"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
+         "name": "Car charger"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "column_span": 4,
+     "cards": [
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "header": {
+        "show": true,
+        "title": "Energy balance \u2014 supply vs measured circuits (W)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 380
+        },
+        "legend": {
+         "show": true
+        }
+       },
+       "all_series_config": {
+        "stroke_width": 2,
+        "fill_raw": "last",
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.circuits_total_power",
+         "name": "Measured (\u03a3 house circuits)",
+         "stroke_width": 3
+        },
+        {
+         "entity": "sensor.local_supply_power",
+         "name": "Local supply (A1+B1)",
+         "stroke_width": 3
+        },
+        {
+         "entity": "sensor.house_supply_power",
+         "name": "FoxESS supply (5-min)",
+         "stroke_width": 1
+        },
+        {
+         "entity": "sensor.grid_main_power_local",
+         "name": "Grid main (A1)",
+         "stroke_width": 1
+        },
+        {
+         "entity": "sensor.inverter_ac_power_local",
+         "name": "Inverter AC (B1)",
+         "stroke_width": 1
+        },
+        {
+         "entity": "sensor.foxess_foxctl_solar_power",
+         "name": "Solar (FoxESS)",
+         "transform": "return x * 1000;",
+         "unit": "W",
+         "stroke_width": 1
+        },
+        {
+         "entity": "sensor.battery_net_power",
+         "name": "Battery net (FoxESS)",
+         "stroke_width": 1
+        },
+        {
+         "entity": "sensor.local_residual_power",
+         "name": "Local residual",
+         "type": "area",
+         "opacity": 0.25
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "column_span": 4,
+     "cards": [
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "14d",
+       "span": {
+        "end": "day"
+       },
+       "header": {
+        "show": true,
+        "title": "Daily energy by circuit (kWh)"
+       },
+       "apex_config": {
+        "chart": {
+         "stacked": true,
+         "height": 380
+        },
+        "legend": {
+         "show": true
+        },
+        "dataLabels": {
+         "enabled": false
+        }
+       },
+       "all_series_config": {
+        "type": "column",
+        "statistics": {
+         "type": "change",
+         "period": "day"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_1",
+         "name": "Grid main"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_7",
+         "name": "Inverter"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_8",
+         "name": "A/C"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_9",
+         "name": "Hot water"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_10",
+         "name": "Oven"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_11",
+         "name": "Upstairs"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_12",
+         "name": "Downstairs"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_14",
+         "name": "Lights"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_16",
+         "name": "Cooktop"
+        },
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_energy_estimate_18",
+         "name": "Car charger"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Clamp vs inverter (RS485 cross-check)",
+       "icon": "mdi:scale-balance"
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Grid \u2014 Meross clamp vs FoxESS CT, +import (W)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 300
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 0,
+          "forceNiceScale": true
+         }
+        ],
+        "annotations": {
+         "yaxis": [
+          {
+           "y": 0,
+           "borderColor": "#94a3b8"
+          }
+         ]
+        }
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1",
+         "name": "Meross clamp",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.grid_ct",
+         "name": "FoxESS CT",
+         "color": "#fbbf24",
+         "transform": "return -x * 1000;",
+         "unit": "W"
+        },
+        {
+         "entity": "sensor.grid_ct_delta",
+         "name": "\u0394 clamp \u2212 Fox",
+         "color": "#94a3b8",
+         "stroke_width": 1,
+         "stroke_dash": 4
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 grid CT delta history",
+       "heading_style": "subtitle",
+       "icon": "mdi:scale-unbalanced",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.grid_ct_delta,sensor.grid_main_power_local,sensor.grid_ct"
+       }
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Inverter output \u2014 Meross clamp vs inverter (W)"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 300
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "decimalsInFloat": 0,
+          "forceNiceScale": true
+         }
+        ],
+        "annotations": {
+         "yaxis": [
+          {
+           "y": 0,
+           "borderColor": "#94a3b8"
+          }
+         ]
+        }
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "5min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_7",
+         "name": "Meross clamp",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.rpower",
+         "name": "Inverter rpower",
+         "color": "#fbbf24",
+         "transform": "return x * 1000;",
+         "unit": "W"
+        },
+        {
+         "entity": "sensor.inverter_ct_delta",
+         "name": "\u0394 clamp \u2212 inverter",
+         "color": "#94a3b8",
+         "stroke_width": 1,
+         "stroke_dash": 4
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 inverter CT delta history",
+       "heading_style": "subtitle",
+       "icon": "mdi:scale-unbalanced",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.inverter_ct_delta,sensor.inverter_ac_power_local,sensor.rpower"
+       }
+      },
+      {
+       "type": "markdown",
+       "content": "Two instruments measuring the same wire: the EM16P clamps and the inverter's own CTs over RS485. The dashed delta should sit near the ~20 W meter offset \u2014 sustained drift means a loose or lying clamp (ch11, July) or CT saturation at high load."
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
+       "heading": "Per-circuit (24 h) \u2014 auto-hides idle channels"
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1",
+         "name": "Grid",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Grid",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1",
+           "name": "Grid"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_1_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_2",
+         "name": "Spare 2",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_2"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 2",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_2",
+           "name": "Spare 2"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_2_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_3",
+         "name": "Spare 3",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_3"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 3",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_3",
+           "name": "Spare 3"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_3_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_4",
+         "name": "Spare 4",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_4"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 4",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_4",
+           "name": "Spare 4"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_4_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_5",
+         "name": "Spare 5",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_5"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 5",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_5",
+           "name": "Spare 5"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_5_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_6",
+         "name": "Spare 6",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_6"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 6",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_6",
+           "name": "Spare 6"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_6_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_7",
+         "name": "Inverter",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_7"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Inverter",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_7",
+           "name": "Inverter"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_7_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
+         "name": "A/C",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "A/C",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_8",
+           "name": "A/C"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_8_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9",
+         "name": "Hot Water",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Hot Water",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_9",
+           "name": "Hot Water"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_9_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
+         "name": "Oven",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Oven",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_10",
+           "name": "Oven"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_10_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11",
+         "name": "Upstairs",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Upstairs",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_11",
+           "name": "Upstairs"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_11_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+         "name": "Downstairs",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Downstairs",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_12",
+           "name": "Downstairs"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_12_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.grillplats_plug_power_4",
+         "name": "Chilly Things (fridge)",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.grillplats_plug_power_4"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Chilly Things (fridge)",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.grillplats_plug_power_4",
+           "name": "Chilly Things (fridge)"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.grillplats_plug_power_5",
+         "name": "Computer Stuff",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.grillplats_plug_power_5"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Computer Stuff",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.grillplats_plug_power_5",
+           "name": "Computer Stuff"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.grillplats_plug_power_6",
+         "name": "Washing machine",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.grillplats_plug_power_6"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Washing machine",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.grillplats_plug_power_6",
+           "name": "Washing machine"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.drier_plug_power",
+         "name": "Drier",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.drier_plug_power"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Drier",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.drier_plug_power",
+           "name": "Drier"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_13",
+         "name": "Spare 13",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_13"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 13",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_13",
+           "name": "Spare 13"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_13_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_14",
+         "name": "Lights",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_14"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Lights",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_14",
+           "name": "Lights"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_14_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_15",
+         "name": "Spare 15",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_15"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 15",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_15",
+           "name": "Spare 15"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_15_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
+         "name": "Cooktop",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Cooktop",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_16",
+           "name": "Cooktop"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_16_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_17",
+         "name": "Spare 17",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_17"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Spare 17",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_17",
+           "name": "Spare 17"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_17_max_7d",
+         "above": 20
+        }
+       ]
+      },
+      {
+       "type": "vertical-stack",
+       "cards": [
+        {
+         "type": "tile",
+         "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
+         "name": "Car charger",
+         "hide_state": false,
+         "tap_action": {
+          "action": "navigate",
+          "navigation_path": "/history?entity_id=sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18"
+         },
+         "icon_tap_action": {
+          "action": "more-info"
+         }
+        },
+        {
+         "type": "custom:apexcharts-card",
+         "graph_span": "48h",
+         "header": {
+          "show": true,
+          "title": "Car charger",
+          "show_states": true,
+          "colorize_states": true
+         },
+         "apex_config": {
+          "chart": {
+           "height": 200
+          },
+          "legend": {
+           "show": false
+          },
+          "xaxis": {
+           "type": "datetime",
+           "tickAmount": 8,
+           "labels": {
+            "format": "HH:mm",
+            "datetimeUTC": false,
+            "rotate": 0
+           }
+          },
+          "grid": {
+           "show": true,
+           "borderColor": "#8080803a",
+           "xaxis": {
+            "lines": {
+             "show": true
+            }
+           }
+          },
+          "tooltip": {
+           "x": {
+            "format": "ddd HH:mm"
+           }
+          }
+         },
+         "all_series_config": {
+          "type": "line",
+          "stroke_width": 2,
+          "group_by": {
+           "func": "avg",
+           "duration": "5min"
+          }
+         },
+         "series": [
+          {
+           "entity": "sensor.em16p_26041762237810740701c4e7ae2e4c89_power_18",
+           "name": "Car charger"
+          }
+         ]
+        }
+       ],
+       "visibility": [
+        {
+         "condition": "numeric_state",
+         "entity": "sensor.house_meross_energy_monitor_18_circuit_18_max_7d",
+         "above": 20
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
