@@ -136,11 +136,52 @@ if [ "$CHSW" = "on" ]; then
   CARCHG=$(python3 -c "print('chg' if float('$CHPW') > 100 else 'on')")
 fi
 
+# Plex "time to go": remaining playtime of whatever Plex client is playing.
+# media_position only updates on state changes, so live elapsed =
+# media_position + (now - media_position_updated_at). Blank when nothing is
+# playing (or while the Plex integration is down), which hides the row.
+PLEX=$(python3 - << 'PLEXEOF'
+import json, urllib.request, datetime
+tok = open('/opt/stack/energy_tools/data/.config/sen66/ha_token').read().strip()
+try:
+    req = urllib.request.Request('http://localhost:8123/api/states',
+                                 headers={'Authorization': 'Bearer ' + tok})
+    states = json.load(urllib.request.urlopen(req, timeout=10))
+    best = None
+    for s in states:
+        e = s['entity_id']
+        if not e.startswith('media_player.') or 'plex' not in e or s['state'] != 'playing':
+            continue
+        a = s['attributes']
+        dur, pos = a.get('media_duration'), a.get('media_position')
+        if not dur or pos is None:
+            continue
+        drift = 0.0
+        upd = a.get('media_position_updated_at')
+        if upd:
+            t = datetime.datetime.fromisoformat(str(upd).replace('Z', '+00:00'))
+            drift = max((datetime.datetime.now(datetime.timezone.utc) - t).total_seconds(), 0.0)
+        left = float(dur) - (float(pos) + drift)
+        if left > 0 and (best is None or left < best):
+            best = left
+    if best is None:
+        print('')
+    elif best >= 3600:
+        print('{}:{:02d}'.format(int(best // 3600), int((best % 3600) // 60)))
+    elif best >= 60:
+        print('{}m'.format(int(best // 60)))
+    else:
+        print('<1m')
+except Exception:
+    print('')
+PLEXEOF
+)
+
 pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
   "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
-  "carchg=$CARCHG" \
+  "carchg=$CARCHG" "plex=$PLEX" \
   -o /tmp/tidbyt_battery.webp
 
 # Night mode (the server's dim window, set from the HA Tidbyt dashboard):
@@ -174,7 +215,7 @@ mkdir -p "$PREVIEW_DIR" 2>/dev/null && pixlet render "$DIR/battery.star" \
   "soc=$SOC" "kwh=$KWH" "net_kw=$NET" "health=$HEALTH" \
   "coast=$COAST" "t_now=$TNOW" "t_min=$TMIN" "t_max=$TMAX" "bar=chevtip" "cond=$COND" \
   "cond_n=$CNIGHT" "cond_t=$CTMRW" "bins=$BINS" "car=$CAR" "src=$SRC" "load=$LOAD" \
-  "carchg=$CARCHG" \
+  "carchg=$CARCHG" "plex=$PLEX" \
   --magnify 8 -o "$PREVIEW_DIR/now.webp.tmp" 2>/dev/null \
   && { [ "$NIGHT" != "1" ] || python3 "$DIR/nightshade.py" "$PREVIEW_DIR/now.webp.tmp" "$PREVIEW_DIR/now.webp.tmp"; } \
   && mv "$PREVIEW_DIR/now.webp.tmp" "$PREVIEW_DIR/now.webp" || true

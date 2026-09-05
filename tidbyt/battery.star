@@ -176,6 +176,15 @@ def coaster_icon(cart_col):
                         [_p(2, 1, 2, 1, cart_col)])
 
 
+def play_icon(color):
+    """3x5 play triangle for the Plex 'time to go' row."""
+    return render.Stack(children = [
+        render.Box(width = 3, height = 5, color = "#00000000"),
+        _p(0, 0, 1, 1, color), _p(0, 1, 2, 1, color), _p(0, 2, 3, 1, color),
+        _p(0, 3, 2, 1, color), _p(0, 4, 1, 1, color),
+    ])
+
+
 def car_icon():
     """7x5 side-view car: cabin, body, wheels."""
     c = "#22d3ee"
@@ -271,6 +280,7 @@ def main(config):
     cond_t = config.str("cond_t", "")
     source = config.str("src", "")
     carchg = config.str("carchg", "")  # "" / "on" (switch armed) / "chg" (current flowing)
+    plex = config.str("plex", "")      # remaining playtime, e.g. "1:23" or "24m"
     fill = max(1, min(64, int(soc * 64 / 100 + 0.5)))
 
     def at(x, y, child):
@@ -330,6 +340,13 @@ def main(config):
                      render.Text(car + "%", font = "tom-thumb", color = CYAN)]
         els.append(right_at(y, kids))
         y += 6
+    # Plex time-to-go, only while something is actually playing. Clamped to
+    # y=11 so a third row's descender cannot touch the weather line at 17.
+    if plex:
+        els.append(right_at(min(y, 11), [
+            play_icon(INK), render.Box(width = 2, height = 1),
+            render.Text(plex, font = "tom-thumb", color = INK),
+        ]))
 
     # Weather line: current / overnight / tomorrow, each icon + temp. Colour
     # still carries the label: white now, cyan overnight low, orange tomorrow.
