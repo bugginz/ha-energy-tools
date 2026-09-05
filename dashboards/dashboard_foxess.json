@@ -45,6 +45,35 @@
        "type": "tile",
        "entity": "sensor.solar_power_local",
        "name": "Solar now"
+      },
+      {
+       "type": "tile",
+       "entity": "input_number.grid_upload_kw",
+       "name": "Upload power",
+       "features": [
+        {
+         "type": "numeric-input",
+         "style": "slider"
+        }
+       ]
+      },
+      {
+       "type": "button",
+       "entity": "script.grid_upload_start",
+       "name": "Upload to grid",
+       "icon": "mdi:transmission-tower-export",
+       "tap_action": {
+        "action": "toggle"
+       }
+      },
+      {
+       "type": "button",
+       "entity": "script.grid_upload_stop",
+       "name": "Stop upload",
+       "icon": "mdi:stop-circle-outline",
+       "tap_action": {
+        "action": "toggle"
+       }
       }
      ]
     },

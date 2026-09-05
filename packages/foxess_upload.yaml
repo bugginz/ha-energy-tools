@@ -1,0 +1,89 @@
+# Grid upload — "sell X kW to the grid until the coast floor" (2026-09-05).
+# Repo copy: packages/foxess_upload.yaml -> Pi /opt/stack/ha/config/packages/.
+#
+# The slider picks the power; the start script hands it to foxctl
+# (/api/sell?p=X&floor=coast), so foxctl stays the single controller of the
+# inverter (modbus-primary, cloud fallback) and stops the sell itself when the
+# LIVE coast margin reaches zero. The automation below is an INDEPENDENT
+# watchdog for the case where foxctl is dead while the inverter keeps
+# discharging: cancel via foxctl, and if the mode still stands a minute later,
+# force Self Use directly over modbus.
+
+input_number:
+  grid_upload_kw:
+    name: Grid upload power
+    min: 1
+    max: 10
+    step: 0.5
+    unit_of_measurement: kW
+    icon: mdi:transmission-tower-export
+
+rest_command:
+  foxctl_grid_upload:
+    url: "http://localhost:8770/api/sell?h=6&p={{ p }}&floor=coast"
+    method: post
+  foxctl_cancel_override:
+    url: "http://localhost:8770/api/cancel_override"
+    method: post
+
+script:
+  grid_upload_start:
+    alias: "Grid upload — start"
+    icon: mdi:transmission-tower-export
+    sequence:
+      - action: rest_command.foxctl_grid_upload
+        data:
+          p: "{{ states('input_number.grid_upload_kw') | float(5) }}"
+  grid_upload_stop:
+    alias: "Grid upload — stop"
+    icon: mdi:stop-circle-outline
+    sequence:
+      - action: rest_command.foxctl_cancel_override
+
+automation:
+  - id: grid_upload_coast_watchdog
+    alias: "Grid upload: coast watchdog"
+    description: >-
+      Independent backstop for the grid-upload sell: if the live coast margin
+      goes negative while the inverter is force-discharging, cancel through
+      foxctl; if the mode still stands a minute later (foxctl dead), force
+      Self Use directly over modbus and say so loudly.
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.battery_coast_margin
+        below: 0
+        for:
+          minutes: 2
+    conditions:
+      - condition: state
+        entity_id: select.work_mode
+        state: "Force Discharge"
+    actions:
+      - action: rest_command.foxctl_cancel_override
+      - delay:
+          minutes: 1
+      - if:
+          - condition: state
+            entity_id: select.work_mode
+            state: "Force Discharge"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: select.work_mode
+            data:
+              option: "Self Use"
+          - action: notify.mobile_app_phoney
+            data:
+              title: "Grid upload watchdog"
+              message: >-
+                Coast floor hit but foxctl didn't stop the sell — forced Self
+                Use over modbus. Check foxctl.
+        else:
+          - action: notify.mobile_app_phoney
+            data:
+              title: "Grid upload stopped"
+              message: >-
+                Coast floor reached (margin
+                {{ states('sensor.battery_coast_margin') }}%) — upload
+                cancelled via foxctl.
+    mode: single
