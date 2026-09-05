@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -3361,6 +3361,24 @@ def manual_tick(cfg, snap):
     end = datetime.now() + timedelta(seconds=mo["until"] - now)
     hhmm = end.strftime("%H:%M")
     if active.get("mode") == want:
+        # Keep the inverter in sync with the override: re-pressing the grid-upload
+        # button with a NEW slider power (or a fresh 6h window) used to be silently
+        # ignored while a sell was already active — the inverter stayed on the old
+        # power (2026-09-05: slider 6.5, inverter still 3.0, export 1.1kW).
+        _mbctl_load(cfg)
+        if _MBCTL.get("active") == want:
+            want_w = int(float(mo["power"]) * 1000)
+            mb = _modbus(cfg)
+            if mb is not None and _MBCTL.get("power_w") != want_w:
+                try:
+                    mb.start_force(want, float(mo["power"]))
+                    _MBCTL["power_w"] = want_w
+                    log_event("override", f"manual {mo['mode']} power → {mo['power']}kW (live update)")
+                except Exception as e:
+                    print(f"manual power update failed: {e}", file=sys.stderr)
+            if abs(_MBCTL.get("until", 0) - mo["until"]) > 60:
+                _MBCTL["until"] = mo["until"]
+            _mbctl_save(cfg)
         return f"MANUAL {mo['mode']} until {hhmm} (active)"
     nd = datetime.now()
     if mo["mode"] == "charge":

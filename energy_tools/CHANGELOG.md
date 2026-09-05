@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.77.2 — manual sell power follows the slider while active
+
+Re-pressing the grid-upload button with a new power while a sell was already
+running was silently ignored (manual_tick's "already active" early-return never
+re-issued the modbus write — the inverter stayed on the old power). The active
+branch now re-asserts power and window end whenever the override differs from
+what the inverter is running.
+
 ## 1.77.1 — grid-upload API: sell at a chosen power, stop at the live coast floor
 
 `/api/sell` gains `p=<kW>` (1–10.5, defaults to strategy power) and `floor=coast`.
