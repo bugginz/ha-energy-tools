@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.77.1 — grid-upload API: sell at a chosen power, stop at the live coast floor
+
+`/api/sell` gains `p=<kW>` (1–10.5, defaults to strategy power) and `floor=coast`.
+With `floor=coast` the manual sell stops the moment `sensor.battery_coast_margin`
+— the same live coast requirement the kiosk shows — reaches zero, re-read every
+tick rather than frozen at start. Backed by the HA "Grid upload" package
+(slider + start/stop scripts + an independent coast watchdog automation).
+
 ## 1.77.0 — inverter control and telemetry go direct over RS485; cloud demoted to fallback
 
 The foxess_modbus integration (Waveshare RS485→ETH, 10s polls) becomes the PRIMARY

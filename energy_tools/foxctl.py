@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1250,14 +1250,15 @@ def save_ov(cfg):
         print(f"overrides persist failed: {e}", file=sys.stderr)
 
 
-def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None):
+def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None, floor_coast=False):
     load_ov(cfg)
     if mode is None:
         _OV["manual"] = None
     else:
         _OV["manual"] = {"mode": mode, "until": time.time() + hours * 3600,
                          "power": power_kw, "min_soc": int(min_soc),
-                         "cap": int(cap) if cap is not None else None}
+                         "cap": int(cap) if cap is not None else None,
+                         "floor_coast": bool(floor_coast)}
     save_ov(cfg)
     log_event("override", f"manual {mode or 'cancel'}" + (f" {hours}h" if mode else ""))
     return _OV["manual"]
@@ -3337,6 +3338,25 @@ def manual_tick(cfg, snap):
         _OV["manual"] = None; save_ov(cfg)
         log_event("override", f"manual sell reached {mo.get('min_soc')}% floor → stop")
         return None
+    # Coast-floor sell ("upload X kW"): stop the moment the LIVE coast margin (the same
+    # sensor.battery_coast_margin the kiosk shows — hours-to-free-window x drain + buffer)
+    # reaches zero, so the requirement is re-evaluated every tick rather than frozen at
+    # start. The HA grid-upload watchdog automation double-checks this independently.
+    if mo["mode"] == "sell" and mo.get("floor_coast"):
+        margin = None
+        try:
+            ha_token = Path(os.path.expanduser(cfg["ha"]["token_file"])).read_text().strip()
+            margin, _ = HAClient(cfg["ha"]["url"], ha_token).get_num_age("sensor.battery_coast_margin")
+        except Exception as e:
+            print(f"coast margin read failed (sell continues to min_soc floor): {e}", file=sys.stderr)
+        if isinstance(margin, (int, float)) and margin <= 0:
+            try:
+                control_clear_own(cfg, fox)
+            except Exception as e:
+                print(f"coast floor revert failed: {e}", file=sys.stderr)
+            _OV["manual"] = None; save_ov(cfg)
+            log_event("override", f"grid upload hit the coast floor (margin {margin:.0f}%) → stop")
+            return None
     active = (snap.get("scheduler") or {}).get("active") or {}
     end = datetime.now() + timedelta(seconds=mo["until"] - now)
     hhmm = end.strftime("%H:%M")
@@ -4670,13 +4690,20 @@ def make_handler(cfg):
                 try:
                     q = self.path.split("?", 1)[1] if "?" in self.path else ""
                     h = 1
+                    p = None
+                    floor_coast = False
                     for kv in q.split("&"):
                         if kv.startswith("h="):
                             h = max(1, min(6, int(float(kv[2:]))))
+                        elif kv.startswith("p="):        # sell power kW (grid-upload slider)
+                            p = max(1.0, min(10.5, float(kv[2:])))
+                        elif kv == "floor=coast":        # stop at the live coast margin
+                            floor_coast = True
                     strat = cfg["strategy"]
                     pwr = strat.get("force_charge_power_kw", 10.5)
                     if self.path.startswith("/api/sell"):
-                        set_manual(cfg, "sell", h, pwr, strat.get("reserve_soc", 20))
+                        set_manual(cfg, "sell", h, p if p is not None else pwr,
+                                   strat.get("reserve_soc", 20), floor_coast=floor_coast)
                     else:
                         set_manual(cfg, "charge", h, pwr, strat.get("min_soc_on_grid", 10),
                                    cap=strat.get("max_soc", 90))
