@@ -1,0 +1,91 @@
+# Kickboard position-aware lighting — every tunable lives here (PLAN.md §8.8).
+# Distances in mm, room coordinates with origin at the chosen kitchen corner.
+#
+# NOTE: node num_leds/waypoints below assume 60 LED/m and 4 m per side —
+# both are ASSUMED in the plan. Count the LEDs and measure the room before
+# trusting anything here (PLAN.md phase 0).
+
+service:
+  render_fps: 30
+  idle_timeout_s: 30        # no targets this long -> fade out...
+  idle_fade_s: 3.0          # ...over this
+  wake_fade_s: 0.3
+
+radar:
+  source: udp               # "udp" (radar node forwards frames) or "serial"
+  udp_port: 4049
+  serial_port: /dev/ttyUSB0 # only for source: serial (USB adapter on the Pi)
+  serial_baud: 256000
+  heartbeat_timeout_s: 15
+  pose:                     # sensor -> room transform, from calibration §9.2
+    theta_deg: -90.0        # placeholder: sensor at x=0 mid-wall, facing +x
+    tx_mm: 0.0
+    ty_mm: 900.0
+
+room:
+  polygon:                  # kitchen floor area; detections outside are dropped
+    - [0, 0]
+    - [4200, 0]
+    - [4200, 1800]
+    - [0, 1800]
+  exclusion_zones: []       # ghost regions from the §9.3 survey, e.g.
+                            # - [[3800, 0], [4200, 0], [4200, 400], [3800, 400]]
+
+tracker:
+  ema_tau_s: 0.15           # position smoothing time constant
+  confidence_rise_s: 0.3    # ramp to full pool brightness
+  confidence_decay_s: 2.0   # dropout fade to ambient
+  hold_time_s: 10.0         # lost-while-stationary hold ("leaning on the bench")
+  static_speed_cms: 10.0
+  assoc_max_mm: 800
+
+render:
+  sigma_mm: 500             # pool width; tune 300-800
+  peak: 0.6
+  ambient: 0.03             # 0 = pure follow effect
+  gamma: 2.2
+  warm_rgb: [255, 147, 41]  # scaled warm white; tune by eye or via CCT in HA
+  output_ema_s: 0.05
+
+nodes:
+  - name: kick-left
+    host: kick-left.local   # static DHCP reservation recommended over mDNS
+    port: 4048
+    num_leds: 240           # ASSUMED 60/m x 4 m — count them
+    color_order: RGB          # wire order; strip_node firmware handles the chip's GRB
+    budget_ma: 6000         # software current budget per side (PLAN.md §3.1)
+    ma_per_led_full: 60
+    quiescent_ma_per_led: 1
+    waypoints:              # (led_index, x_mm, y_mm): start, corners, end
+      - [0, 100, 50]
+      - [239, 4083, 50]
+  - name: kick-right
+    host: kick-right.local
+    port: 4048
+    num_leds: 240
+    color_order: RGB          # wire order; strip_node firmware handles the chip's GRB
+    budget_ma: 6000
+    ma_per_led_full: 60
+    quiescent_ma_per_led: 1
+    waypoints:
+      - [0, 100, 1750]
+      - [239, 4083, 1750]
+
+mqtt:
+  enabled: false            # flip on once the broker details are in
+  host: homeassistant.local
+  port: 1883
+  username: ""
+  password: ""
+  base_topic: kickboard
+  discovery_prefix: homeassistant
+
+sim:
+  enabled: true
+  host: 0.0.0.0
+  port: 8771
+
+logging:
+  record_radar: true        # raw frames -> jsonl, needed for ghost analysis
+  record_dir: data/radar-logs
+  keep_days: 14

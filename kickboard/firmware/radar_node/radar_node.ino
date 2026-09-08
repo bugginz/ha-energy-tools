@@ -1,0 +1,123 @@
+// Kickboard radar node — XIAO ESP32-C6 + Ai-Thinker RD-03D (PLAN.md §6)
+//
+// Dumb UART-to-UDP bridge: syncs on the RD-03D's 30-byte frames and
+// forwards each one raw to the Pi at the sensor's native 10 Hz. Parsing
+// lives in one place (the Pi). Also sends a JSON heartbeat every 5 s so
+// the Pi can tell "radar dead" from "nobody here".
+//
+// Wiring: RD-03D TX -> C6 RX (D7), RD-03D RX -> C6 TX (D6), 3.3 V logic
+// both sides. Power the module from the XIAO 3V3 pin — but CONFIRM the
+// rated supply on the datasheet first; some carrier boards regulate from
+// 5 V. Mount 1.3-1.5 m high at the end of the kitchen, boresight down the
+// long axis (PLAN.md §6).
+
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+
+#include "wifi_credentials.h"
+
+#define NODE_NAME "kick-radar"
+#define PI_HOST "192.168.1.10"     // the Pi 5 — set your static address
+#define PI_PORT 4049
+#define RADAR_RX D7                // RD-03D TX -> this
+#define RADAR_TX D6                // RD-03D RX -> this
+#define RADAR_BAUD 256000
+#define HEARTBEAT_MS 5000
+
+#define FRAME_LEN 30
+static const uint8_t FRAME_HEADER[4] = {0xAA, 0xFF, 0x03, 0x00};
+static const uint8_t FRAME_TAIL[2] = {0x55, 0xCC};
+// Multi-target mode command; ack frames start FD FC FB FA (PLAN.md §7)
+static const uint8_t CMD_MULTI[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00,
+                                    0x90, 0x00, 0x04, 0x03, 0x02, 0x01};
+
+WiFiUDP udp;
+uint8_t buf[4 * FRAME_LEN];
+size_t bufLen = 0;
+uint32_t frames = 0, framesTotal = 0, resyncs = 0;
+uint32_t lastHeartbeatMs = 0;
+bool sawAck = false;
+
+void setup() {
+  Serial.begin(115200);
+  Serial1.begin(RADAR_BAUD, SERIAL_8N1, RADAR_RX, RADAR_TX);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.printf("\n%s connecting to %s", NODE_NAME, WIFI_SSID);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(250);
+    Serial.print(".");
+  }
+  Serial.printf("\nIP %s -> %s:%d\n", WiFi.localIP().toString().c_str(),
+                PI_HOST, PI_PORT);
+
+  MDNS.begin(NODE_NAME);
+  ArduinoOTA.setHostname(NODE_NAME);
+  ArduinoOTA.begin();
+
+  // Switch the sensor to multi-target mode; the ack shows up in the
+  // stream (FD FC FB FA header) and is logged, not forwarded.
+  Serial1.write(CMD_MULTI, sizeof(CMD_MULTI));
+  Serial.println("sent multi-target mode command");
+}
+
+void forwardFrame(const uint8_t* frame) {
+  udp.beginPacket(PI_HOST, PI_PORT);
+  udp.write(frame, FRAME_LEN);
+  udp.endPacket();
+  frames++;
+  framesTotal++;
+}
+
+void pump() {
+  while (Serial1.available() && bufLen < sizeof(buf)) {
+    buf[bufLen++] = Serial1.read();
+  }
+  size_t i = 0;
+  while (bufLen - i >= FRAME_LEN) {
+    if (memcmp(buf + i, FRAME_HEADER, 4) == 0) {
+      if (memcmp(buf + i + FRAME_LEN - 2, FRAME_TAIL, 2) == 0) {
+        forwardFrame(buf + i);
+        i += FRAME_LEN;
+        continue;
+      }
+      resyncs++;  // false header; fall through and skip one byte
+    } else if (!sawAck && memcmp(buf + i, "\xFD\xFC\xFB\xFA", 4) == 0) {
+      sawAck = true;
+      Serial.println("mode command acked");
+    }
+    i++;
+  }
+  memmove(buf, buf + i, bufLen - i);
+  bufLen -= i;
+}
+
+void heartbeat() {
+  if (millis() - lastHeartbeatMs < HEARTBEAT_MS) return;
+  char msg[160];
+  snprintf(msg, sizeof(msg),
+           "{\"hb\":1,\"node\":\"%s\",\"up_s\":%lu,\"rssi\":%d,"
+           "\"frames\":%lu,\"fps\":%.1f,\"resyncs\":%lu,\"ack\":%d}",
+           NODE_NAME, millis() / 1000, WiFi.RSSI(), framesTotal,
+           frames * 1000.0 / (millis() - lastHeartbeatMs), resyncs, sawAck);
+  udp.beginPacket(PI_HOST, PI_PORT);
+  udp.write((const uint8_t*)msg, strlen(msg));
+  udp.endPacket();
+  Serial.println(msg);
+  frames = 0;
+  lastHeartbeatMs = millis();
+}
+
+void loop() {
+  ArduinoOTA.handle();
+  pump();
+  heartbeat();
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    delay(500);
+  }
+}

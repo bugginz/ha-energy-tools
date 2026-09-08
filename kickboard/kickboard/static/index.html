@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kickboard sim</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #14161a; color: #cfd3da;
+         font: 14px/1.4 system-ui, sans-serif; display: flex; height: 100vh; }
+  #plan { flex: 1; display: block; cursor: crosshair; background: #14161a; }
+  #side { width: 300px; padding: 14px; box-sizing: border-box; overflow-y: auto;
+          background: #1b1e24; border-left: 1px solid #2a2e36; }
+  h1 { font-size: 15px; margin: 0 0 10px; color: #e8b25c; }
+  .row { margin: 10px 0; }
+  .row label { display: flex; justify-content: space-between; font-size: 12px;
+               color: #9aa0ab; margin-bottom: 2px; }
+  .row output { color: #e8b25c; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; }
+  button { background: #2a2e36; color: #cfd3da; border: 1px solid #3a3f4a;
+           border-radius: 4px; padding: 6px 10px; cursor: pointer; margin: 2px 2px 2px 0; }
+  button:hover { background: #343946; }
+  button.on { background: #6b4f1d; border-color: #e8b25c; }
+  #status { font-size: 12px; color: #9aa0ab; white-space: pre-line;
+            border-top: 1px solid #2a2e36; margin-top: 12px; padding-top: 10px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         margin-right: 5px; }
+  .ok { background: #5dbb63; } .bad { background: #d05050; }
+</style>
+</head>
+<body>
+<canvas id="plan"></canvas>
+<div id="side">
+  <h1>kickboard sim</h1>
+  <div class="row"><label>pool width &sigma; <output id="o_sigma"></output></label>
+    <input type="range" id="sigma_mm" min="300" max="800" step="10"></div>
+  <div class="row"><label>peak <output id="o_peak"></output></label>
+    <input type="range" id="peak" min="0" max="1" step="0.05"></div>
+  <div class="row"><label>ambient <output id="o_ambient"></output></label>
+    <input type="range" id="ambient" min="0" max="0.05" step="0.005"></div>
+  <div class="row"><label>lag &tau; (s) <output id="o_tau"></output></label>
+    <input type="range" id="ema_tau_s" min="0.05" max="0.5" step="0.01"></div>
+  <div class="row"><label>colour temp (K) <output id="o_cct"></output></label>
+    <input type="range" id="cct_k" min="2200" max="6500" step="50"></div>
+  <div class="row"><label>sim target noise (mm) <output id="o_noise"></output></label>
+    <input type="range" id="noise_mm" min="0" max="200" step="10" value="0"></div>
+  <div class="row">
+    <button id="clear">clear sim target</button>
+    <button id="dropout">dropout 3 s</button>
+  </div>
+  <div class="row">
+    <button id="enable" class="on">enabled</button>
+    <button id="mode">mode: auto</button>
+  </div>
+  <div id="status">connecting&hellip;</div>
+</div>
+<script>
+"use strict";
+const canvas = document.getElementById("plan");
+const ctx = canvas.getContext("2d");
+let geo = null, state = null, view = null;
+let simTarget = null;   // {x, y} in mm, or null
+let dragging = false;
+
+// ---- coordinate mapping: room mm <-> canvas px, y up ----
+function fitView() {
+  if (!geo) return;
+  let pts = geo.room.slice();
+  for (const n of Object.values(geo.nodes)) pts = pts.concat(n);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const lo = [Math.min(...xs) - 200, Math.min(...ys) - 200];
+  const hi = [Math.max(...xs) + 200, Math.max(...ys) + 200];
+  const w = canvas.width, h = canvas.height;
+  const s = Math.min(w / (hi[0] - lo[0]), h / (hi[1] - lo[1]));
+  view = { lo, s,
+    ox: (w - s * (hi[0] - lo[0])) / 2,
+    oy: (h - s * (hi[1] - lo[1])) / 2, hiY: hi[1] };
+}
+const toPx = (x, y) => [view.ox + (x - view.lo[0]) * view.s,
+                        view.oy + (view.hiY - y) * view.s];
+const toMm = (px, py) => [view.lo[0] + (px - view.ox) / view.s,
+                          view.hiY - (py - view.oy) / view.s];
+
+function resize() {
+  canvas.width = canvas.clientWidth * devicePixelRatio;
+  canvas.height = canvas.clientHeight * devicePixelRatio;
+  fitView();
+}
+window.addEventListener("resize", resize);
+
+// ---- drawing ----
+function draw() {
+  requestAnimationFrame(draw);
+  if (!geo || !view) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // room polygon + exclusion zones
+  ctx.strokeStyle = "#3a3f4a"; ctx.lineWidth = 2; ctx.beginPath();
+  geo.room.forEach((p, i) => { const [x, y] = toPx(p[0], p[1]);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.closePath(); ctx.stroke();
+  ctx.fillStyle = "rgba(208,80,80,0.12)";
+  for (const z of geo.zones || []) {
+    ctx.beginPath();
+    z.forEach((p, i) => { const [x, y] = toPx(p[0], p[1]);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.closePath(); ctx.fill();
+  }
+
+  // LEDs, coloured by live output (brightened so ambient is visible)
+  if (state) for (const [name, xy] of Object.entries(geo.nodes)) {
+    const node = state.nodes[name];
+    for (let i = 0; i < xy.length; i++) {
+      const r = node ? node.rgb[i * 3] : 0, g = node ? node.rgb[i * 3 + 1] : 0,
+            b = node ? node.rgb[i * 3 + 2] : 0;
+      const [px, py] = toPx(xy[i][0], xy[i][1]);
+      ctx.fillStyle = (r || g || b)
+        ? `rgb(${Math.min(255, 40 + r)},${Math.min(255, 40 + g)},${Math.min(255, 40 + b)})`
+        : "#2a2e36";
+      ctx.beginPath(); ctx.arc(px, py, 2.5, 0, 7); ctx.fill();
+    }
+  }
+
+  // tracks: trail, raw (hollow) vs smoothed (solid), confidence as alpha
+  if (state) for (const t of state.targets) {
+    ctx.strokeStyle = "rgba(232,178,92,0.35)"; ctx.lineWidth = 1;
+    ctx.beginPath();
+    t.trail.forEach((p, i) => { const [x, y] = toPx(p[0], p[1]);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+    const [rx, ry] = toPx(t.raw_x, t.raw_y);
+    ctx.strokeStyle = "rgba(120,170,255,0.8)"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(rx, ry, 6, 0, 7); ctx.stroke();
+    const [sx, sy] = toPx(t.x, t.y);
+    ctx.fillStyle = `rgba(232,178,92,${0.25 + 0.75 * t.conf})`;
+    ctx.beginPath(); ctx.arc(sx, sy, 8, 0, 7); ctx.fill();
+    ctx.fillStyle = "#cfd3da"; ctx.font = "11px system-ui";
+    ctx.fillText(`#${t.id} ${t.conf.toFixed(2)}${t.held ? " held" : ""}`,
+                 sx + 11, sy - 6);
+  }
+
+  // sim target marker
+  if (simTarget) {
+    const [x, y] = toPx(simTarget.x, simTarget.y);
+    ctx.strokeStyle = "#5dbb63"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x - 15, y); ctx.lineTo(x + 15, y);
+    ctx.moveTo(x, y - 15); ctx.lineTo(x, y + 15); ctx.stroke();
+  }
+}
+
+// ---- interaction: drag anywhere to place/move the sim target ----
+function pointerMm(ev) {
+  const r = canvas.getBoundingClientRect();
+  return toMm((ev.clientX - r.left) * devicePixelRatio,
+              (ev.clientY - r.top) * devicePixelRatio);
+}
+function pushSimTarget() {
+  if (!simTarget) return;
+  post("/api/sim_target", { active: true, x: simTarget.x, y: simTarget.y,
+                            noise_mm: +document.getElementById("noise_mm").value });
+}
+canvas.addEventListener("pointerdown", ev => {
+  dragging = true; canvas.setPointerCapture(ev.pointerId);
+  const [x, y] = pointerMm(ev); simTarget = { x, y }; pushSimTarget();
+});
+canvas.addEventListener("pointermove", ev => {
+  if (!dragging) return;
+  const [x, y] = pointerMm(ev); simTarget = { x, y }; pushSimTarget();
+});
+canvas.addEventListener("pointerup", () => { dragging = false; });
+
+// ---- controls ----
+const post = (url, body) => fetch(url, { method: "POST",
+  headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+
+const sliders = ["sigma_mm", "peak", "ambient", "ema_tau_s", "cct_k"];
+const outputs = { sigma_mm: "o_sigma", peak: "o_peak", ambient: "o_ambient",
+                  ema_tau_s: "o_tau", cct_k: "o_cct" };
+let editing = null;   // don't fight the server while a slider is held
+for (const id of sliders) {
+  const el = document.getElementById(id);
+  el.addEventListener("pointerdown", () => { editing = id; });
+  el.addEventListener("pointerup", () => { editing = null; });
+  el.addEventListener("input", () => {
+    document.getElementById(outputs[id]).textContent = el.value;
+    post("/api/params", { [id]: +el.value });
+  });
+}
+document.getElementById("noise_mm").addEventListener("input", ev => {
+  document.getElementById("o_noise").textContent = ev.target.value;
+  pushSimTarget();
+});
+document.getElementById("clear").addEventListener("click", () => {
+  simTarget = null; post("/api/sim_target", { active: false });
+});
+document.getElementById("dropout").addEventListener("click",
+  () => post("/api/dropout", { seconds: 3 }));
+document.getElementById("enable").addEventListener("click", () =>
+  post("/api/params", { enabled: !(state && state.params.enabled) }));
+document.getElementById("mode").addEventListener("click", () =>
+  post("/api/params",
+       { mode: state && state.params.mode === "auto" ? "manual" : "auto" }));
+
+function syncControls() {
+  if (!state) return;
+  for (const id of sliders) {
+    if (editing === id) continue;
+    const el = document.getElementById(id);
+    el.value = state.params[id === "cct_k" ? "cct_k" : id];
+    document.getElementById(outputs[id]).textContent = (+el.value).toFixed(
+      id === "peak" ? 2 : id === "ambient" ? 3 : id === "ema_tau_s" ? 2 : 0);
+  }
+  const en = document.getElementById("enable");
+  en.classList.toggle("on", state.params.enabled);
+  en.textContent = state.params.enabled ? "enabled" : "disabled";
+  document.getElementById("mode").textContent = "mode: " + state.params.mode;
+  const dot = c => `<span class="dot ${c ? "ok" : "bad"}"></span>`;
+  const est = Object.entries(state.stats)
+    .map(([n, s]) => `${n}: ${s.est_ma} mA${s.clamped ? " CLAMPED" : ""}`)
+    .join("\n");
+  document.getElementById("status").innerHTML =
+    `${dot(state.radar_alive)}radar ${state.radar_alive ? "alive" : "silent"}\n` +
+    `${dot(state.occupancy)}occupancy ${state.occupancy}\n` +
+    `master ${state.master}  targets ${state.targets.length}\n` + est +
+    (state.sim.dropout_s > 0 ? `\ndropout ${state.sim.dropout_s.toFixed(1)} s` : "");
+}
+
+// ---- data ----
+async function loadGeo() {
+  geo = await (await fetch("/api/geometry")).json();
+  resize();
+}
+function connect() {
+  const ws = new WebSocket(
+    (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onmessage = ev => { state = JSON.parse(ev.data); syncControls(); };
+  ws.onclose = () => {
+    document.getElementById("status").textContent = "disconnected, retrying…";
+    setTimeout(connect, 1500);
+  };
+}
+loadGeo().then(() => { connect(); requestAnimationFrame(draw); });
+</script>
+</body>
+</html>
