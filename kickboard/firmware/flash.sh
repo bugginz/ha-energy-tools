@@ -5,8 +5,8 @@
 #   ./flash.sh radar [port]
 #
 # "port" is a USB device (/dev/cu.usbmodem*) for the first flash, or the
-# node's IP / mDNS name for an over-the-air update afterwards (ArduinoOTA,
-# so the node never leaves the toe kick):
+# node's IP for an over-the-air update afterwards (ArduinoOTA via the
+# core's espota.py, so the node never leaves the toe kick):
 #   ./flash.sh strip kick-left 192.168.1.118
 #
 # First run installs the esp32 arduino core (3.x — the C6 needs 3.x) and
@@ -91,16 +91,30 @@ override NODE_NAME "\"$NODE\""
 grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|DATA_PIN)' \
   "$DIR/$SKETCH.ino" | sed 's/^/    /'
 
+OUT="$BUILD/out"
 echo "--- compiling $SKETCH for $FQBN"
-arduino-cli compile --fqbn "$FQBN" "$DIR"
+arduino-cli compile --fqbn "$FQBN" --build-path "$OUT" "$DIR"
 case "$PORT" in
-  /dev/*) PROTO=serial ;;
-  *)      PROTO=network ;;   # ArduinoOTA via espota.py
+  /dev/*)
+    echo "--- uploading to $PORT (serial)"
+    arduino-cli upload --fqbn "$FQBN" -p "$PORT" --input-dir "$OUT" "$DIR"
+    echo "OK: $NODE flashed. Watch it boot with:"
+    echo "  arduino-cli monitor -p $PORT -c baudrate=115200"
+    ;;
+  *)
+    # ArduinoOTA. Call espota.py directly rather than 'arduino-cli upload
+    # --protocol network', which only works if mDNS discovery happened to
+    # list the node in the last few seconds.
+    ESPOTA=""
+    for f in "$HOME"/Library/Arduino15/packages/esp32/hardware/esp32/*/tools/espota.py \
+             "$HOME"/.arduino15/packages/esp32/hardware/esp32/*/tools/espota.py; do
+      [ -f "$f" ] && ESPOTA=$f
+    done
+    [ -n "$ESPOTA" ] || { echo "espota.py not found in the esp32 core" >&2; exit 1; }
+    echo "--- uploading to $PORT (OTA)"
+    python3 "$ESPOTA" -r -i "$PORT" -p 3232 --auth="${OTA_PASS:-}" \
+      -f "$OUT/$SKETCH.ino.bin" 2>&1 | tr '\r' '\n' \
+      | { grep -vE "^Uploading: \[.*\] +[0-9]?[0-9]% *$" || true; }
+    echo "OK: $NODE flashed over the air."
+    ;;
 esac
-echo "--- uploading to $PORT ($PROTO)"
-EXTRA=()
-[ "$PROTO" = network ] && EXTRA=(--upload-field "password=${OTA_PASS:-}")
-arduino-cli upload --fqbn "$FQBN" -p "$PORT" --protocol "$PROTO" "${EXTRA[@]}" "$DIR"
-echo "OK: $NODE flashed."
-[ "$PROTO" = serial ] && echo "  watch it boot: arduino-cli monitor -p $PORT -c baudrate=115200"
-exit 0

@@ -30,7 +30,7 @@ nodes:
     host: 192.168.1.118
     num_leds: 300
     color_order: RGB
-    budget_ma: 450            # USB power on the bench; firmware caps at the same
+    budget_ma: 1500           # USB-C PD brick through the XIAO 5V pad; firmware MAX_MA matches
     waypoints:
       - [0, 0, 0]
       - [299, 4983, 0]        # 299 x 16.67 mm pitch
