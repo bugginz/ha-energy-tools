@@ -120,4 +120,6 @@ python3 -m unittest tests.test_kickboard -v
   The §3 power numbers stand. `config.bench.yaml` describes the bench rig.
 - Measure the room; replace the placeholder polygon, waypoints and radar pose.
   `radar.solve_pose()` does the §9.2 three-cross Procrustes fit.
-- Decide: radar node vs USB-direct, one PSU or two, ambient 0 % vs 3 %.
+- ~~One PSU or two~~ — two, one per side (opposite walls). Each side independent;
+  per-side supply wants 10–12 A at 5 V (software budget is 6 A/side).
+- Decide: radar node vs USB-direct, ambient 0 % vs 3 %.
