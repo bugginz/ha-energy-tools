@@ -144,6 +144,16 @@ class GeometryTest(unittest.TestCase):
         self.assertTrue(np.allclose(m[6], [400, 200]))
         self.assertTrue(np.allclose(m[8], [400, 400]))
 
+    def test_daisy_chain_gap(self):
+        # one chain across the kitchen: LED 299 ends side A, LED 300 starts
+        # side B — adjacent waypoint indices place no LEDs in the gap
+        m = geometry.build_led_map(
+            [(0, 100, 50), (299, 4083, 50),
+             (300, 4083, 1750), (539, 100, 1750)], 540)
+        self.assertTrue(np.allclose(m[299], [4083, 50]))
+        self.assertTrue(np.allclose(m[300], [4083, 1750]))
+        self.assertTrue(np.allclose(m[539], [100, 1750]))
+
     def test_validation(self):
         with self.assertRaises(ValueError):
             geometry.build_led_map([(1, 0, 0), (9, 900, 0)], 10)   # no LED 0
@@ -176,6 +186,32 @@ class DdpTest(unittest.TestCase):
     def test_no_push(self):
         pkt = ddp.ddp_packet(seq=1, offset=0, payload=b"", push=False)
         self.assertEqual(pkt[0], 0x40)
+
+    def test_multi_packet_frame(self):
+        # a 9 m daisy chain is 540 LEDs = 1620 B > one packet; the splitter
+        # must emit offset-continued packets with push only on the last
+        sent = []
+
+        class FakeSock:
+            def sendto(self, pkt, addr):
+                sent.append(pkt)
+
+            def close(self):
+                pass
+
+        sender = ddp.DDPSender()
+        sender._sock = FakeSock()
+        payload = bytes(range(256)) * 6 + bytes(84)   # 1620 B
+        sender.send_frame("host", 4048, payload)
+        self.assertEqual(len(sent), 2)
+        self.assertEqual(sent[0][0], 0x40)                       # no push
+        self.assertEqual(sent[1][0], 0x41)                       # push
+        self.assertEqual(sent[0][1], sent[1][1])                 # same seq
+        self.assertEqual(sent[0][4:8], (0).to_bytes(4, "big"))
+        self.assertEqual(sent[0][8:10], (1440).to_bytes(2, "big"))
+        self.assertEqual(sent[1][4:8], (1440).to_bytes(4, "big"))
+        self.assertEqual(sent[1][8:10], (180).to_bytes(2, "big"))
+        self.assertEqual(sent[0][10:] + sent[1][10:], payload)   # reassembles
 
 
 def make_cfg(**render_over):
