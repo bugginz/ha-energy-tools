@@ -6,21 +6,24 @@ for the tunables, a dropout button, and raw-vs-smoothed trails once the
 radar is live. State streams over a websocket at ~15 Hz.
 """
 
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here. FastAPI resolves the
+# `WebSocket` annotation on the /ws endpoint at runtime; as a postponed
+# string with the name imported lazily it silently became a required
+# query parameter and every socket was refused with HTTP 403.
 
 import asyncio
 import threading
 import time
 from pathlib import Path
 
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+
 STATIC_DIR = Path(__file__).parent / "static"
 STREAM_HZ = 15.0
 
 
-def create_app(service):
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-    from fastapi.responses import FileResponse, JSONResponse
-
+def create_app(service) -> FastAPI:
     app = FastAPI(title="kickboard sim")
 
     @app.get("/")

@@ -377,6 +377,23 @@ class TrackerTest(unittest.TestCase):
         self.assertFalse(tr.occupied(t + 31.0, 30.0))
 
 
+class SimAppTest(unittest.TestCase):
+    """Only runs where fastapi is installed (it is not a test dependency)."""
+
+    def test_ws_endpoint_binds_the_websocket_param(self):
+        try:
+            from kickboard.sim import create_app
+        except ImportError:
+            self.skipTest("fastapi not installed")
+        app = create_app(object())
+        route = next(r for r in app.routes if getattr(r, "path", "") == "/ws")
+        # Regression: with postponed annotations and a lazily imported
+        # WebSocket type, FastAPI treated `sock` as a required query param
+        # and refused every connection with HTTP 403.
+        self.assertEqual(route.dependant.websocket_param_name, "sock")
+        self.assertEqual([p.name for p in route.dependant.query_params], [])
+
+
 class ConfigTest(unittest.TestCase):
     def test_repo_config_loads(self):
         cfg = config_mod.load_config(str(CONFIG_PATH))
