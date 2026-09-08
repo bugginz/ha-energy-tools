@@ -338,9 +338,11 @@ level shifter. Keep in reserve; don't start there.
 
 1. Actual LED density and total length of the strip on hand.
 2. Is the Pi 5 within ~2 m of the radar mounting spot? (Decides radar node vs USB direct.)
-3. ~~One PSU for both sides or one per side?~~ DECIDED 2026-09-08: one per side — the sides
-   are on opposite walls with no single 240 V point serving both. Each side is fully
-   independent (own PSU, own C6); no ground run crosses the kitchen, WiFi is the only link.
+3. ~~One PSU for both sides or one per side?~~ RE-DECIDED 2026-09-08: **one PSU** (the Core
+   26 A unit) with low-voltage wires run across the gap, and the two strips joined into one
+   daisy-chained run of 7 or 9 m total (5 m reel + part of a second, from Core). Whether the
+   chain is driven as one node (multi-packet DDP, supported) or split at the gap into two
+   nodes sharing the PSU is finalised at install; see the crossing-wire sizing note in §3.2.
 4. Ambient floor when occupied: 0 % (pure follow effect) or ~3 % (kickboard lighting that also follows)?
 5. Should the strips be usable as plain kickboard lights from HA when the radar is off? (§8.6 assumes yes.)
 
