@@ -51,7 +51,7 @@ nodes:
   - name: kick-left
     host: kick-left.local   # static DHCP reservation recommended over mDNS
     port: 4048
-    num_leds: 240           # ASSUMED 60/m x 4 m — count them
+    num_leds: 240           # 60/m CONFIRMED; 4 m per side still ASSUMED — measure
     color_order: RGB          # wire order; strip_node firmware handles the chip's GRB
     budget_ma: 6000         # software current budget per side (PLAN.md §3.1)
     ma_per_led_full: 60

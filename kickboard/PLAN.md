@@ -27,7 +27,7 @@ wherever a person is standing. Multiple people → multiple pools. Nobody in the
 
 | Item | Status | Notes |
 |---|---|---|
-| BTF-LIGHTING SMD WS2812B RGB strip (model SMD-WS2812B-RGB-02-ML) | In hand | **5 V**, discrete SMD, 3 wires (5V / GND / DI). LED density **ASSUMED 60/m — count and confirm**. Total length on hand **UNKNOWN — measure**. |
+| BTF-LIGHTING SMD WS2812B RGB strip (model SMD-WS2812B-RGB-02-ML) | In hand | **5 V**, discrete SMD, 3 wires (5V / GND / DI). LED density **CONFIRMED 60/m**. Total length on hand **UNKNOWN — measure**. |
 | Ai-Thinker RD-03D mmWave sensor | Ordered, Core Electronics, ETA 9 Sep | 24 GHz, 1T2R, X/Y for up to 3 targets, UART 256000 8N1, 3.3 V logic |
 | Seeed XIAO ESP32-C6 (several) | In hand | Used as strip driver node(s) and optionally radar node |
 | Raspberry Pi 5 + Hailo-10H | In hand, runs HA (Docker) | Runs the Python tracking + render service |
@@ -47,7 +47,7 @@ config file.
 
 ## 3. Power design
 
-### 3.1 The numbers (ASSUMED 60 LED/m, 4 m per side, 2 sides = 480 LEDs)
+### 3.1 The numbers (60 LED/m confirmed; 4 m per side still ASSUMED, 2 sides = 480 LEDs)
 
 | Case | Per LED | Per side (240) | Total (480) |
 |---|---|---|---|
