@@ -18,6 +18,7 @@
 # committed defaults stay untouched:
 #   NUM_LEDS=60  MAX_MA=450  ./flash.sh strip kick-left     # bench strip
 #   PI_HOST=192.168.1.10     ./flash.sh radar
+#   LOG_HOST=192.168.1.10    ./flash.sh strip kick-left 192.168.1.118   # UDP log sink
 #
 # BENCH NOTE: powering a strip segment from the XIAO's USB 5V alone, set
 # MAX_MA=450 or the Mac's USB port will brown out — the committed default
@@ -88,7 +89,8 @@ override NODE_NAME "\"$NODE\""
 [ -n "${NUM_LEDS:-}" ] && override NUM_LEDS "$NUM_LEDS"
 [ -n "${MAX_MA:-}" ]   && override MAX_MILLIAMPS "$MAX_MA"
 [ -n "${PI_HOST:-}" ]  && override PI_HOST "\"$PI_HOST\""
-grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|DATA_PIN)' \
+[ -n "${LOG_HOST:-}" ] && override LOG_HOST "\"$LOG_HOST\""
+grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|LOG_HOST|DATA_PIN)' \
   "$DIR/$SKETCH.ino" | sed 's/^/    /'
 
 OUT="$BUILD/out"

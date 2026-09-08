@@ -30,10 +30,31 @@
 #define MAX_MILLIAMPS 6000         // hardware-side backstop = PSU rating share
 #define WATCHDOG_MS 2000           // no DDP this long -> fade out
 #define FADE_MS 1000
+// Every serial log line is also sent as a UDP datagram to LOG_HOST so the
+// node can be watched without a cable: tools/nodelog.py listens on LOG_PORT.
+// Point it at the Pi (or wherever the service runs); "" disables it.
+#define LOG_HOST ""                // set per flash: LOG_HOST=<ip> ./flash.sh ...
+#define LOG_PORT 4050
 
 CRGB leds[NUM_LEDS];
 WiFiUDP udp;
+WiFiUDP logUdp;
 uint8_t pkt[1500];
+uint32_t wifiDrops = 0;
+
+void logf(const char* fmt, ...) {
+  char line[200];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(line, sizeof(line), fmt, ap);
+  va_end(ap);
+  Serial.println(line);
+  if (LOG_HOST[0] && WiFi.status() == WL_CONNECTED) {
+    logUdp.beginPacket(LOG_HOST, LOG_PORT);
+    logUdp.printf("%s %s", NODE_NAME, line);
+    logUdp.endPacket();
+  }
+}
 
 uint32_t lastPacketMs = 0;
 uint32_t packets = 0, badPackets = 0, shows = 0;
@@ -56,7 +77,9 @@ void setup() {
     delay(250);
     Serial.print(".");
   }
-  Serial.printf("\nIP %s\n", WiFi.localIP().toString().c_str());
+  Serial.println();
+  logf("boot: IP %s rssi %d leds %d max_ma %d", WiFi.localIP().toString().c_str(),
+       WiFi.RSSI(), NUM_LEDS, MAX_MILLIAMPS);
 
   MDNS.begin(NODE_NAME);           // kick-left.local
   ArduinoOTA.setHostname(NODE_NAME);
@@ -105,7 +128,7 @@ void watchdog() {
   uint32_t silent = millis() - lastPacketMs;
   if (silent < WATCHDOG_MS) return;
   if (!fading) {
-    Serial.println("watchdog: no DDP, fading out");
+    logf("watchdog: no DDP for %lu ms, fading out", (unsigned long)silent);
     fading = true;
   }
   static uint32_t lastFadeMs = 0;
@@ -119,9 +142,10 @@ void watchdog() {
 void stats() {
   if (millis() - lastStatsMs < 5000) return;
   uint32_t dt = (millis() - lastStatsMs) / 1000;
-  Serial.printf("pkts/s %lu  shows/s %lu  seq %u  gaps %lu  bad %lu  rssi %d\n",
-                packets / dt, shows / dt, lastSeq, seqGaps, badPackets,
-                WiFi.RSSI());
+  logf("pkts/s %lu  shows/s %lu  seq %u  gaps %lu  bad %lu  rssi %d  "
+       "wifi_drops %lu  up %lus  heap %u",
+       packets / dt, shows / dt, lastSeq, seqGaps, badPackets, WiFi.RSSI(),
+       wifiDrops, millis() / 1000, ESP.getFreeHeap());
   packets = shows = 0;
   lastStatsMs = millis();
 }
@@ -136,7 +160,15 @@ void loop() {
   watchdog();
   stats();
   if (WiFi.status() != WL_CONNECTED) {
+    // Serial only — there is no network to log to. Counted into the next
+    // stats line so a flaky link shows up as wifi_drops > 0.
+    wifiDrops++;
+    Serial.printf("wifi lost (drop %lu), reconnecting\n", wifiDrops);
     WiFi.reconnect();
-    delay(500);
+    uint32_t t0 = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) delay(100);
+    if (WiFi.status() == WL_CONNECTED)
+      logf("wifi back after %lu ms, IP %s", millis() - t0,
+           WiFi.localIP().toString().c_str());
   }
 }
