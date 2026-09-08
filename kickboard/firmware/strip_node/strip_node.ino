@@ -23,7 +23,7 @@
 #include "wifi_credentials.h"
 
 #define NODE_NAME "kick-left"      // kick-left | kick-right
-#define NUM_LEDS 240               // ASSUMED 60/m x 4 m — count them
+#define NUM_LEDS 240               // 60/m confirmed; 4 m per side still to measure
 #define DATA_PIN D1                // not D0/GPIO0 (strapping pin)
 #define COLOR_ORDER GRB            // WS2812B
 #define DDP_PORT 4048
