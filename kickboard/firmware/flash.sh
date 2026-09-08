@@ -4,6 +4,11 @@
 #   ./flash.sh strip [kick-left|kick-right] [port]
 #   ./flash.sh radar [port]
 #
+# "port" is a USB device (/dev/cu.usbmodem*) for the first flash, or the
+# node's IP / mDNS name for an over-the-air update afterwards (ArduinoOTA,
+# so the node never leaves the toe kick):
+#   ./flash.sh strip kick-left 192.168.1.118
+#
 # First run installs the esp32 arduino core (3.x — the C6 needs 3.x) and
 # FastLED via arduino-cli (brew install arduino-cli / see arduino.cc).
 # Copy wifi_credentials.h.example to wifi_credentials.h in the sketch dir
@@ -88,7 +93,14 @@ grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|DATA_PIN)' \
 
 echo "--- compiling $SKETCH for $FQBN"
 arduino-cli compile --fqbn "$FQBN" "$DIR"
-echo "--- uploading to $PORT"
-arduino-cli upload --fqbn "$FQBN" -p "$PORT" "$DIR"
-echo "OK: $NODE flashed. Watch it boot with:"
-echo "  arduino-cli monitor -p $PORT -c baudrate=115200"
+case "$PORT" in
+  /dev/*) PROTO=serial ;;
+  *)      PROTO=network ;;   # ArduinoOTA via espota.py
+esac
+echo "--- uploading to $PORT ($PROTO)"
+EXTRA=()
+[ "$PROTO" = network ] && EXTRA=(--upload-field "password=${OTA_PASS:-}")
+arduino-cli upload --fqbn "$FQBN" -p "$PORT" --protocol "$PROTO" "${EXTRA[@]}" "$DIR"
+echo "OK: $NODE flashed."
+[ "$PROTO" = serial ] && echo "  watch it boot: arduino-cli monitor -p $PORT -c baudrate=115200"
+exit 0

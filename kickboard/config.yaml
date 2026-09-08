@@ -1,9 +1,11 @@
 # Kickboard position-aware lighting — every tunable lives here (PLAN.md §8.8).
 # Distances in mm, room coordinates with origin at the chosen kitchen corner.
 #
-# NOTE: node num_leds/waypoints below assume 60 LED/m and 4 m per side —
-# both are ASSUMED in the plan. Count the LEDs and measure the room before
-# trusting anything here (PLAN.md phase 0).
+# Strip density CONFIRMED 60 LED/m (2026-09-08, ruler count: the reel on
+# hand is 5 m / 300 LEDs — one reel per side, a second reel is needed).
+# 4 m per side and the room polygon are still ASSUMED: measure the room
+# before trusting the waypoints (PLAN.md phase 0). config.bench.yaml is
+# the single-reel bench rig.
 
 service:
   render_fps: 30
@@ -51,7 +53,7 @@ nodes:
   - name: kick-left
     host: kick-left.local   # static DHCP reservation recommended over mDNS
     port: 4048
-    num_leds: 240           # ASSUMED 60/m x 4 m — count them
+    num_leds: 240           # 60/m confirmed; 4 m per side ASSUMED
     color_order: RGB          # wire order; strip_node firmware handles the chip's GRB
     budget_ma: 6000         # software current budget per side (PLAN.md §3.1)
     ma_per_led_full: 60

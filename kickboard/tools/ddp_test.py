@@ -5,6 +5,11 @@
     python3 tools/ddp_test.py kick-left.local chase
     python3 tools/ddp_test.py kick-left.local gradient --minutes 10
     python3 tools/ddp_test.py kick-left.local off
+    python3 tools/ddp_test.py kick-left.local ruler --leds 750
+
+ruler: LED 0 green, every 10th warm white, every 50th blue, every 100th
+red — count the marks to the physical end of the strip to get its LED
+count, and use it with the sim's chase to check §9.1 geometry.
 
 Acceptance (PLAN.md phase 1): solid colour, chase, and a 30 fps gradient
 running 10 minutes with no glitch.
@@ -40,8 +45,26 @@ def frame_gradient(n, t, rgb):
     return bytes(buf)
 
 
+def frame_ruler(n, t, rgb):
+    buf = bytearray(n * 3)
+    for i in range(n):
+        if i == 0:
+            c = (0, 200, 0)
+        elif i % 100 == 0:
+            c = (200, 0, 0)
+        elif i % 50 == 0:
+            c = (0, 0, 200)
+        elif i % 10 == 0:
+            c = tuple(v // 3 for v in rgb)
+        else:
+            continue
+        buf[i * 3:i * 3 + 3] = bytes(c)
+    return bytes(buf)
+
+
 PATTERNS = {"solid": frame_solid, "chase": frame_chase,
-            "gradient": frame_gradient, "off": lambda n, t, rgb: bytes(n * 3)}
+            "gradient": frame_gradient, "ruler": frame_ruler,
+            "off": lambda n, t, rgb: bytes(n * 3)}
 
 
 def main():
@@ -71,7 +94,7 @@ def main():
             if frames % int(args.fps * 5) == 0:
                 print(f"{t:7.1f}s  {frames} frames  {frames / t:.1f} fps")
             time.sleep(max(0.0, t0 + frames * period - time.monotonic()))
-            if args.pattern in ("off", "solid") and not args.minutes:
+            if args.pattern in ("off", "solid", "ruler") and not args.minutes:
                 # static patterns don't need 30 fps; refresh at 2 Hz
                 time.sleep(0.5)
     except KeyboardInterrupt:

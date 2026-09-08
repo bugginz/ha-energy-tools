@@ -11,3 +11,4 @@ options.json
 esphome/secrets.yaml
 esphome/.esphome/
 kickboard/firmware/*/wifi_credentials.h
+kickboard/.venv/

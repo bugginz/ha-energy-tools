@@ -43,6 +43,9 @@ python3 -m kickboard.main --config config.yaml --dump-map   # sanity-check geome
 python3 -m kickboard.main --config config.yaml --no-ddp     # sim UI on :8771
 ```
 
+`config.bench.yaml` is the single-reel bench rig (300 LEDs on `kick-left`);
+use it instead of `config.yaml` until the kitchen is measured.
+
 Open http://localhost:8771/ and drag on the plan view — that injects a fake target
 into the real tracker at the radar's 10 Hz, with a noise slider and a dropout
 button to tune robustness before the sensor even arrives. Once a strip node is on
@@ -112,8 +115,9 @@ python3 -m unittest tests.test_kickboard -v
 
 ## Open items (blocked on hardware / Rob)
 
-- Count the strip's LED density and measure its length; update `num_leds`,
-  waypoints and the §3 power numbers (plan phase 0).
+- ~~Count the strip's LED density and measure its length~~ — done 2026-09-08:
+  60/m, the reel is 5 m / 300 LEDs, so two reels are needed for two 4 m sides.
+  The §3 power numbers stand. `config.bench.yaml` describes the bench rig.
 - Measure the room; replace the placeholder polygon, waypoints and radar pose.
   `radar.solve_pose()` does the §9.2 three-cross Procrustes fit.
 - Decide: radar node vs USB-direct, one PSU or two, ambient 0 % vs 3 %.
