@@ -338,7 +338,9 @@ level shifter. Keep in reserve; don't start there.
 
 1. Actual LED density and total length of the strip on hand.
 2. Is the Pi 5 within ~2 m of the radar mounting spot? (Decides radar node vs USB direct.)
-3. One PSU for both sides or one per side? Depends on where the 240 V outlet is inside the cabinetry.
+3. ~~One PSU for both sides or one per side?~~ DECIDED 2026-09-08: one per side — the sides
+   are on opposite walls with no single 240 V point serving both. Each side is fully
+   independent (own PSU, own C6); no ground run crosses the kitchen, WiFi is the only link.
 4. Ambient floor when occupied: 0 % (pure follow effect) or ~3 % (kickboard lighting that also follows)?
 5. Should the strips be usable as plain kickboard lights from HA when the radar is off? (§8.6 assumes yes.)
 
