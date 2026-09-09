@@ -70,6 +70,13 @@ directory, set the per-node `#define`s at the top (`NODE_NAME`, `NUM_LEDS`,
 wiring anything. Nodes are OTA-updatable (`kick-left.local`, `kick-right.local`,
 `kick-radar.local`) so they never come out of the toe kick.
 
+**Radar node as an ESPHome device instead.** The bench radar is an RD-03D on a
+XIAO ESP32-S3 Sense camera node that already runs ESPHome, so rather than the
+Arduino `radar_node` sketch it uses an ESPHome external component doing the same
+job: `~/projects/HA/esphome/components/rd03d_bridge/` (UART sync → raw 30-byte
+frames over UDP to `radar.udp_port`, JSON heartbeat every 5 s). Either node
+type is interchangeable from the service's point of view.
+
 Byte order on the wire is **RGB**: the strip firmware's FastLED `COLOR_ORDER GRB`
 handles the WS2812B's chip ordering, so the per-node `color_order` in config stays
 `RGB` unless a future receiver shifts raw bytes straight out.
