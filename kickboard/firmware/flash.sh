@@ -18,6 +18,7 @@
 # committed defaults stay untouched:
 #   NUM_LEDS=60  MAX_MA=450  ./flash.sh strip kick-left     # bench strip
 #   PI_HOST=192.168.1.10     ./flash.sh radar
+#   FQBN=esp32:esp32:XIAO_ESP32S3 PI_HOST=... ./flash.sh radar   # XIAO S3 Sense host
 #   LOG_HOST=192.168.1.10    ./flash.sh strip kick-left 192.168.1.118   # UDP log sink
 #
 # BENCH NOTE: powering a strip segment from the XIAO's USB 5V alone, set
@@ -27,7 +28,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-FQBN=esp32:esp32:XIAO_ESP32C6
+FQBN="${FQBN:-esp32:esp32:XIAO_ESP32C6}"
 KIND="${1:-}"
 case "$KIND" in
   strip) SKETCH=strip_node; NODE="${2:-kick-left}"; PORT="${3:-}" ;;
