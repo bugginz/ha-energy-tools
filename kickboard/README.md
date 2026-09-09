@@ -83,6 +83,11 @@ handles the WS2812B's chip ordering, so the per-node `color_order` in config sta
 
 ## Home Assistant
 
+`ha-package-kickboard.yaml` is a drop-in HA package that snapshots one of the
+existing ESPHome XIAO S3 camera nodes whenever the tracker sees a first target
+in an empty kitchen — ground truth for the §9.3 ghost survey with no new
+firmware (set the camera entity inside; needs MQTT enabled below).
+
 Set `mqtt.enabled: true` plus broker details and the service discovers as one
 "Kickboard lighting" device: master enable, auto/manual mode, a plain RGB light
 entity (turning it on switches to manual — the strips become ordinary kickboard
