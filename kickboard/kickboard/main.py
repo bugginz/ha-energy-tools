@@ -200,8 +200,14 @@ class Service:
         }
 
     def geometry_state(self) -> dict:
+        import math
         return {
             "room": [list(p) for p in self.cfg.room.polygon],
+            # sensor position and boresight in room coords, for the plan view.
+            # RD-03D field of view is about +-60 deg azimuth, ~8 m range.
+            "radar": {"x": self.pose.tx_mm, "y": self.pose.ty_mm,
+                      "theta_deg": math.degrees(self.pose.theta_rad),
+                      "fov_deg": 120, "range_mm": 8000},
             "zones": [[list(p) for p in z] for z in self.cfg.room.exclusion_zones],
             "nodes": {name: xy.tolist() for name, xy in self.led_maps.items()},
         }

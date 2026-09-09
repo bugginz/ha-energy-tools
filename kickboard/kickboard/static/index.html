@@ -107,6 +107,32 @@ function draw() {
     ctx.closePath(); ctx.fill();
   }
 
+  // radar: position, boresight arrow, field-of-view wedge (sensor +Y is
+  // "forward"; room direction = R(theta) * (0, 1))
+  if (geo.radar) {
+    const r = geo.radar, th = r.theta_deg * Math.PI / 180;
+    const fx = -Math.sin(th), fy = Math.cos(th);          // forward unit vector
+    const half = r.fov_deg / 2 * Math.PI / 180;
+    const [sx, sy] = toPx(r.x, r.y);
+    ctx.fillStyle = "rgba(120,170,255,0.06)";
+    ctx.strokeStyle = "rgba(120,170,255,0.35)"; ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.moveTo(sx, sy);
+    for (let a = -half; a <= half + 1e-6; a += Math.PI / 90) {
+      const dx = fx * Math.cos(a) - fy * Math.sin(a), dy = fx * Math.sin(a) + fy * Math.cos(a);
+      const [px, py] = toPx(r.x + dx * r.range_mm, r.y + dy * r.range_mm);
+      ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    const [ax, ay] = toPx(r.x + fx * 400, r.y + fy * 400);   // 40 cm boresight arrow
+    ctx.strokeStyle = "#78aaff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ax, ay); ctx.stroke();
+    ctx.fillStyle = "#78aaff";
+    ctx.fillRect(sx - 6, sy - 6, 12, 12);
+    ctx.fillStyle = "#cfd3da"; ctx.font = "11px system-ui";
+    ctx.fillText(`radar (${r.x}, ${r.y}) ${r.theta_deg.toFixed(0)}°`, sx + 10, sy + 16);
+  }
+
   // LEDs, coloured by live output (brightened so ambient is visible)
   if (state) for (const [name, xy] of Object.entries(geo.nodes)) {
     const node = state.nodes[name];
