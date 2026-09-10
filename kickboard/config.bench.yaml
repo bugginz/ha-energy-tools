@@ -52,4 +52,4 @@ sim:
   port: 8771
 
 logging:
-  record_radar: false
+  record_radar: true        # data/radar-logs, replay with --replay
