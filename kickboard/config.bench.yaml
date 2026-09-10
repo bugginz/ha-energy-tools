@@ -34,6 +34,14 @@ nodes:
     waypoints:
       - [0, 0, 0]
       - [299, 4983, 0]        # 299 x 16.67 mm pitch
+  - name: kick-right          # second C6 + reel, flashed 2026-09-10, USB power
+    host: 192.168.1.122
+    num_leds: 300
+    color_order: RGB
+    budget_ma: 450            # on the Mac's USB port; firmware MAX_MA matches
+    waypoints:                # drawn along the far side of the bench "room"
+      - [0, 0, 2000]
+      - [299, 4983, 2000]
 
 mqtt:
   enabled: false
