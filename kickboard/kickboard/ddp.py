@@ -32,15 +32,20 @@ def ddp_packet(seq: int, offset: int, payload: bytes, push: bool) -> bytes:
 class DDPSender:
     def __init__(self):
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self._seq = 0
+        self._seq: dict[tuple[str, int], int] = {}   # per destination
 
     def send_frame(self, host: str, port: int, payload: bytes) -> None:
-        self._seq = self._seq % 15 + 1          # 1..15, skip 0
+        # Sequence numbers are per node: each receiver checks continuity of
+        # what *it* gets, so a shared counter across nodes would make every
+        # packet look like a gap.
+        key = (host, port)
+        seq = self._seq.get(key, 0) % 15 + 1    # 1..15, skip 0
+        self._seq[key] = seq
         offset = 0
         while True:
             chunk = payload[offset:offset + MAX_DATA]
             last = offset + len(chunk) >= len(payload)
-            pkt = ddp_packet(self._seq, offset, chunk, push=last)
+            pkt = ddp_packet(seq, offset, chunk, push=last)
             try:
                 self._sock.sendto(pkt, (host, port))
             except OSError:

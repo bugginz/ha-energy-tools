@@ -187,6 +187,21 @@ class DdpTest(unittest.TestCase):
         pkt = ddp.ddp_packet(seq=1, offset=0, payload=b"", push=False)
         self.assertEqual(pkt[0], 0x40)
 
+    def test_sequence_is_per_node(self):
+        import socket
+        rx = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+        for r in rx:
+            r.bind(("127.0.0.1", 0))
+            r.settimeout(1)
+        s = ddp.DDPSender()
+        for _ in range(17):                    # wraps 15 -> 1
+            for r in rx:
+                s.send_frame("127.0.0.1", r.getsockname()[1], b"\x00" * 3)
+        for r in rx:
+            seqs = [r.recvfrom(64)[0][1] for _ in range(17)]
+            self.assertEqual(seqs, list(range(1, 16)) + [1, 2])
+        s.close()
+
     def test_multi_packet_frame(self):
         # a 9 m daisy chain is 540 LEDs = 1620 B > one packet; the splitter
         # must emit offset-continued packets with push only on the last
