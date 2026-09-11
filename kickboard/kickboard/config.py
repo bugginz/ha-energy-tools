@@ -32,6 +32,13 @@ DEFAULTS: dict[str, Any] = {
         # height needs none). target_height_mm is the assumed torso height.
         "pose": {"theta_deg": -90.0, "tx_mm": 0.0, "ty_mm": 900.0,
                  "mount_height_mm": 0.0, "target_height_mm": 1000.0},
+        # Multiple sensors: one entry per radar node, keyed by the sender IP
+        # of its UDP frames. Each source's pose merges over the top-level
+        # pose above, so an entry only states what differs. Empty list =
+        # single sensor, top-level pose applies to every frame.
+        # sources:
+        #   - {name: radar-a, ip: 192.168.1.119, pose: {theta_deg: -90, ...}}
+        "sources": [],
     },
     "room": {
         # room coordinates, mm, origin at a chosen kitchen corner
@@ -160,6 +167,11 @@ def load_config(path: str) -> Cfg:
         user = yaml.safe_load(f) or {}
     d = _merge(DEFAULTS, user)
     d["nodes"] = [_merge(NODE_DEFAULTS, n) for n in d.get("nodes", [])]
+    for src in d["radar"].get("sources", []):
+        if "ip" not in src:
+            raise ValueError(f"config: radar source missing 'ip': {src}")
+        src.setdefault("name", src["ip"])
+        src["pose"] = _merge(d["radar"]["pose"], src.get("pose", {}))
     _validate(d)
     return Cfg(d)
 

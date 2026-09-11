@@ -156,6 +156,54 @@ class SlantTest(unittest.TestCase):
         self.assertEqual((x, y), (0.0, 0.0))
 
 
+class MultiRadarTest(unittest.TestCase):
+    """Per-source poses for two-sensor setups (radar.build_pose_table)."""
+
+    def cfg(self, sources):
+        d = config_mod._merge(config_mod.DEFAULTS, {"radar": {"sources": sources},
+                              "nodes": [{"name": "n", "host": "h",
+                                         "waypoints": [[0, 0, 0], [239, 100, 0]]}]})
+        d["nodes"] = [config_mod._merge(config_mod.NODE_DEFAULTS, n)
+                      for n in d["nodes"]]
+        for src in d["radar"]["sources"]:
+            src.setdefault("name", src["ip"])
+            src["pose"] = config_mod._merge(d["radar"]["pose"],
+                                            src.get("pose", {}))
+        return config_mod.Cfg(d)
+
+    def test_no_sources_all_default(self):
+        default, by_ip = radar.build_pose_table(self.cfg([]).radar)
+        self.assertEqual(by_ip, {})
+        self.assertAlmostEqual(default[0].ty_mm, 900.0)
+
+    def test_source_pose_merges_over_base(self):
+        # a source stating only theta inherits tx/ty/mount from the base pose
+        cfg = self.cfg([{"ip": "10.0.0.1", "pose": {"theta_deg": 90.0}},
+                        {"ip": "10.0.0.2",
+                         "pose": {"tx_mm": 4200.0, "mount_height_mm": 2400.0}}])
+        default, by_ip = radar.build_pose_table(cfg.radar)
+        p1, h1 = by_ip["10.0.0.1"]
+        self.assertAlmostEqual(math.degrees(p1.theta_rad), 90.0)
+        self.assertAlmostEqual(p1.ty_mm, 900.0)          # inherited
+        self.assertLessEqual(h1, 0)                      # wall mount: no slant
+        p2, h2 = by_ip["10.0.0.2"]
+        self.assertAlmostEqual(p2.tx_mm, 4200.0)
+        self.assertAlmostEqual(h2, 1400.0)               # 2400 - 1000
+
+    def test_recorder_tags_source(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            rec = radar.Recorder(d)
+            f = make_frame([(1, 1000, 0)])
+            rec.record(1000.0, f, "10.0.0.1")
+            rec.record(1001.0, f)                        # untagged (serial)
+            rec.close()
+            path = os.path.join(d, os.listdir(d)[0])
+            rows = list(radar.replay_frames(path))
+        self.assertEqual(rows[0], (1000.0, f, "10.0.0.1"))
+        self.assertEqual(rows[1], (1001.0, f, None))
+
+
 class GeometryTest(unittest.TestCase):
     def test_straight_run(self):
         m = geometry.build_led_map([(0, 0, 50), (9, 900, 50)], 10)

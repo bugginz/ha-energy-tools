@@ -28,6 +28,18 @@ radar:
                             # onto the floor before the transform. 0 = wall
                             # mount at torso height, no correction.
     target_height_mm: 1000  # assumed torso height for the projection
+  # Two sensors: list them here, keyed by the sender IP of their frames.
+  # Each pose merges over the top-level pose above (state only what
+  # differs); calibrate each sensor separately — the recorder tags every
+  # frame with its src so §9.2 can split the log per sensor.
+  # sources:
+  #   - name: radar-a          # ceiling end A
+  #     ip: 192.168.1.119
+  #     pose: {theta_deg: -90, tx_mm: 0, ty_mm: 900, mount_height_mm: 2400}
+  #   - name: radar-b          # opposite end, covers A's blind cone
+  #     ip: 192.168.1.121
+  #     pose: {theta_deg: 90, tx_mm: 4200, ty_mm: 900, mount_height_mm: 2400}
+  sources: []
 
 room:
   polygon:                  # kitchen floor area; detections outside are dropped

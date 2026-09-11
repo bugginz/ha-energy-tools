@@ -61,6 +61,13 @@ python3 -m kickboard.main --config config.yaml --replay data/radar-logs/radar-20
 Raw frames are recorded to `data/radar-logs/` by default (daily files, 14-day
 retention) — the §9.3 ghost survey needs them.
 
+**Two sensors**: list both under `radar.sources` (keyed by sender IP, each with
+its own pose — see config.yaml). Fusion falls out of the tracker: both sensors'
+views of one person land inside the association gate and feed the same track on
+alternating updates, so opposite-end mounts cover each other's blind cones with
+no extra machinery. Calibrate each sensor separately; recorded frames carry a
+`src` tag so one walk's log splits per sensor. The sim draws every FOV wedge.
+
 ## Firmware
 
 Both sketches target arduino-esp32 core **3.x** (the C6 needs 3.x). Copy
