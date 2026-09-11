@@ -40,7 +40,7 @@ room:
 render:
   sigma_mm: 500
   peak: 0.6
-  ambient: 0.03
+  ambient: 0               # 0 = pure follow; 3% quantised to 8/4/1 and read yellow on the strip
 
 nodes:
   - name: kick-left
