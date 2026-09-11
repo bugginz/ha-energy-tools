@@ -13,6 +13,7 @@ deliberately decoupled (PLAN.md §8.5).
 from __future__ import annotations
 
 import argparse
+import collections
 import logging
 import random
 import threading
@@ -65,6 +66,11 @@ class Service:
         self.last_heartbeat_ts = 0.0
         self.frames_seen = 0
         self.radar_nodes: dict[str, dict] = {}   # last heartbeat per node name
+        # live scope (sim UI): recent raw detections in the SENSOR frame
+        self.raw_recent = collections.deque(maxlen=2000)   # (ts, x, y, v)
+        self.raw_last: list = []
+        self.raw_source = ""
+        self._frame_times = collections.deque(maxlen=60)
 
         self._stop = threading.Event()
         self._source = None
@@ -79,6 +85,11 @@ class Service:
             return
         self.last_frame_ts = ts
         self.frames_seen += 1
+        self._frame_times.append(ts)
+        self.raw_source = src or ""
+        self.raw_last = [(t.x_mm, t.y_mm, t.speed_cms) for t in frame.targets]
+        for x, y, v in self.raw_last:
+            self.raw_recent.append((ts, x, y, v))
         if self.sim_active or time.time() < self.dropout_until:
             return                      # sim target replaces the radar
         pose, slant_h = self.poses_by_ip.get(src, self.default_pose)
@@ -198,6 +209,7 @@ class Service:
             "occupancy": self.tracker.occupied(
                 now, float(self.cfg.service.idle_timeout_s)),
             "radar_alive": self.radar_alive(),
+            "radar": self.scope_state(),
             "sim": {"active": self.sim_active, "x": self.sim_xy[0],
                     "y": self.sim_xy[1], "noise_mm": self.sim_noise_mm,
                     "dropout_s": max(0.0, self.dropout_until - time.time())},
@@ -225,6 +237,18 @@ class Service:
                           "theta_deg": math.degrees(pose.theta_rad),
                           "fov_deg": 120, "range_mm": 8000})
         return views
+
+    def scope_state(self, window_s: float = 6.0) -> dict:
+        """Sensor-frame view for the sim's live scope panel."""
+        now = time.time()
+        ft = self._frame_times
+        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) > 5 and ft[-1] > ft[0] else 0.0
+        recent = [[round(now - t, 2), round(x), round(y), round(v)]
+                  for t, x, y, v in self.raw_recent if now - t <= window_s]
+        return {"fps": round(fps, 1), "source": self.raw_source,
+                "age_s": round(now - self.last_frame_ts, 1) if self.last_frame_ts else None,
+                "last": [[round(x), round(y), round(v)] for x, y, v in self.raw_last],
+                "recent": recent}
 
     def geometry_state(self) -> dict:
         import math
