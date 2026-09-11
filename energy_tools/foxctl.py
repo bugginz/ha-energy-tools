@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2336,6 +2336,11 @@ def read_log(n: int = 50) -> list:
 MQTT_DISCOVERY = "homeassistant"
 # (object_id, friendly, unit, device_class, state_class). state_class total_increasing → Energy dashboard.
 _MQTT_SENSORS = [
+    # The heartbeat: a timestamp that changes EVERY successful cycle. Alerts
+    # must key off this, not off a data sensor — HA only bumps last_updated
+    # when a value changes, so SoC parked at 100% looks "stale" while
+    # telemetry flows fine (false alarm, 2026-09-11).
+    ("foxctl_last_poll", "Last poll", "", "timestamp", ""),
     ("foxctl_soc", "Battery SoC", "%", "battery", "measurement"),
     ("foxctl_pv_power", "Solar power", "kW", "power", "measurement"),
     ("foxctl_load_power", "House load", "kW", "power", "measurement"),
@@ -2398,8 +2403,10 @@ def mqtt_publish(cfg, snap):
                 conf = {"name": name, "unique_id": oid, "object_id": oid,
                         "state_topic": "foxctl/telemetry",
                         "value_template": "{{ value_json.%s }}" % oid[len("foxctl_"):],
-                        "unit_of_measurement": unit, "availability_topic": "foxctl/availability",
+                        "availability_topic": "foxctl/availability",
                         "device": dev}
+                if unit:
+                    conf["unit_of_measurement"] = unit   # timestamps have none
                 if dclass:
                     conf["device_class"] = dclass
                 if sclass:
@@ -2411,7 +2418,8 @@ def mqtt_publish(cfg, snap):
         dyn = snap.get("dynamic") or {}
         et = snap.get("energy_totals") or {}
         ps = snap.get("pv_strings") or {}
-        tele = {"soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
+        tele = {"last_poll": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
                 "load_power": snap.get("load_kw"), "grid_power": snap.get("grid_power"),
                 "feedin_power": snap.get("feedin_power"), "battery_power": snap.get("battery_power"),
                 "battery_charge_power": snap.get("bat_charge_power"),
