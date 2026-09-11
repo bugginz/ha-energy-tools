@@ -107,10 +107,10 @@ function draw() {
     ctx.closePath(); ctx.fill();
   }
 
-  // radar: position, boresight arrow, field-of-view wedge (sensor +Y is
-  // "forward"; room direction = R(theta) * (0, 1))
-  if (geo.radar) {
-    const r = geo.radar, th = r.theta_deg * Math.PI / 180;
+  // radars: position, boresight arrow, field-of-view wedge per sensor
+  // (sensor +Y is "forward"; room direction = R(theta) * (0, 1))
+  for (const r of (geo.radars || (geo.radar ? [geo.radar] : []))) {
+    const th = r.theta_deg * Math.PI / 180;
     const fx = -Math.sin(th), fy = Math.cos(th);          // forward unit vector
     const half = r.fov_deg / 2 * Math.PI / 180;
     const [sx, sy] = toPx(r.x, r.y);
@@ -130,7 +130,8 @@ function draw() {
     ctx.fillStyle = "#78aaff";
     ctx.fillRect(sx - 6, sy - 6, 12, 12);
     ctx.fillStyle = "#cfd3da"; ctx.font = "11px system-ui";
-    ctx.fillText(`radar (${r.x}, ${r.y}) ${r.theta_deg.toFixed(0)}°`, sx + 10, sy + 16);
+    ctx.fillText(`${r.name || "radar"} (${r.x}, ${r.y}) ${r.theta_deg.toFixed(0)}°`,
+                 sx + 10, sy + 16);
   }
 
   // LEDs, coloured by live output (brightened so ambient is visible)

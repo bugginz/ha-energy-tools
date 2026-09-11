@@ -37,7 +37,10 @@ class Service:
                                cfg.room.polygon, cfg.room.exclusion_zones)
         self.renderer = Renderer(cfg, self.params, self.led_maps)
         self.ddp = DDPSender()
-        self.pose = radar.Pose.from_cfg(cfg.radar.pose)
+        # per-sensor poses keyed by sender IP; unknown senders and the
+        # serial path use the default (top-level radar.pose)
+        self.default_pose, self.poses_by_ip = radar.build_pose_table(cfg.radar)
+        self._unknown_srcs: set[str] = set()
         self.started = time.time()
 
         self.recorder = None
@@ -68,9 +71,9 @@ class Service:
 
     # -- radar input -------------------------------------------------------
 
-    def on_raw_frame(self, ts: float, raw: bytes) -> None:
+    def on_raw_frame(self, ts: float, raw: bytes, src: str | None = None) -> None:
         if self.recorder:
-            self.recorder.record(ts, raw)
+            self.recorder.record(ts, raw, src)
         frame = radar.parse_frame(raw, ts)
         if frame is None:
             return
@@ -78,7 +81,15 @@ class Service:
         self.frames_seen += 1
         if self.sim_active or time.time() < self.dropout_until:
             return                      # sim target replaces the radar
-        dets = [(*self.pose.to_room(t.x_mm, t.y_mm), t.speed_cms)
+        pose, slant_h = self.poses_by_ip.get(src, self.default_pose)
+        if (src and self.poses_by_ip and src not in self.poses_by_ip
+                and src not in self._unknown_srcs):
+            self._unknown_srcs.add(src)
+            log.warning("radar frames from unlisted source %s — using the "
+                        "default pose; add it to radar.sources", src)
+        dets = [(*pose.to_room(
+                    *radar.slant_to_floor(t.x_mm, t.y_mm, slant_h)),
+                 t.speed_cms)
                 for t in frame.targets]
         # the tracker runs on the monotonic clock, same as the render loop
         self.tracker.update(time.monotonic(), dets)
@@ -203,15 +214,26 @@ class Service:
             "stats": self.renderer.stats(),
         }
 
+    def _radar_views(self) -> list[dict]:
+        import math
+        views = []
+        entries = ([(str(s.name), radar.Pose.from_cfg(s.pose))
+                    for s in self.cfg.radar.get("sources", [])]
+                   or [("radar", self.default_pose[0])])
+        for name, pose in entries:
+            views.append({"name": name, "x": pose.tx_mm, "y": pose.ty_mm,
+                          "theta_deg": math.degrees(pose.theta_rad),
+                          "fov_deg": 120, "range_mm": 8000})
+        return views
+
     def geometry_state(self) -> dict:
         import math
         return {
             "room": [list(p) for p in self.cfg.room.polygon],
-            # sensor position and boresight in room coords, for the plan view.
-            # RD-03D field of view is about +-60 deg azimuth, ~8 m range.
-            "radar": {"x": self.pose.tx_mm, "y": self.pose.ty_mm,
-                      "theta_deg": math.degrees(self.pose.theta_rad),
-                      "fov_deg": 120, "range_mm": 8000},
+            # sensor positions and boresights in room coords, for the plan
+            # view. RD-03D field of view is about +-60 deg azimuth, ~8 m.
+            "radars": self._radar_views(),
+            "radar": self._radar_views()[0],   # legacy single-sensor key
             "zones": [[list(p) for p in z] for z in self.cfg.room.exclusion_zones],
             "nodes": {name: xy.tolist() for name, xy in self.led_maps.items()},
         }
@@ -221,13 +243,13 @@ def replay(service: Service, path: str, speed: float = 1.0) -> None:
     """Feed a recorded radar log through the pipeline (PLAN.md §8.9)."""
     log.info("replaying %s at %gx", path, speed)
     prev_ts = None
-    for ts, raw in radar.replay_frames(path):
+    for ts, raw, src in radar.replay_frames(path):
         if service._stop.is_set():
             break
         if prev_ts is not None:
             time.sleep(max(0.0, (ts - prev_ts) / speed))
         prev_ts = ts
-        service.on_raw_frame(time.time(), raw)
+        service.on_raw_frame(time.time(), raw, src)
     log.info("replay finished")
 
 

@@ -126,6 +126,50 @@ class Pose:
                 s * x_mm + c * y_mm + self.ty_mm)
 
 
+def slant_to_floor(x_mm: float, y_mm: float,
+                   height_diff_mm: float) -> tuple[float, float]:
+    """Project a slant-range detection onto the floor plane.
+
+    An elevated, down-tilted sensor (ceiling mount at one end) measures the
+    straight-line distance to the target's torso, not the floor distance.
+    The error is nonlinear (~+9% at 3 m, ~+30% at 1.5 m for a 1.4 m height
+    difference), which the rigid 2D calibration cannot absorb — so correct
+    the range BEFORE the pose transform. height_diff_mm = mount height
+    minus assumed torso height; <= 0 is a no-op (wall mount).
+
+    Inside the cone directly under the sensor (slant < height) the floor
+    distance is clamped to 0 rather than going imaginary.
+    """
+    if height_diff_mm <= 0:
+        return x_mm, y_mm
+    slant = math.hypot(x_mm, y_mm)
+    if slant <= 1e-6:
+        return x_mm, y_mm
+    floor = math.sqrt(max(0.0, slant * slant
+                          - height_diff_mm * height_diff_mm))
+    scale = floor / slant
+    return x_mm * scale, y_mm * scale
+
+
+def build_pose_table(radar_cfg):
+    """(default, by_ip) pose lookup for one- or many-sensor setups.
+
+    Each value is (Pose, slant_height_mm). With radar.sources configured,
+    frames are transformed with their sender's pose; unknown senders (and
+    the serial path) fall back to the top-level pose. Fusion needs no more
+    than this: both sensors' views of one person land within the tracker's
+    association gate and feed the same track on alternating updates.
+    """
+    def entry(pose_cfg):
+        h = (float(pose_cfg.get("mount_height_mm", 0.0))
+             - float(pose_cfg.get("target_height_mm", 1000.0)))
+        return Pose.from_cfg(pose_cfg), h
+
+    default = entry(radar_cfg.pose)
+    by_ip = {str(s.ip): entry(s.pose) for s in radar_cfg.get("sources", [])}
+    return default, by_ip
+
+
 def solve_pose(sensor_pts, room_pts) -> tuple[float, float, float]:
     """Least-squares 2D rigid fit (Procrustes) for §9.2 calibration.
 
@@ -159,7 +203,7 @@ class Recorder:
         self._fh = None
         os.makedirs(directory, exist_ok=True)
 
-    def record(self, ts: float, raw: bytes) -> None:
+    def record(self, ts: float, raw: bytes, src: str | None = None) -> None:
         day = time.strftime("%Y-%m-%d", time.localtime(ts))
         if day != self._day:
             if self._fh:
@@ -167,7 +211,10 @@ class Recorder:
             self._day = day
             self._fh = open(os.path.join(self.dir, f"radar-{day}.jsonl"), "a")
             self._prune()
-        self._fh.write(json.dumps({"ts": round(ts, 3), "hex": raw.hex()}) + "\n")
+        rec = {"ts": round(ts, 3), "hex": raw.hex()}
+        if src:
+            rec["src"] = src
+        self._fh.write(json.dumps(rec) + "\n")
         self._fh.flush()
 
     def _prune(self) -> None:
@@ -184,21 +231,22 @@ class Recorder:
 
 
 def replay_frames(path: str):
-    """Yield (ts, raw_bytes) from a Recorder log."""
+    """Yield (ts, raw_bytes, src_ip_or_None) from a Recorder log."""
     with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             rec = json.loads(line)
-            yield float(rec["ts"]), bytes.fromhex(rec["hex"])
+            yield float(rec["ts"]), bytes.fromhex(rec["hex"]), rec.get("src")
 
 
 class UdpRadarSource(threading.Thread):
     """Receives raw frames (and heartbeats) forwarded by the radar node.
 
-    Raw 30-byte frames go to on_frame(ts, raw); JSON payloads (starting
-    '{') are node heartbeats and go to on_heartbeat(ts, dict).
+    Raw 30-byte frames go to on_frame(ts, raw, src_ip); JSON payloads
+    (starting '{') are node heartbeats and go to on_heartbeat(ts, dict).
+    src_ip keys the per-sensor pose when radar.sources is configured.
     """
 
     def __init__(self, port: int, on_frame, on_heartbeat=None):
@@ -215,7 +263,7 @@ class UdpRadarSource(threading.Thread):
     def run(self) -> None:
         while not self._stop.is_set():
             try:
-                data, _addr = self._sock.recvfrom(2048)
+                data, addr = self._sock.recvfrom(2048)
             except socket.timeout:
                 continue
             except OSError:
@@ -228,7 +276,7 @@ class UdpRadarSource(threading.Thread):
                     except (ValueError, UnicodeDecodeError):
                         pass
             elif len(data) == FRAME_LEN:
-                self.on_frame(ts, data)
+                self.on_frame(ts, data, addr[0])
 
     def stop(self) -> None:
         self._stop.set()
@@ -260,7 +308,7 @@ class SerialRadarSource(threading.Thread):
                             continue
                         ts = time.time()
                         for raw in sync.feed(data):
-                            self.on_frame(ts, raw)
+                            self.on_frame(ts, raw, None)
             except (OSError, serial.SerialException):
                 time.sleep(2.0)  # unplugged / enumerating; retry
 
