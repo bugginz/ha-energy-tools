@@ -41,27 +41,32 @@ automation:
   # ---- FoxESS --------------------------------------------------------
   # One umbrella symptom covers every failure mode (modbus dead, cloud API
   # down, energy-tools container stopped, MQTT broken): the foxctl
-  # telemetry stops updating. Modbus publishes every ~10s and the cloud
-  # fallback every 60s, so 15 minutes of silence is unambiguously wrong.
-  # The template re-evaluates once a minute (now()); it re-arms itself when
-  # data returns, so a second outage alerts again.
+  # telemetry stops updating. HA only bumps last_updated when a VALUE
+  # changes — watching SoC alone false-alarmed on 2026-09-11 when the pack
+  # sat at 100% for 22 minutes while solar data flowed happily. So: stale
+  # means ALL FOUR of these are silent for 15 min — if anything is
+  # publishing, at least one of the floats wiggles. expand() skips missing
+  # entities; empty list -> no alarm. Re-arms when data returns.
   - id: alert_foxess_stale
     alias: "Alert: FoxESS telemetry stale"
     mode: single
     trigger:
       - platform: template
         value_template: >-
-          {{ states.sensor.foxess_foxctl_battery_soc is not none and
-             (now() - states.sensor.foxess_foxctl_battery_soc.last_updated)
-             > timedelta(minutes=15) }}
+          {% set ts = expand('sensor.foxess_foxctl_house_load',
+                             'sensor.foxess_foxctl_solar_power',
+                             'sensor.foxess_foxctl_battery_charge_power',
+                             'sensor.foxess_foxctl_battery_soc')
+                      | map(attribute='last_updated') | list %}
+          {{ ts | length > 0 and (now() - (ts | max)) > timedelta(minutes=15) }}
     action:
       - service: notify.mobile_app_phoney
         data:
           title: "⚠️ FoxESS telemetry stale"
           message: >-
-            No inverter data for 15+ min (last SoC
-            {{ states('sensor.foxess_foxctl_battery_soc') }}% at
-            {{ states.sensor.foxess_foxctl_battery_soc.last_updated.strftime('%H:%M') }}).
+            No inverter data on ANY channel for 15+ min (SoC
+            {{ states('sensor.foxess_foxctl_battery_soc') }}%, load
+            {{ states('sensor.foxess_foxctl_house_load') }}kW frozen).
             Modbus AND cloud are silent — check the energy-tools container.
 
   # ---- Car 12V -------------------------------------------------------
