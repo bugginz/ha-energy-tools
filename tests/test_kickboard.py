@@ -131,6 +131,31 @@ class PoseTest(unittest.TestCase):
         self.assertAlmostEqual(ty, 456.0, places=4)
 
 
+class SlantTest(unittest.TestCase):
+    """Ceiling-mount slant-range -> floor projection (radar.slant_to_floor)."""
+
+    def test_wall_mount_is_noop(self):
+        self.assertEqual(radar.slant_to_floor(500, 2000, 0), (500, 2000))
+        self.assertEqual(radar.slant_to_floor(500, 2000, -1000), (500, 2000))
+
+    def test_projects_slant_onto_floor(self):
+        # 2.4 m ceiling, 1.0 m torso -> h = 1400; person 3 m out on axis:
+        # sensor reports slant sqrt(3000^2 + 1400^2) = 3310.6
+        import math as m
+        slant = m.hypot(3000, 1400)
+        x, y = radar.slant_to_floor(0.0, slant, 1400.0)
+        self.assertAlmostEqual(y, 3000.0, places=6)
+        self.assertAlmostEqual(x, 0.0, places=6)
+        # off-axis keeps its bearing
+        x, y = radar.slant_to_floor(slant * 0.6, slant * 0.8, 1400.0)
+        self.assertAlmostEqual(m.hypot(x, y), 3000.0, places=6)
+        self.assertAlmostEqual(x / y, 0.75, places=6)
+
+    def test_under_sensor_clamps_to_zero(self):
+        x, y = radar.slant_to_floor(0.0, 1000.0, 1400.0)
+        self.assertEqual((x, y), (0.0, 0.0))
+
+
 class GeometryTest(unittest.TestCase):
     def test_straight_run(self):
         m = geometry.build_led_map([(0, 0, 50), (9, 900, 50)], 10)

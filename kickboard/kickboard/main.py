@@ -38,6 +38,9 @@ class Service:
         self.renderer = Renderer(cfg, self.params, self.led_maps)
         self.ddp = DDPSender()
         self.pose = radar.Pose.from_cfg(cfg.radar.pose)
+        # elevated-mount slant correction; 0 for a wall mount (see radar.py)
+        self.slant_h = (float(cfg.radar.pose.get("mount_height_mm", 0.0))
+                        - float(cfg.radar.pose.get("target_height_mm", 1000.0)))
         self.started = time.time()
 
         self.recorder = None
@@ -78,7 +81,9 @@ class Service:
         self.frames_seen += 1
         if self.sim_active or time.time() < self.dropout_until:
             return                      # sim target replaces the radar
-        dets = [(*self.pose.to_room(t.x_mm, t.y_mm), t.speed_cms)
+        dets = [(*self.pose.to_room(
+                    *radar.slant_to_floor(t.x_mm, t.y_mm, self.slant_h)),
+                 t.speed_cms)
                 for t in frame.targets]
         # the tracker runs on the monotonic clock, same as the render loop
         self.tracker.update(time.monotonic(), dets)

@@ -26,8 +26,12 @@ DEFAULTS: dict[str, Any] = {
         "serial_port": "/dev/ttyUSB0",
         "serial_baud": 256000,
         "heartbeat_timeout_s": 15.0,
-        # sensor -> room rigid transform (see PLAN.md §9.2)
-        "pose": {"theta_deg": -90.0, "tx_mm": 0.0, "ty_mm": 900.0},
+        # sensor -> room rigid transform (see PLAN.md §9.2). For an elevated,
+        # down-tilted mount (ceiling at one end), mount_height_mm enables the
+        # slant-range -> floor projection; 0 disables it (wall mount at torso
+        # height needs none). target_height_mm is the assumed torso height.
+        "pose": {"theta_deg": -90.0, "tx_mm": 0.0, "ty_mm": 900.0,
+                 "mount_height_mm": 0.0, "target_height_mm": 1000.0},
     },
     "room": {
         # room coordinates, mm, origin at a chosen kitchen corner

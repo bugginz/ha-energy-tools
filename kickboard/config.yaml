@@ -23,6 +23,11 @@ radar:
     theta_deg: -90.0        # placeholder: sensor at x=0 mid-wall, facing +x
     tx_mm: 0.0
     ty_mm: 900.0
+    mount_height_mm: 0      # elevated mount (ceiling at one end): set the
+                            # mount height and slant ranges are projected
+                            # onto the floor before the transform. 0 = wall
+                            # mount at torso height, no correction.
+    target_height_mm: 1000  # assumed torso height for the projection
 
 room:
   polygon:                  # kitchen floor area; detections outside are dropped

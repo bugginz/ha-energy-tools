@@ -126,6 +126,31 @@ class Pose:
                 s * x_mm + c * y_mm + self.ty_mm)
 
 
+def slant_to_floor(x_mm: float, y_mm: float,
+                   height_diff_mm: float) -> tuple[float, float]:
+    """Project a slant-range detection onto the floor plane.
+
+    An elevated, down-tilted sensor (ceiling mount at one end) measures the
+    straight-line distance to the target's torso, not the floor distance.
+    The error is nonlinear (~+9% at 3 m, ~+30% at 1.5 m for a 1.4 m height
+    difference), which the rigid 2D calibration cannot absorb — so correct
+    the range BEFORE the pose transform. height_diff_mm = mount height
+    minus assumed torso height; <= 0 is a no-op (wall mount).
+
+    Inside the cone directly under the sensor (slant < height) the floor
+    distance is clamped to 0 rather than going imaginary.
+    """
+    if height_diff_mm <= 0:
+        return x_mm, y_mm
+    slant = math.hypot(x_mm, y_mm)
+    if slant <= 1e-6:
+        return x_mm, y_mm
+    floor = math.sqrt(max(0.0, slant * slant
+                          - height_diff_mm * height_diff_mm))
+    scale = floor / slant
+    return x_mm * scale, y_mm * scale
+
+
 def solve_pose(sensor_pts, room_pts) -> tuple[float, float, float]:
     """Least-squares 2D rigid fit (Procrustes) for §9.2 calibration.
 
