@@ -1,0 +1,40 @@
+# Home Assistant package: kickboard ghost forensics (PLAN.md §9.3 aid).
+# Lives at /opt/stack/ha/config/packages/kickboard.yaml on the Pi (loaded via
+# `homeassistant: packages:` in configuration.yaml).
+#
+# Uses one of the existing ESPHome XIAO S3 camera nodes (~/projects/HA
+# esphome/xiao-s3-cam*.yaml, 192.168.1.119/.120) as ground truth for radar
+# tuning: whenever the kickboard tracker sees a FIRST target in an empty
+# kitchen, snapshot the camera. Reviewing /config/www/kickboard/ against the
+# timestamps in the service's data/radar-logs/ JSONL answers the §9.3
+# question — person or multipath ghost — without anyone standing around.
+#
+# Requires:
+#   - the kickboard service running with mqtt.enabled: true (its MQTT
+#     discovery creates sensor.kickboard_targets and the occupancy sensor)
+#   - a camera node pointed at the kitchen; put its HA entity id below
+#     (check Settings -> Devices for the exact name, e.g.
+#     camera.xiao_s3_cam)
+#   - `mkdir -p config/www/kickboard` once, so snapshots have a home
+#
+# The 60 s cooldown (mode: single + trailing delay) keeps a person cooking
+# from filling the disk; the interesting events are births into an EMPTY
+# kitchen, which are exactly the ones that fire.
+
+automation:
+  - id: kickboard_ghost_snapshot
+    alias: "Kickboard: snapshot on first target"
+    mode: single
+    max_exceeded: silent
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.kickboard_targets
+        above: 0
+    actions:
+      - action: camera.snapshot
+        target:
+          entity_id: camera.xiao_s3_cam    # <-- set to your camera entity
+        data:
+          filename: >-
+            /config/www/kickboard/target_{{ now().strftime('%Y%m%d_%H%M%S') }}.jpg
+      - delay: "00:01:00"

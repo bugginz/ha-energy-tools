@@ -1,0 +1,14 @@
+# Drop into the existing HA stack's compose file, or run standalone:
+#   docker compose up -d --build
+# Mount a directory containing config.yaml (and receiving radar logs) at /data.
+services:
+  kickboard:
+    build: .
+    container_name: kickboard
+    restart: unless-stopped
+    network_mode: host        # mDNS node names + UDP without port juggling
+    volumes:
+      - ./data:/data
+    # For radar.source: serial (RD-03D on the Pi via USB adapter), add:
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0

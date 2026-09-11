@@ -1,0 +1,39 @@
+# RD-03D wiring smoke test on an ESPHome XIAO ESP32-S3 (cam node) — NOT a
+# kickboard node config. Merge these blocks into ~/projects/HA/esphome/
+# xiao-s3-cam.yaml, reflash OTA, and the raw radar byte stream appears in
+# `esphome logs`. Proves the radar is powered and wired before it moves to
+# its C6 (firmware/radar_node/). Remove the blocks again afterwards.
+#
+# Wiring (deliberately D2/D3, not D6/D7 — GPIO43/44 are the S3's UART0
+# logging pins and ESPHome may own them):
+#   RD-03D 3V3 -> XIAO 3V3
+#   RD-03D GND -> XIAO GND
+#   RD-03D OT1 -> XIAO D2 (GPIO3)     radar TX -> our RX
+#   RD-03D RX  -> XIAO D3 (GPIO4)
+#
+# Run from ~/projects/HA/esphome:
+#   esphome run  xiao-s3-cam.yaml --device 192.168.1.119
+#   esphome logs xiao-s3-cam.yaml --device 192.168.1.119
+#
+# Success: ~10 lines/s of 30 hex bytes, starting AA FF 03 00, ending 55 CC;
+# the slot bytes change when someone moves in front of it. Nothing at all:
+# swap OT1/RX first (TX/RX crossover), then check 3V3 at the module.
+
+uart:
+  id: radar_uart
+  rx_pin: GPIO3    # XIAO D2  <- RD-03D OT1
+  tx_pin: GPIO4    # XIAO D3  -> RD-03D RX
+  baud_rate: 256000
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      bytes: 30
+    sequence:
+      - lambda: UARTDebug::log_hex(direction, bytes, ' ');
+
+esphome:
+  on_boot:   # merge into the existing esphome: block; multi-target mode (PLAN.md §7)
+    - uart.write:
+        id: radar_uart
+        data: [0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00, 0x90, 0x00, 0x04, 0x03, 0x02, 0x01]

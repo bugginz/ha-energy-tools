@@ -1,0 +1,72 @@
+# Bench rig, 2026-09-08: the full 5 m / 300 LED WS2812B reel (60/m, counted
+# with tools/ddp_test.py ruler) on one XIAO C6 flashed as kick-left, USB
+# powered (MAX_MA=450 in firmware). Room is a fictitious 5 m x 2 m box with
+# the strip along y=0 so the sim UI has somewhere to drag a target.
+#
+#   python3 -m kickboard.main --config config.bench.yaml
+#
+# config.yaml stays the install target (two 4 m / 240 LED sides).
+
+service:
+  render_fps: 30
+  idle_timeout_s: 30
+  idle_fade_s: 3.0
+
+radar:
+  source: udp
+  udp_port: 4049
+  pose: {theta_deg: -90.0, tx_mm: 0.0, ty_mm: 1000.0}
+  # Both RD-03Ds, keyed by the IP their frames come from. Poses are bench
+  # PLACEHOLDERS: A at the LED-0 end looking along the strips, B at the far
+  # end looking back (the fusion layout). Calibrate each per PLAN.md §9.2.
+  sources:
+    - name: radar-a           # RD-03D on the XIAO S3 Sense (xiao-s3-cam)
+      ip: 192.168.1.119
+      pose: {theta_deg: -95.6, tx_mm: -155, ty_mm: -85, mirror_x: false, mount_height_mm: 1780}
+    - name: radar-b           # RD-03D on the plain XIAO C6 (kick-radar)
+      ip: 192.168.1.123
+      pose: {theta_deg: 90.1, tx_mm: 5310, ty_mm: 1415, mirror_x: true, mount_height_mm: 1780}
+    - name: radar-b-sense     # second Sense board (xiao-s3-cam-2), if powered
+      ip: 192.168.1.120
+      pose: {theta_deg: 90, tx_mm: 5000, ty_mm: 1000}
+
+room:
+  # The kitchen, calibrated 2026-09-12: origin at the fridge-end corner of
+  # the strip-A wall, x along the strips (~4.5 m), y across (strips ~1.2 m
+  # apart, toe kick to toe kick). Standing spots used for the fit were
+  # ~1.36 m from the fridge-end wall, i.e. beside the fridge.
+  polygon: [[0, 0], [5400, 0], [5400, 1400], [0, 1400]]   # far wall ~5.4 m (radar-b at 5.31)
+
+render:
+  sigma_mm: 500
+  peak: 0.6
+  ambient: 0               # 0 = pure follow; 3% quantised to 8/4/1 and read yellow on the strip
+
+nodes:
+  - name: kick-left
+    host: 192.168.1.118
+    num_leds: 300
+    color_order: RGB
+    budget_ma: 1500           # USB-C PD brick through the XIAO 5V pad; firmware MAX_MA matches
+    waypoints:                # LED 0 at the fridge end; ~0.5 m tucked away past 4.5 m
+      - [0, 0, 0]
+      - [299, 4983, 0]        # 299 x 16.67 mm pitch
+  - name: kick-right          # second C6 + reel, flashed 2026-09-10, USB power
+    host: 192.168.1.122
+    num_leds: 300
+    color_order: RGB
+    budget_ma: 450            # on the Mac's USB port; firmware MAX_MA matches
+    waypoints:                # far toe kick, ~1.2 m across; direction ASSUMED same as A
+      - [0, 0, 1200]
+      - [299, 4983, 1200]
+
+mqtt:
+  enabled: false
+
+sim:
+  enabled: true
+  host: 127.0.0.1
+  port: 8771
+
+logging:
+  record_radar: true        # data/radar-logs, replay with --replay

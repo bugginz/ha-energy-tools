@@ -93,12 +93,12 @@
        },
        "header": {
         "show": true,
-        "title": "Energy balance \u2014 supply above, use below (kW)"
+        "title": "Energy balance \u2014 supply above, use below (kW, unstacked)"
        },
        "apex_config": {
         "chart": {
          "height": 340,
-         "stacked": true,
+         "stacked": false,
          "type": "area"
         },
         "legend": {
@@ -109,12 +109,12 @@
          "enabled": false
         },
         "stroke": {
-         "width": 1,
+         "width": 2,
          "curve": "smooth"
         },
         "fill": {
          "type": "solid",
-         "opacity": 0.55
+         "opacity": 0.28
         },
         "yaxis": [
          {
@@ -133,7 +133,7 @@
        },
        "all_series_config": {
         "type": "area",
-        "stroke_width": 1,
+        "stroke_width": 2,
         "group_by": {
          "func": "avg",
          "duration": "5min"
