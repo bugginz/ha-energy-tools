@@ -96,22 +96,21 @@ function resize() {
   fitView();
 }
 
-// ---- live scope: raw detections in the sensor frame, last 6 s trailing ----
+// ---- live scopes: one panel per radar, raw detections in that sensor's
+// frame (sensor at the bottom looking up), last 6 s trailing ----
 const SCOPE_RANGE = 8000, SCOPE_HALF_FOV = 60;
-function drawScope() {
-  const w = scope.width, h = scope.height;
-  sctx.clearRect(0, 0, w, h);
-  const ox = w / 2, oy = h - 14 * devicePixelRatio;
-  const s = Math.min((h - 30 * devicePixelRatio) / SCOPE_RANGE, (w / 2) / (SCOPE_RANGE * Math.sin(SCOPE_HALF_FOV * Math.PI / 180)));
+function drawOneScope(x0, w, h, ip, rd) {
+  const dp = devicePixelRatio;
+  const ox = x0 + w / 2, oy = h - 14 * dp;
+  const s = Math.min((h - 30 * dp) / SCOPE_RANGE, (w / 2 - 4 * dp) / (SCOPE_RANGE * Math.sin(SCOPE_HALF_FOV * Math.PI / 180)));
   const P = (x, y) => [ox + x * s, oy - y * s];
-  // field of view + range rings
   sctx.fillStyle = "rgba(120,170,255,0.05)"; sctx.strokeStyle = "#2a2e36"; sctx.lineWidth = 1;
   sctx.beginPath(); sctx.moveTo(ox, oy);
   for (let a = -SCOPE_HALF_FOV; a <= SCOPE_HALF_FOV; a += 2) {
     const r = a * Math.PI / 180; const [x, y] = P(SCOPE_RANGE * Math.sin(r), SCOPE_RANGE * Math.cos(r)); sctx.lineTo(x, y);
   }
   sctx.closePath(); sctx.fill(); sctx.stroke();
-  sctx.font = `${10 * devicePixelRatio}px system-ui`; sctx.fillStyle = "#5a606b";
+  sctx.font = `${10 * dp}px system-ui`; sctx.fillStyle = "#5a606b"; sctx.textAlign = "left";
   for (let r = 1000; r <= SCOPE_RANGE; r += 1000) {
     sctx.beginPath();
     for (let a = -SCOPE_HALF_FOV; a <= SCOPE_HALF_FOV; a += 2) {
@@ -121,33 +120,42 @@ function drawScope() {
     sctx.strokeStyle = "#22262d"; sctx.stroke();
     const [lx, ly] = P(0, r); sctx.fillText(`${r / 1000} m`, lx + 3, ly - 2);
   }
-  sctx.fillStyle = "#78aaff"; sctx.fillRect(ox - 5 * devicePixelRatio, oy - 5 * devicePixelRatio, 10 * devicePixelRatio, 10 * devicePixelRatio);
-  const rd = state && state.radar;
-  if (!rd) return;
-  // trail: older = dimmer and smaller
-  for (const [age, x, y] of rd.recent) {
-    const k = Math.max(0, 1 - age / 6);
-    const [px, py] = P(x, y);
-    sctx.fillStyle = `rgba(232,178,92,${0.08 + 0.5 * k})`;
-    sctx.beginPath(); sctx.arc(px, py, (1.5 + 2 * k) * devicePixelRatio, 0, 7); sctx.fill();
+  sctx.fillStyle = "#78aaff"; sctx.fillRect(ox - 5 * dp, oy - 5 * dp, 10 * dp, 10 * dp);
+  const stale = !rd || rd.age_s == null || rd.age_s > 2;
+  if (rd) {
+    for (const [age, x, y] of rd.recent) {
+      const k = Math.max(0, 1 - age / 6);
+      const [px, py] = P(x, y);
+      sctx.fillStyle = `rgba(232,178,92,${0.08 + 0.5 * k})`;
+      sctx.beginPath(); sctx.arc(px, py, (1.5 + 2 * k) * dp, 0, 7); sctx.fill();
+    }
+    if (!stale) for (const [x, y, v] of rd.last) {
+      const [px, py] = P(x, y);
+      sctx.fillStyle = "#ffd27a"; sctx.strokeStyle = "#14161a"; sctx.lineWidth = 2;
+      sctx.beginPath(); sctx.arc(px, py, 6 * dp, 0, 7); sctx.fill(); sctx.stroke();
+      sctx.fillStyle = "#cfd3da"; sctx.font = `${11 * dp}px system-ui`;
+      sctx.fillText(`${(Math.hypot(x, y) / 1000).toFixed(2)} m  ${v} cm/s`, px + 9 * dp, py - 6 * dp);
+    }
   }
-  // current frame: bold dot + speed label
-  for (const [x, y, v] of rd.last) {
-    const [px, py] = P(x, y);
-    sctx.fillStyle = "#ffd27a"; sctx.strokeStyle = "#14161a"; sctx.lineWidth = 2;
-    sctx.beginPath(); sctx.arc(px, py, 6 * devicePixelRatio, 0, 7); sctx.fill(); sctx.stroke();
-    sctx.fillStyle = "#cfd3da"; sctx.font = `${11 * devicePixelRatio}px system-ui`;
-    const d = Math.hypot(x, y) / 1000;
-    sctx.fillText(`${d.toFixed(2)} m  ${v} cm/s`, px + 9 * devicePixelRatio, py - 6 * devicePixelRatio);
-  }
-  sctx.fillStyle = "#9aa0ab"; sctx.font = `${11 * devicePixelRatio}px system-ui`; sctx.textAlign = "left";
-  const stale = rd.age_s == null || rd.age_s > 2;
-  sctx.fillText(`live radar  ${rd.source || "-"}  ${rd.fps} fps  ${rd.last.length} target${rd.last.length === 1 ? "" : "s"}` +
-                (stale ? `  (no frames for ${rd.age_s ?? "?"} s)` : ""), 8 * devicePixelRatio, 14 * devicePixelRatio);
+  sctx.fillStyle = stale ? "#d05050" : "#9aa0ab"; sctx.font = `${11 * dp}px system-ui`;
+  const head = rd ? `${rd.name}  ${ip}  ${rd.fps} fps  ${rd.last.length} target${rd.last.length === 1 ? "" : "s"}` +
+                    (stale ? `  no frames for ${rd.age_s} s` : "")
+                  : `${ip}  waiting for frames`;
+  sctx.fillText(head, x0 + 8 * dp, 14 * dp);
 }
-window.addEventListener("resize", resize);
-
-// ---- drawing ----
+function drawScope() {
+  const w = scope.width, h = scope.height;
+  sctx.clearRect(0, 0, w, h);
+  const live = (state && state.radar) || {};
+  // panels: every configured source, plus any unlisted sender that shows up
+  const ips = [...new Set([...(geo && geo.radars ? geo.radars.map(r => r.ip) : []), ...Object.keys(live)])];
+  if (ips.length === 0) { drawOneScope(0, w, h, "-", null); return; }
+  const pw = w / ips.length;
+  ips.forEach((ip, i) => {
+    if (i) { sctx.strokeStyle = "#2a2e36"; sctx.beginPath(); sctx.moveTo(i * pw, 0); sctx.lineTo(i * pw, h); sctx.stroke(); }
+    drawOneScope(i * pw, pw, h, ip, live[ip]);
+  });
+}
 function draw() {
   requestAnimationFrame(draw);
   drawScope();

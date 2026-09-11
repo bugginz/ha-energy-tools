@@ -66,11 +66,9 @@ class Service:
         self.last_heartbeat_ts = 0.0
         self.frames_seen = 0
         self.radar_nodes: dict[str, dict] = {}   # last heartbeat per node name
-        # live scope (sim UI): recent raw detections in the SENSOR frame
-        self.raw_recent = collections.deque(maxlen=2000)   # (ts, x, y, v)
-        self.raw_last: list = []
-        self.raw_source = ""
-        self._frame_times = collections.deque(maxlen=60)
+        # live scope (sim UI): recent raw detections in each SENSOR's frame,
+        # keyed by sender IP
+        self.scopes: dict[str, dict] = {}
 
         self._stop = threading.Event()
         self._source = None
@@ -85,11 +83,14 @@ class Service:
             return
         self.last_frame_ts = ts
         self.frames_seen += 1
-        self._frame_times.append(ts)
-        self.raw_source = src or ""
-        self.raw_last = [(t.x_mm, t.y_mm, t.speed_cms) for t in frame.targets]
-        for x, y, v in self.raw_last:
-            self.raw_recent.append((ts, x, y, v))
+        sc = self.scopes.setdefault(src or "?", {
+            "recent": collections.deque(maxlen=2000),     # (ts, x, y, v)
+            "times": collections.deque(maxlen=60), "last": [], "last_ts": 0.0})
+        sc["times"].append(ts)
+        sc["last_ts"] = ts
+        sc["last"] = [(t.x_mm, t.y_mm, t.speed_cms) for t in frame.targets]
+        for x, y, v in sc["last"]:
+            sc["recent"].append((ts, x, y, v))
         if self.sim_active or time.time() < self.dropout_until:
             return                      # sim target replaces the radar
         pose, slant_h = self.poses_by_ip.get(src, self.default_pose)
@@ -229,26 +230,32 @@ class Service:
     def _radar_views(self) -> list[dict]:
         import math
         views = []
-        entries = ([(str(s.name), radar.Pose.from_cfg(s.pose))
+        entries = ([(str(s.name), str(s.ip), radar.Pose.from_cfg(s.pose))
                     for s in self.cfg.radar.get("sources", [])]
-                   or [("radar", self.default_pose[0])])
-        for name, pose in entries:
-            views.append({"name": name, "x": pose.tx_mm, "y": pose.ty_mm,
+                   or [("radar", "", self.default_pose[0])])
+        for name, ip, pose in entries:
+            views.append({"name": name, "ip": ip, "x": pose.tx_mm, "y": pose.ty_mm,
                           "theta_deg": math.degrees(pose.theta_rad),
                           "fov_deg": 120, "range_mm": 8000})
         return views
 
     def scope_state(self, window_s: float = 6.0) -> dict:
-        """Sensor-frame view for the sim's live scope panel."""
+        """Per-sensor raw view for the sim's live scope panels."""
         now = time.time()
-        ft = self._frame_times
-        fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) > 5 and ft[-1] > ft[0] else 0.0
-        recent = [[round(now - t, 2), round(x), round(y), round(v)]
-                  for t, x, y, v in self.raw_recent if now - t <= window_s]
-        return {"fps": round(fps, 1), "source": self.raw_source,
-                "age_s": round(now - self.last_frame_ts, 1) if self.last_frame_ts else None,
-                "last": [[round(x), round(y), round(v)] for x, y, v in self.raw_last],
-                "recent": recent}
+        names = {str(src.ip): str(src.name) for src in self.cfg.radar.sources}
+        out = {}
+        for ip, sc in self.scopes.items():
+            ft = sc["times"]
+            fps = ((len(ft) - 1) / (ft[-1] - ft[0])
+                   if len(ft) > 5 and ft[-1] > ft[0] else 0.0)
+            out[ip] = {
+                "name": names.get(ip, ip), "fps": round(fps, 1),
+                "age_s": round(now - sc["last_ts"], 1),
+                "last": [[round(x), round(y), round(v)] for x, y, v in sc["last"]],
+                "recent": [[round(now - t, 2), round(x), round(y), round(v)]
+                           for t, x, y, v in sc["recent"] if now - t <= window_s],
+            }
+        return out
 
     def geometry_state(self) -> dict:
         import math
