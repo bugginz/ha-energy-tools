@@ -85,8 +85,13 @@ def main():
         m = re.search(pattern, text)
         return m.group(1) if m else None
 
+    # "Plan data remaining" and "Total data for you to use" are the SAME
+    # number on this portal (both count down together — confirmed against the
+    # real account, which started at 30GB and shows 25.6/25.6 after 4.4GB of
+    # failover use). So there is no plan-size field to scrape; the plan is
+    # 30GB/$95 now, 60GB/$120 at the next recharge, and burn rate has to come
+    # from this sensor's own history.
     remaining = grab(r"Plan data remaining\s*([\d.]+)\s*GB")
-    total = grab(r"Total data for you to use\s*([\d.]+)\s*GB")
     days = grab(r"Days remaining\s*(\d+)")
     expiry = grab(r"Days remaining\s*\d+\s*\(Expiry\s*([\d/]+)\)")
     if remaining is None:
@@ -99,7 +104,6 @@ def main():
             "unit_of_measurement": "GB",
             "friendly_name": "Aldi SIM data remaining",
             "icon": "mdi:sim",
-            "total_gb": float(total) if total else None,
             "days_remaining": int(days) if days else None,
             "expiry": expiry,
         },
