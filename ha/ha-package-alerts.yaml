@@ -1,0 +1,115 @@
+# Critical phone alerts — everything lands on notify.mobile_app_phoney.
+# Deployed at /opt/stack/ha/config/packages/alerts.yaml; this repo copy is the
+# source of truth. One automation per condition, each with a clear re-arm
+# story, so adding the next alert (eufy cameras, someday) is one more block.
+automation:
+  # ---- WAN -----------------------------------------------------------
+  # binary_sensor.internet_via_lte = X2000 eth1 (the fibre) reads Down.
+  # 2-min holdoff both ways so a router reboot doesn't fire both messages.
+  - id: alert_wan_on_lte
+    alias: "Alert: internet on LTE failover"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_via_lte
+        to: "on"
+        for: "00:02:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Internet on LTE"
+          message: >-
+            Fibre is down (X2000 eth1) — house is on cellular failover.
+            Metered and slower; the tronbyts show the amber LTE badge.
+
+  - id: alert_wan_restored
+    alias: "Alert: fibre restored"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_via_lte
+        from: "on"
+        to: "off"
+        for: "00:02:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "✅ Fibre restored"
+          message: >-
+            Wired WAN is back; traffic is off the SIM.
+
+  # ---- FoxESS --------------------------------------------------------
+  # One umbrella symptom covers every failure mode (modbus dead, cloud API
+  # down, energy-tools container stopped, MQTT broken): the foxctl
+  # telemetry stops updating. Modbus publishes every ~10s and the cloud
+  # fallback every 60s, so 15 minutes of silence is unambiguously wrong.
+  # The template re-evaluates once a minute (now()); it re-arms itself when
+  # data returns, so a second outage alerts again.
+  - id: alert_foxess_stale
+    alias: "Alert: FoxESS telemetry stale"
+    mode: single
+    trigger:
+      - platform: template
+        value_template: >-
+          {{ states.sensor.foxess_foxctl_battery_soc is not none and
+             (now() - states.sensor.foxess_foxctl_battery_soc.last_updated)
+             > timedelta(minutes=15) }}
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ FoxESS telemetry stale"
+          message: >-
+            No inverter data for 15+ min (last SoC
+            {{ states('sensor.foxess_foxctl_battery_soc') }}% at
+            {{ states.sensor.foxess_foxctl_battery_soc.last_updated.strftime('%H:%M') }}).
+            Modbus AND cloud are silent — check the energy-tools container.
+
+  # ---- Car 12V -------------------------------------------------------
+  # The WiCAN reports the Fiat's 12V battery: ~12.6V resting, 13.8-14.6V
+  # whenever the DC-DC runs (car on, or HV charging). Two alerts:
+  #
+  # Draining: any sustained reading under 11.9V is a battery heading flat
+  # (the WiCAN itself may sleep at low voltage, so this fires on the last
+  # report that arrives — treat it as urgent).
+  - id: alert_car_12v_low
+    alias: "Alert: car 12V battery low"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.wican_batt_voltage
+        below: 11.9
+        for: "00:10:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "🚨 Car 12V battery low"
+          message: >-
+            Fiat 12V at {{ states('sensor.wican_batt_voltage') }}V —
+            draining toward flat. Something is on, or the battery is dying.
+
+  # Left on: DC-DC voltage held for 45+ min while the car is HOME and the
+  # charger switch is OFF. Driving is excluded by the home condition;
+  # legitimate HV charging is excluded by the charger condition.
+  - id: alert_car_left_on
+    alias: "Alert: car left on"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.wican_batt_voltage
+        above: 13.2
+        for: "00:45:00"
+    condition:
+      - condition: state
+        entity_id: device_tracker.wican_wican_14c19fd8a711
+        state: "home"
+      - condition: state
+        entity_id: switch.ogemray25a_70af09ed9950
+        state: "off"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Car left on?"
+          message: >-
+            Fiat 12V has sat at {{ states('sensor.wican_batt_voltage') }}V
+            (DC-DC running) for 45+ min at home with the charger off —
+            the car looks like it was left switched on.
