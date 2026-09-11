@@ -118,3 +118,25 @@ automation:
             Fiat 12V has sat at {{ states('sensor.wican_batt_voltage') }}V
             (DC-DC running) for 45+ min at home with the charger off —
             the car looks like it was left switched on.
+
+  # ---- Failover SIM --------------------------------------------------
+  # sensor.aldi_sim_data_remaining is posted by /opt/stack/aldi/aldi_usage.py
+  # (systemd timer, 4x/day). The plan is yearly, so data only really moves
+  # during LTE failover — 5GB of headroom is the "top it up before the next
+  # outage" line. 6h holdoff: one nudge per check cycle, not a drumbeat.
+  - id: alert_sim_data_low
+    alias: "Alert: failover SIM data low"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.aldi_sim_data_remaining
+        below: 5
+        for: "06:00:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Failover SIM below 5GB"
+          message: >-
+            Aldi SIM has {{ states('sensor.aldi_sim_data_remaining') }}GB left
+            ({{ state_attr('sensor.aldi_sim_data_remaining', 'days_remaining') }}
+            days to expiry). Next fibre outage runs on this.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the failover SIM's remaining data four times a day
+
+[Timer]
+OnCalendar=*-*-* 01,07,13,19:11:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
