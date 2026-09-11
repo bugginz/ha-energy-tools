@@ -17,6 +17,7 @@
 #include <ESPmDNS.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include "driver/gpio.h"
 
 #include "wifi_credentials.h"
 
@@ -42,9 +43,27 @@ uint32_t frames = 0, framesTotal = 0, resyncs = 0, bytesTotal = 0;
 uint32_t lastHeartbeatMs = 0;
 bool sawAck = false;
 
+uint32_t lastByteMs = 0, uartRestarts = 0;
+
+// Open (or re-open) the radar UART. Two C6 gotchas, both measured:
+//  - D6/D7 (GPIO16/17) are UART0's console pins and the boot ROM leaves
+//    GPIO16 as an OUTPUT; Serial1.begin() alone does not undo that, so the
+//    radar's TX fought a driven-high pad. Reset both pads to plain GPIO.
+//  - If the default 256 B RX buffer overflows (the radar streams ~600 B/s
+//    while we block joining WiFi) reception never recovers. So: 4 KB buffer,
+//    open only once WiFi is up, and end()/begin() if bytes ever stop.
+void radarUartBegin() {
+  Serial1.end();
+  gpio_reset_pin((gpio_num_t) RADAR_RX);
+  gpio_reset_pin((gpio_num_t) RADAR_TX);
+  Serial1.setRxBufferSize(4096);
+  Serial1.begin(RADAR_BAUD, SERIAL_8N1, RADAR_RX, RADAR_TX);
+  bufLen = 0;
+  lastByteMs = millis();
+}
+
 void setup() {
   Serial.begin(115200);
-  Serial1.begin(RADAR_BAUD, SERIAL_8N1, RADAR_RX, RADAR_TX);
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -61,6 +80,7 @@ void setup() {
   ArduinoOTA.setHostname(NODE_NAME);
   ArduinoOTA.begin();
 
+  radarUartBegin();
   // Switch the sensor to multi-target mode; the ack shows up in the
   // stream (FD FC FB FA header) and is logged, not forwarded.
   Serial1.write(CMD_MULTI, sizeof(CMD_MULTI));
@@ -79,6 +99,13 @@ void pump() {
   while (Serial1.available() && bufLen < sizeof(buf)) {
     buf[bufLen++] = Serial1.read();
     bytesTotal++;
+    lastByteMs = millis();
+  }
+  if (millis() - lastByteMs > 3000) {   // stalled: reopen the UART
+    uartRestarts++;
+    Serial.printf("radar uart stalled, restart %lu\n", uartRestarts);
+    radarUartBegin();
+    Serial1.write(CMD_MULTI, sizeof(CMD_MULTI));
   }
   size_t i = 0;
   while (bufLen - i >= FRAME_LEN) {
@@ -104,15 +131,18 @@ void heartbeat() {
   char msg[160];
   snprintf(msg, sizeof(msg),
            "{\"hb\":1,\"node\":\"%s\",\"up_s\":%lu,\"rssi\":%d,"
-           "\"frames\":%lu,\"fps\":%.1f,\"resyncs\":%lu,\"bytes\":%lu,\"ack\":%d}",
+           "\"frames\":%lu,\"fps\":%.1f,\"resyncs\":%lu,\"bytes\":%lu,"
+           "\"uart_restarts\":%lu,\"ack\":%d}",
            NODE_NAME, millis() / 1000, WiFi.RSSI(), framesTotal,
-           frames * 1000.0 / (millis() - lastHeartbeatMs), resyncs, bytesTotal, sawAck);
+           frames * 1000.0 / (millis() - lastHeartbeatMs), resyncs, bytesTotal,
+           uartRestarts, sawAck);
   udp.beginPacket(PI_HOST, PI_PORT);
   udp.write((const uint8_t*)msg, strlen(msg));
   udp.endPacket();
   Serial.println(msg);
   frames = 0;
   lastHeartbeatMs = millis();
+  if (!sawAck) Serial1.write(CMD_MULTI, sizeof(CMD_MULTI));   // retry until acked
 }
 
 void loop() {
