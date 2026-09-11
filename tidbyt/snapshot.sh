@@ -214,19 +214,14 @@ except Exception:
     d = {}
 print(1 if 'charger ON' in str(d.get('ev_divert') or '') else 0)" || echo 0)
 
-# WAN failover: the fibre enters the GL.iNet X2000 (the Orbi's "external" IP
-# is 192.168.8.x — X2000 LAN), which fails over to LTE. The house is on
-# cellular exactly when NO wired uplink is Up and the modem holds an IPv4.
-# Verified 2026-09-11: eth1/eth2/tethering all Down, egress IP 1.145.46.2
-# (Telstra mobile). Unavailable sensors read as not-Up, so the cellular-IP
-# check is what stops an integration outage from raising a false alarm.
-E1=$(get sensor.gl_inet_x2000_ethernet_1_status 2>/dev/null || echo '?')
-E2=$(get sensor.gl_inet_x2000_ethernet_2_status 2>/dev/null || echo '?')
-TE=$(get sensor.gl_inet_x2000_tethering_status 2>/dev/null || echo '?')
-CIP=$(get sensor.gl_inet_x2000_cellular_wan_ipv4 2>/dev/null || echo '')
-WANFAIL=$(python3 -c "
-wired_up = 'Up' in ('$E1', '$E2', '$TE')
-print(1 if (not wired_up) and '$CIP'.count('.') == 3 else 0)")
+# WAN failover: binary_sensor.internet_via_lte (template.yaml) is the single
+# owner of the "which WAN is carrying us" logic — the fibre enters the GL.iNet
+# X2000 and fails over to cellular there, and the flag is on when no wired
+# uplink is Up while the modem holds an IPv4. Consuming the HA entity (rather
+# than recomputing here) keeps the badge, HA dashboards and any notification
+# automations reading the same truth. Missing entity -> 0: no false alarms.
+LTE_STATE=$(get binary_sensor.internet_via_lte 2>/dev/null || echo off)
+WANFAIL=$([ "$LTE_STATE" = "on" ] && echo 1 || echo 0)
 
 mkdir -p "$(dirname "$OUT")"
 TMP=$(mktemp "$OUT.XXXXXX")
