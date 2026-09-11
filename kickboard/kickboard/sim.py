@@ -37,6 +37,9 @@ def create_app(service) -> FastAPI:
             "uptime_s": round(time.time() - service.started, 1),
             "radar_alive": service.radar_alive(),
             "frames_seen": service.frames_seen,
+            "radar_nodes": {n: {k: v for k, v in hb.items() if k != "ts"}
+                            | {"age_s": round(time.time() - hb["ts"], 1)}
+                            for n, hb in service.radar_nodes.items()},
             "stats": service.renderer.stats(),
         })
 

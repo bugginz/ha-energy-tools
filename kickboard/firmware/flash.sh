@@ -91,7 +91,9 @@ override NODE_NAME "\"$NODE\""
 [ -n "${MAX_MA:-}" ]   && override MAX_MILLIAMPS "$MAX_MA"
 [ -n "${PI_HOST:-}" ]  && override PI_HOST "\"$PI_HOST\""
 [ -n "${LOG_HOST:-}" ] && override LOG_HOST "\"$LOG_HOST\""
-grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|LOG_HOST|DATA_PIN)' \
+[ -n "${RADAR_RX:-}" ] && override RADAR_RX "$RADAR_RX"
+[ -n "${RADAR_TX:-}" ] && override RADAR_TX "$RADAR_TX"
+grep -E '^#define (NODE_NAME|NUM_LEDS|MAX_MILLIAMPS|PI_HOST|LOG_HOST|DATA_PIN|RADAR_RX|RADAR_TX)' \
   "$DIR/$SKETCH.ino" | sed 's/^/    /'
 
 OUT="$BUILD/out"

@@ -5,11 +5,13 @@
 // lives in one place (the Pi). Also sends a JSON heartbeat every 5 s so
 // the Pi can tell "radar dead" from "nobody here".
 //
-// Wiring: RD-03D TX -> C6 RX (D7), RD-03D RX -> C6 TX (D6), 3.3 V logic
-// both sides. Power the module from the XIAO 3V3 pin — but CONFIRM the
-// rated supply on the datasheet first; some carrier boards regulate from
-// 5 V. Mount 1.3-1.5 m high at the end of the kitchen, boresight down the
-// long axis (PLAN.md §6).
+// Wiring, as Rob solders them (labels matched, not crossed):
+//   RD-03D TX  -> XIAO D6 (GPIO16)   so the ESP *receives* on D6
+//   RD-03D RX  -> XIAO D7 (GPIO17)   so the ESP *transmits* on D7
+//   RD-03D VCC -> XIAO 5V            (the board is rated 5 V; UART is 3.3 V logic)
+//   GND        -> GND
+// Mount 1.3-1.5 m high at the end of the kitchen, boresight down the long
+// axis (PLAN.md §6). Override pins per flash: RADAR_RX=D7 RADAR_TX=D6.
 
 #include <ArduinoOTA.h>
 #include <ESPmDNS.h>
@@ -21,8 +23,8 @@
 #define NODE_NAME "kick-radar"
 #define PI_HOST "192.168.1.10"     // the Pi 5 — set your static address
 #define PI_PORT 4049
-#define RADAR_RX D7                // RD-03D TX -> this
-#define RADAR_TX D6                // RD-03D RX -> this
+#define RADAR_RX D6                // RD-03D TX -> this
+#define RADAR_TX D7                // RD-03D RX -> this
 #define RADAR_BAUD 256000
 #define HEARTBEAT_MS 5000
 
@@ -36,7 +38,7 @@ static const uint8_t CMD_MULTI[] = {0xFD, 0xFC, 0xFB, 0xFA, 0x02, 0x00,
 WiFiUDP udp;
 uint8_t buf[4 * FRAME_LEN];
 size_t bufLen = 0;
-uint32_t frames = 0, framesTotal = 0, resyncs = 0;
+uint32_t frames = 0, framesTotal = 0, resyncs = 0, bytesTotal = 0;
 uint32_t lastHeartbeatMs = 0;
 bool sawAck = false;
 
@@ -76,6 +78,7 @@ void forwardFrame(const uint8_t* frame) {
 void pump() {
   while (Serial1.available() && bufLen < sizeof(buf)) {
     buf[bufLen++] = Serial1.read();
+    bytesTotal++;
   }
   size_t i = 0;
   while (bufLen - i >= FRAME_LEN) {
@@ -101,9 +104,9 @@ void heartbeat() {
   char msg[160];
   snprintf(msg, sizeof(msg),
            "{\"hb\":1,\"node\":\"%s\",\"up_s\":%lu,\"rssi\":%d,"
-           "\"frames\":%lu,\"fps\":%.1f,\"resyncs\":%lu,\"ack\":%d}",
+           "\"frames\":%lu,\"fps\":%.1f,\"resyncs\":%lu,\"bytes\":%lu,\"ack\":%d}",
            NODE_NAME, millis() / 1000, WiFi.RSSI(), framesTotal,
-           frames * 1000.0 / (millis() - lastHeartbeatMs), resyncs, sawAck);
+           frames * 1000.0 / (millis() - lastHeartbeatMs), resyncs, bytesTotal, sawAck);
   udp.beginPacket(PI_HOST, PI_PORT);
   udp.write((const uint8_t*)msg, strlen(msg));
   udp.endPacket();

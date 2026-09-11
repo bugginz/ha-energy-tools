@@ -61,6 +61,7 @@ class Service:
         self.last_frame_ts = 0.0
         self.last_heartbeat_ts = 0.0
         self.frames_seen = 0
+        self.radar_nodes: dict[str, dict] = {}   # last heartbeat per node name
 
         self._stop = threading.Event()
         self._source = None
@@ -82,8 +83,11 @@ class Service:
         # the tracker runs on the monotonic clock, same as the render loop
         self.tracker.update(time.monotonic(), dets)
 
-    def on_heartbeat(self, ts: float, _payload: dict) -> None:
+    def on_heartbeat(self, ts: float, payload: dict) -> None:
         self.last_heartbeat_ts = ts
+        node = str(payload.get("node", "?"))
+        self.radar_nodes[node] = payload | {"ts": ts}
+        log.debug("radar heartbeat %s", payload)
 
     def radar_alive(self) -> bool:
         timeout = float(self.cfg.radar.heartbeat_timeout_s)
