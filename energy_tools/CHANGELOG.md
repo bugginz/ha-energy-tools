@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.77.3 — publish a heartbeat: sensor "Last poll"
+
+A timestamp sensor (device_class timestamp) written on every successful
+publish cycle. Exists because staleness alerts keyed off data sensors false-
+alarm: HA only bumps last_updated when a VALUE changes, so a battery parked
+at 100% "went stale" on 2026-09-11 while telemetry flowed. The heartbeat
+always changes, so "no response" and "unchanged value" are finally different
+things. The HA alert now watches sensor.foxess_foxctl_last_poll alone.
+
 ## 1.77.2 — manual sell power follows the slider while active
 
 Re-pressing the grid-upload button with a new power while a sell was already

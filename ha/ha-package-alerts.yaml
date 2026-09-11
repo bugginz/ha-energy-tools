@@ -39,35 +39,28 @@ automation:
             Wired WAN is back; traffic is off the SIM.
 
   # ---- FoxESS --------------------------------------------------------
-  # One umbrella symptom covers every failure mode (modbus dead, cloud API
-  # down, energy-tools container stopped, MQTT broken): the foxctl
-  # telemetry stops updating. HA only bumps last_updated when a VALUE
-  # changes — watching SoC alone false-alarmed on 2026-09-11 when the pack
-  # sat at 100% for 22 minutes while solar data flowed happily. So: stale
-  # means ALL FOUR of these are silent for 15 min — if anything is
-  # publishing, at least one of the floats wiggles. expand() skips missing
-  # entities; empty list -> no alarm. Re-arms when data returns.
+  # foxctl publishes sensor.foxess_foxctl_last_poll (device_class timestamp)
+  # on every successful cycle since 1.77.3 — a true heartbeat that always
+  # changes, so "no response" and "value unchanged" are different things.
+  # (Keying off data sensors false-alarmed on 2026-09-11: HA only bumps
+  # last_updated when a value changes, and SoC was parked at 100%.)
   - id: alert_foxess_stale
     alias: "Alert: FoxESS telemetry stale"
     mode: single
     trigger:
       - platform: template
         value_template: >-
-          {% set ts = expand('sensor.foxess_foxctl_house_load',
-                             'sensor.foxess_foxctl_solar_power',
-                             'sensor.foxess_foxctl_battery_charge_power',
-                             'sensor.foxess_foxctl_battery_soc')
-                      | map(attribute='last_updated') | list %}
-          {{ ts | length > 0 and (now() - (ts | max)) > timedelta(minutes=15) }}
+          {% set hb = states('sensor.foxess_foxctl_last_poll') | as_datetime %}
+          {{ hb is not none and (now() - hb) > timedelta(minutes=15) }}
     action:
       - service: notify.mobile_app_phoney
         data:
           title: "⚠️ FoxESS telemetry stale"
           message: >-
-            No inverter data on ANY channel for 15+ min (SoC
-            {{ states('sensor.foxess_foxctl_battery_soc') }}%, load
-            {{ states('sensor.foxess_foxctl_house_load') }}kW frozen).
-            Modbus AND cloud are silent — check the energy-tools container.
+            foxctl has not completed a poll since
+            {{ (states('sensor.foxess_foxctl_last_poll') | as_datetime)
+               .strftime('%H:%M') }} — modbus AND cloud silent, or the
+            energy-tools container is down.
 
   # ---- Car 12V -------------------------------------------------------
   # The WiCAN reports the Fiat's 12V battery: ~12.6V resting, 13.8-14.6V
@@ -140,3 +133,41 @@ automation:
             Aldi SIM has {{ states('sensor.aldi_sim_data_remaining') }}GB left
             ({{ state_attr('sensor.aldi_sim_data_remaining', 'days_remaining') }}
             days to expiry). Next fibre outage runs on this.
+
+  # ---- SMS to the failover SIM ---------------------------------------
+  # The X2000 receives SMS for 0494809319 (the Aldi account number) — which
+  # is where password-reset links and codes for that account arrive. Forward
+  # every new message to the phone: don't automate the reset, automate the
+  # RECEIPT. Trigger is the unread count increasing; get_sms returns full
+  # message content in its action response.
+  - id: alert_sim_sms
+    alias: "Alert: SMS on the failover SIM"
+    mode: queued
+    trigger:
+      - platform: state
+        entity_id: sensor.gl_inet_x2000_unread_messages
+    condition:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.to_state is not none
+             and (trigger.to_state.state | int(0))
+               > (trigger.from_state.state | int(0)) }}
+    action:
+      - service: glinet_router.get_sms
+        data: {}
+        response_variable: sms
+      - variables:
+          unread: >-
+            {{ (sms.messages | selectattr('status', 'eq', 'Unread')
+                | list) if sms is defined else [] }}
+      - service: notify.mobile_app_phoney
+        data:
+          title: "📨 SMS to failover SIM"
+          message: >-
+            {% if unread | count > 0 -%}
+            {% for m in unread[-3:] %}{{ m.phone_number }}: {{ m.text }}
+            {% endfor %}
+            {%- else -%}
+            New SMS arrived but the content fetch came back empty — check the
+            X2000 admin UI.
+            {%- endif %}
