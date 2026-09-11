@@ -489,6 +489,36 @@ class TrackerTest(unittest.TestCase):
         self.assertTrue(tr.tracks[0].held)
         self.assertEqual(tr2.tracks, [], "moving target should have decayed")
 
+    def test_low_weight_fix_cannot_start_a_track(self):
+        tr = self.make(min_birth_weight=0.5)
+        self.step(tr, 0.0, 1.0, [(3000, 1000, 20, 0.2)])   # far from its sensor
+        self.assertEqual(tr.tracks, [])
+        self.step(tr, 10.0, 1.0, [(3000, 1000, 20, 0.9)])  # near the other sensor
+        self.assertEqual(len(tr.tracks), 1)
+
+    def test_low_weight_fix_joins_within_far_gate_and_pulls_gently(self):
+        tr = self.make(assoc_max_mm=800, assoc_far_mm=1600, min_birth_weight=0.5)
+        t = self.step(tr, 0.0, 1.0, [(1000, 1000, 20, 1.0)])
+        # a sloppy fix 1.2 m away: outside the normal gate, inside the far one
+        tr.update(t + 0.1, [(2200, 1000, 20, 0.15)])
+        self.assertEqual(len(tr.tracks), 1, "must attach, not spawn a second pool")
+        self.assertLess(tr.tracks[0].x, 1200, "and barely move the track")
+        # but if the sloppy sensor is all there is for a while, follow it
+        self.step(tr, t + 0.1, 3.0, [(2200, 1000, 20, 0.15)])
+        self.assertGreater(tr.tracks[0].x, 2000)
+
+    def test_birth_exclusion_near_existing_track(self):
+        tr = self.make(assoc_max_mm=800, assoc_far_mm=2000, min_birth_weight=0.5,
+                       birth_exclusion_mm=2000, birth_exclusion_weight=0.9)
+        t = self.step(tr, 0.0, 1.0, [(1000, 1000, 20, 1.0)])
+        # a decent-but-not-precise fix 1.6 m away: outside every gate, but
+        # inside the exclusion radius -> no second track
+        self.step(tr, t, 1.0, [(1000, 1000, 20, 1.0), (2600, 1000, 20, 0.7)])
+        self.assertEqual(len(tr.tracks), 1)
+        # a precise fix there (w >= 0.9) is a second person
+        self.step(tr, t + 1.0, 1.0, [(1000, 1000, 20, 1.0), (2600, 1000, 20, 0.95)])
+        self.assertEqual(len(tr.tracks), 2)
+
     def test_smoothing_lags_raw(self):
         tr = self.make()
         t = self.step(tr, 0.0, 1.0, [(1000, 1000, 20)])

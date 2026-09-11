@@ -56,6 +56,19 @@ DEFAULTS: dict[str, Any] = {
         "hold_time_s": 10.0,
         "static_speed_cms": 10.0,
         "assoc_max_mm": 800.0,
+        # per-fix trust from range to its own sensor: w = (trust_range/range)^2
+        # clipped to [min_weight, 1]. A fix below min_birth_weight can join a
+        # track (within assoc_far_mm) but never start one.
+        "trust_range_mm": 2000.0,
+        "near_range_mm": 1100.0,     # inside this the slant projection is unstable
+        "min_weight": 0.1,
+        "assoc_far_mm": 2000.0,
+        "min_birth_weight": 0.5,
+        # a fix with weight below birth_exclusion_weight may not start a new
+        # track within birth_exclusion_mm of an existing one (it is most
+        # likely the same person seen sloppily by the other sensor)
+        "birth_exclusion_mm": 2000.0,
+        "birth_exclusion_weight": 0.9,
     },
     "render": {
         "sigma_mm": 500.0,

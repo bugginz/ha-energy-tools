@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import collections
 import logging
+import math
 import random
 import threading
 import time
@@ -99,10 +100,18 @@ class Service:
             self._unknown_srcs.add(src)
             log.warning("radar frames from unlisted source %s — using the "
                         "default pose; add it to radar.sources", src)
-        dets = [(*pose.to_room(
-                    *radar.slant_to_floor(t.x_mm, t.y_mm, slant_h)),
-                 t.speed_cms)
-                for t in frame.targets]
+        tr = self.cfg.tracker
+        trust = float(tr.trust_range_mm)
+        min_w = float(tr.min_weight)
+        near = float(tr.near_range_mm)
+        dets = []
+        for t in frame.targets:
+            rng = max(1.0, math.hypot(t.x_mm, t.y_mm))
+            w = min(1.0, max(min_w, (trust / rng) ** 2))
+            if rng < near:      # under an elevated sensor the floor projection is unstable
+                w = min(w, max(min_w, 0.15))
+            dets.append((*pose.to_room(*radar.slant_to_floor(t.x_mm, t.y_mm, slant_h)),
+                         t.speed_cms, w))
         # the tracker runs on the monotonic clock, same as the render loop
         self.tracker.update(time.monotonic(), dets)
 

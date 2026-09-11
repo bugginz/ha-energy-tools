@@ -35,7 +35,7 @@ room:
   # the strip-A wall, x along the strips (~4.5 m), y across (strips ~1.2 m
   # apart, toe kick to toe kick). Standing spots used for the fit were
   # ~1.36 m from the fridge-end wall, i.e. beside the fridge.
-  polygon: [[0, 0], [4500, 0], [4500, 1400], [0, 1400]]
+  polygon: [[0, 0], [5400, 0], [5400, 1400], [0, 1400]]   # far wall ~5.4 m (radar-b at 5.31)
 
 render:
   sigma_mm: 500

@@ -66,15 +66,27 @@ class Tracker:
         self._ids = itertools.count(1)
 
     def update(self, ts: float, detections) -> None:
-        """detections: iterable of (x_mm, y_mm, speed_cms) in room coords."""
+        """detections: iterable of (x_mm, y_mm, speed_cms[, weight]) in room
+        coords. weight (0..1, default 1) is how much to trust the fix: the
+        RD-03D's bearing error grows with range (+-5 deg is +-0.4 m at 4.5 m)
+        and the slant projection adds more, so with a sensor at each end of
+        the room every fix is precise near its own sensor and sloppy far
+        away. Low-weight fixes may nudge an existing track within a wider
+        gate but cannot create one — the other sensor is close to it."""
         dt = 0.0 if self._last_ts is None else max(0.0, ts - self._last_ts)
         self._last_ts = ts
 
-        dets = [(x, y, v) for x, y, v in detections
-                if point_in_polygon(x, y, self.polygon)]
+        dets = []
+        for d in detections:
+            x, y, v = d[0], d[1], d[2]
+            w = min(1.0, max(0.0, float(d[3]))) if len(d) > 3 else 1.0
+            if point_in_polygon(x, y, self.polygon):
+                dets.append((x, y, v, w))
 
-        # Greedy nearest-neighbour association, closest pairs first.
+        # Greedy nearest-neighbour association, closest pairs first. The
+        # gate widens for low-weight fixes (their position error is larger).
         gate = float(self.cfg.assoc_max_mm)
+        far_gate = float(self.cfg.get("assoc_far_mm", gate * 2))
         pairs = sorted(
             ((math.dist((t.x, t.y), (d[0], d[1])), ti, di)
              for ti, t in enumerate(self.tracks) for di, d in enumerate(dets)),
@@ -82,7 +94,10 @@ class Tracker:
         matched_t: set[int] = set()
         matched_d: set[int] = set()
         for dist, ti, di in pairs:
-            if dist > gate or ti in matched_t or di in matched_d:
+            w = dets[di][3]
+            if dist > gate + (far_gate - gate) * (1.0 - w):
+                continue
+            if ti in matched_t or di in matched_d:
                 continue
             matched_t.add(ti)
             matched_d.add(di)
@@ -105,11 +120,20 @@ class Tracker:
                 survivors.append(t)
         self.tracks = survivors
 
-        # Unmatched detections: new tracks, unless born inside a ghost zone.
+        # Unmatched detections: new tracks, unless born inside a ghost zone
+        # or too far from their sensor to be trusted on their own.
+        min_birth_w = float(self.cfg.get("min_birth_weight", 0.0))
+        excl_mm = float(self.cfg.get("birth_exclusion_mm", 0.0))
+        excl_w = float(self.cfg.get("birth_exclusion_weight", 1.0))
         for di, d in enumerate(dets):
             if di in matched_d:
                 continue
-            x, y, v = d
+            x, y, v, w = d
+            if w < min_birth_w:
+                continue
+            if (excl_mm and w < excl_w
+                    and any(math.dist((x, y), (t.x, t.y)) < excl_mm for t in self.tracks)):
+                continue
             if any(point_in_polygon(x, y, z) for z in self.zones):
                 continue
             self.tracks.append(Track(
@@ -121,9 +145,10 @@ class Tracker:
             self.last_activity_ts = ts
 
     def _absorb(self, t: Track, ts: float, dt: float,
-                x: float, y: float, v: float) -> None:
+                x: float, y: float, v: float, w: float = 1.0) -> None:
         tau = max(1e-3, float(self.params.ema_tau_s))
         alpha = 1.0 - math.exp(-dt / tau) if dt > 0 else 1.0
+        alpha *= w                      # sloppy fixes pull gently
         t.x += alpha * (x - t.x)
         t.y += alpha * (y - t.y)
         t.raw_x, t.raw_y = x, y
