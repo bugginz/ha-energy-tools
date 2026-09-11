@@ -719,6 +719,103 @@
      "cards": [
       {
        "type": "heading",
+       "heading": "Meter compensation",
+       "icon": "mdi:scale-balance"
+      },
+      {
+       "type": "markdown",
+       "content": "**Grid Power Point** (app \u2192 Meter Compensation) is currently **25 W export bias**. It's installer-gated \u2014 no modbus register or API on the KH \u2014 so change it in the FoxESS app (positive = *Export More*).\n\nWatch the **independent clamp** line below during quiet hours (ignore the 10:00\u201314:00 free-charge): if it sits steadily **above 0** (importing), nudge the app bias toward *Export More*; if steadily below 0, ease it back. The inverter's own meter is regulated to the setpoint, so it hugs 0 by design \u2014 it's the clamp that shows the real drift."
+      },
+      {
+       "type": "custom:apexcharts-card",
+       "graph_span": "24h",
+       "span": {
+        "end": "minute"
+       },
+       "header": {
+        "show": true,
+        "title": "Grid meter \u2014 +import / \u2212export (W), \u00b1400 W zoom"
+       },
+       "apex_config": {
+        "chart": {
+         "height": 300
+        },
+        "legend": {
+         "show": true,
+         "position": "top"
+        },
+        "dataLabels": {
+         "enabled": false
+        },
+        "stroke": {
+         "width": 2,
+         "curve": "smooth"
+        },
+        "yaxis": [
+         {
+          "min": -400,
+          "max": 400,
+          "tickAmount": 4,
+          "decimalsInFloat": 0
+         }
+        ],
+        "annotations": {
+         "yaxis": [
+          {
+           "y": 0,
+           "borderColor": "#94a3b8",
+           "label": {
+            "text": "0 W",
+            "style": {
+             "color": "#94a3b8"
+            }
+           }
+          }
+         ]
+        }
+       },
+       "all_series_config": {
+        "type": "line",
+        "stroke_width": 2,
+        "group_by": {
+         "func": "avg",
+         "duration": "10min"
+        }
+       },
+       "series": [
+        {
+         "entity": "sensor.grid_main_power_local",
+         "name": "Independent clamp (true)",
+         "color": "#38bdf8"
+        },
+        {
+         "entity": "sensor.grid_ct",
+         "name": "Inverter meter (regulated)",
+         "color": "#fbbf24",
+         "transform": "return -x * 1000;",
+         "unit": "W",
+         "stroke_width": 1,
+         "opacity": 0.7
+        }
+       ]
+      },
+      {
+       "type": "heading",
+       "heading": "More detail \u2014 grid meter history",
+       "heading_style": "subtitle",
+       "icon": "mdi:scale-balance",
+       "tap_action": {
+        "action": "navigate",
+        "navigation_path": "/history?entity_id=sensor.grid_main_power_local,sensor.grid_ct,sensor.grid_ct_delta"
+       }
+      }
+     ]
+    },
+    {
+     "type": "grid",
+     "cards": [
+      {
+       "type": "heading",
        "heading": "All entities",
        "icon": "mdi:view-grid-outline"
       },
