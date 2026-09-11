@@ -1,22 +1,19 @@
 
-# Internet via LTE: the fibre enters the GL.iNet X2000 and fails over to
-# cellular there (the Orbi is BEHIND it, so Orbi WAN status is always "on").
-# On = no wired uplink is Up AND the modem holds an IPv4. The cellular-IP
-# condition stops a glinet-integration outage from false-alarming; uplink
-# statuses briefly flap to Unknown during polling, so the test is "not Up",
-# never "Down". Verified against the real outage of 2026-09-11 09:01 AEST:
-# ethernet_1 Down and the SIM counter jumping to ~10MB/min in the same minute.
+# Internet via LTE: the fibre enters the GL.iNet X2000 on Ethernet 1 and
+# fails over to cellular there (the Orbi is BEHIND it, so Orbi WAN status is
+# always "on"). Ethernet 1 IS the fibre — per Rob — so the flag keys on it
+# alone: on exactly when it reads "Down". The brief "Unknown" polling flaps
+# and an integration outage ("unavailable") both differ from "Down", so
+# neither false-alarms. Verified against the real outage of 2026-09-11
+# 09:01-11:45 AEST: eth1 Down and the SIM counter jumping to ~10MB/min in
+# the same minute, back Up when fibre egress returned.
 # The tronbyt displays read this via snapshot.sh (LTE badge, top right slot).
 - binary_sensor:
     - name: "Internet via LTE"
       unique_id: internet_via_lte
       device_class: problem
       state: >
-        {% set ups = [states('sensor.gl_inet_x2000_ethernet_1_status'),
-                      states('sensor.gl_inet_x2000_ethernet_2_status'),
-                      states('sensor.gl_inet_x2000_tethering_status')] %}
-        {% set cip = states('sensor.gl_inet_x2000_cellular_wan_ipv4') %}
-        {{ 'Up' not in ups and cip | regex_match('^\d+\.\d+\.\d+\.\d+$') }}
+        {{ states('sensor.gl_inet_x2000_ethernet_1_status') == 'Down' }}
       attributes:
         wired_uplinks: >
           eth1={{ states('sensor.gl_inet_x2000_ethernet_1_status') }}
