@@ -67,13 +67,78 @@ async def collect(url, seconds):
     return per_ip
 
 
-def summarise(dets):
+CELL = 300.0      # clustering grid, mm
+GHOST_R = 600.0   # a cluster this close to one seen at another spot is static
+
+
+def clusters(dets):
+    """Greedy grid clustering -> [(x, y, n)] densest first."""
+    cells = {}
+    for x, y in dets:
+        cells.setdefault((round(x / CELL), round(y / CELL)), []).append((x, y))
+    out = []
+    used = set()
+    for key in sorted(cells, key=lambda k: -len(cells[k])):
+        if key in used:
+            continue
+        group = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                k2 = (key[0] + dx, key[1] + dy)
+                if k2 in cells and k2 not in used:
+                    used.add(k2)
+                    group += cells[k2]
+        mx = statistics.median(g[0] for g in group)
+        my = statistics.median(g[1] for g in group)
+        out.append((mx, my, len(group)))
+    return sorted(out, key=lambda c: -c[2])
+
+
+def summarise(dets, ghosts=()):
+    """Pick the person's cluster: the densest one that is not a known ghost
+    (something that sat in the same place during another capture)."""
     if not dets:
         return {"n": 0}
-    xs, ys = [d[0] for d in dets], [d[1] for d in dets]
-    mx, my = statistics.median(xs), statistics.median(ys)
-    spread = statistics.median(math.dist((x, y), (mx, my)) for x, y in dets)
-    return {"x": round(mx), "y": round(my), "n": len(dets), "spread": round(spread)}
+    cl = clusters(dets)
+    live = [c for c in cl if not any(math.dist(c[:2], g) < GHOST_R for g in ghosts)]
+    if not live:
+        live = cl
+    mx, my, _n = live[0]
+    members = [d for d in dets if math.dist(d, (mx, my)) < 2 * CELL]
+    spread = statistics.median(math.dist(d, (mx, my)) for d in members)
+    return {"x": round(mx), "y": round(my), "n": len(members), "spread": round(spread),
+            "total": len(dets),
+            "clusters": [[round(x), round(y), n] for x, y, n in cl[:4]]}
+
+
+def ghosts_for(pts, ip, exclude_label):
+    """Cluster centres this sensor reported at >= 2 OTHER spots: something
+    that sits still while the person moves around is a reflection. (One
+    other spot is not enough — two corners 1.2 m apart look alike from a
+    sensor 4 m away, which is bearing resolution, not a ghost.)"""
+    seen = []   # (label, (x, y))
+    for p in pts:
+        if p["label"] == exclude_label:
+            continue
+        for c in p["sources"].get(ip, {}).get("clusters", []):
+            seen.append((p["label"], (c[0], c[1])))
+    out = []
+    for la, a in seen:
+        if any(lb != la and math.dist(a, b) < GHOST_R for lb, b in seen):
+            out.append(a)
+    return out
+
+
+def resummarise(pts):
+    """Re-pick clusters for every capture that kept its raw detections,
+    with ghost knowledge from all the others."""
+    for p in pts:
+        for ip, s in p["sources"].items():
+            raw = s.get("raw")
+            if raw:
+                s.update(summarise([tuple(d) for d in raw],
+                                   ghosts_for(pts, ip, p["label"])))
+    return pts
 
 
 def cmd_capture(args):
@@ -81,15 +146,20 @@ def cmd_capture(args):
           f"({args.room[0]:.0f}, {args.room[1]:.0f}) — stand there, sway gently…",
           flush=True)
     per_ip = asyncio.run(collect(args.url, args.seconds))
-    entry = {"label": args.label, "room": [float(args.room[0]), float(args.room[1])],
-             "ts": time.time(),
-             "sources": {ip: summarise(dets) for ip, dets in per_ip.items()}}
     pts = [p for p in load_points(args.points) if p["label"] != args.label]
+    entry = {"label": args.label, "room": [float(args.room[0]), float(args.room[1])],
+             "ts": time.time(), "sources": {}}
+    for ip, dets in per_ip.items():
+        s = summarise(dets, ghosts_for(pts, ip, args.label))
+        s["raw"] = [[round(x), round(y)] for x, y in dets]
+        entry["sources"][ip] = s
     pts.append(entry)
+    pts = resummarise(pts)
     save_points(args.points, pts)
     for ip, s in entry["sources"].items():
         if s["n"]:
-            print(f"  {ip}: median ({s['x']}, {s['y']}) mm  n={s['n']}  spread={s['spread']} mm"
+            print(f"  {ip}: person at ({s['x']}, {s['y']}) mm  n={s['n']}/{s['total']}  "
+                  f"spread={s['spread']} mm  clusters={s['clusters']}"
                   + ("  <- weak" if s["n"] < args.min_n or s["spread"] > args.max_spread else ""))
         else:
             print(f"  {ip}: no detections")
@@ -106,7 +176,7 @@ def cmd_show(args):
 def cmd_solve(args):
     cfg = config_mod.load_config(args.config)
     _default, by_ip = radar.build_pose_table(cfg.radar)
-    pts = load_points(args.points)
+    pts = resummarise(load_points(args.points))
     results = {}
     for src in cfg.radar.get("sources", []):
         ip = str(src.ip)
@@ -116,6 +186,10 @@ def cmd_solve(args):
             s = p["sources"].get(ip, {"n": 0})
             if s["n"] < args.min_n or s["spread"] > args.max_spread:
                 continue
+            if math.hypot(s["x"], s["y"]) < args.min_range:
+                print(f"  skipping {p['label']}: {math.hypot(s['x'], s['y']):.0f} mm is "
+                      "near-field (under the sensor)")
+                continue
             sensor.append(radar.slant_to_floor(s["x"], s["y"], slant_h))
             room.append(tuple(p["room"]))
             labels.append(p["label"])
@@ -123,17 +197,25 @@ def cmd_solve(args):
         if len(sensor) < 2:
             print("  need at least 2 — capture more corners this sensor can see")
             continue
-        theta, tx, ty = radar.solve_pose(sensor, room)
-        pose = radar.Pose(math.radians(theta), tx, ty)
-        res = [math.dist(pose.to_room(*s), r) for s, r in zip(sensor, room)]
-        print(f"  theta {theta:7.1f} deg  tx {tx:7.0f}  ty {ty:7.0f}   "
-              f"residuals mm: {[round(r) for r in res]}  (rms {math.sqrt(sum(r*r for r in res)/len(res)):.0f})")
+        best = None
+        for mirror in (False, True):
+            pts_s = [((-x if mirror else x), y) for x, y in sensor]
+            theta, tx, ty = radar.solve_pose(pts_s, room)
+            pose = radar.Pose(math.radians(theta), tx, ty, mirror_x=mirror)
+            res = [math.dist(pose.to_room(*s), r) for s, r in zip(sensor, room)]
+            rms = math.sqrt(sum(r * r for r in res) / len(res))
+            print(f"  mirror_x={str(mirror):5s} theta {theta:7.1f} deg  tx {tx:7.0f}  ty {ty:7.0f}   "
+                  f"residuals mm: {[round(r) for r in res]}  (rms {rms:.0f})")
+            if best is None or rms < best[0]:
+                best = (rms, theta, tx, ty, mirror)
+        rms, theta, tx, ty, mirror = best
+        print(f"  -> using mirror_x={mirror}" + ("  (sensor mounted flipped)" if mirror else ""))
         if len(sensor) == 2:
             print("  (2 points fit exactly; residuals are meaningless — add a third)")
-        results[ip] = (theta, tx, ty)
+        results[ip] = (theta, tx, ty, mirror)
     if args.write and results:
         text = Path(args.config).read_text()
-        for ip, (theta, tx, ty) in results.items():
+        for ip, (theta, tx, ty, mirror) in results.items():
             pat = re.compile(r"(ip:\s*" + re.escape(ip) + r"\s*\n\s*pose:\s*\{)([^}]*)(\})")
             m = pat.search(text)
             if not m:
@@ -141,8 +223,9 @@ def cmd_solve(args):
                 continue
             old = m.group(2)
             keep = [kv for kv in old.split(",") if kv.strip() and
-                    kv.split(":")[0].strip() not in ("theta_deg", "tx_mm", "ty_mm")]
-            new = ", ".join([f"theta_deg: {theta:.1f}", f"tx_mm: {tx:.0f}", f"ty_mm: {ty:.0f}"]
+                    kv.split(":")[0].strip() not in ("theta_deg", "tx_mm", "ty_mm", "mirror_x")]
+            new = ", ".join([f"theta_deg: {theta:.1f}", f"tx_mm: {tx:.0f}", f"ty_mm: {ty:.0f}",
+                             f"mirror_x: {'true' if mirror else 'false'}"]
                             + [kv.strip() for kv in keep])
             text = text[:m.start(2)] + new + text[m.end(2):]
         Path(args.config).write_text(text)
@@ -155,6 +238,9 @@ def main():
     ap.add_argument("--url", default="ws://127.0.0.1:8771/ws")
     ap.add_argument("--min-n", type=int, default=20)
     ap.add_argument("--max-spread", type=float, default=400)
+    ap.add_argument("--min-range", type=float, default=1000,
+                    help="skip captures closer than this (mm): under an elevated "
+                         "sensor the slant->floor projection is unusable")
     sub = ap.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("capture"); c.add_argument("--label", required=True)
     c.add_argument("--room", type=float, nargs=2, required=True, metavar=("X_MM", "Y_MM"))

@@ -121,6 +121,12 @@ class PoseTest(unittest.TestCase):
         self.assertAlmostEqual(x, 2000, places=6)
         self.assertAlmostEqual(y, 400, places=6)
 
+    def test_mirror_x_flips_lateral_axis(self):
+        p = radar.Pose(math.radians(-90), 0.0, 900.0, mirror_x=True)
+        x, y = p.to_room(500, 2000)          # 0.5 m to the sensor's own right
+        self.assertAlmostEqual(x, 2000, places=6)
+        self.assertAlmostEqual(y, 1400, places=6)   # lands room-LEFT of boresight
+
     def test_solve_pose_recovers_transform(self):
         true = radar.Pose(math.radians(-77.0), 123.0, 456.0)
         sensor = [(0, 1000), (800, 2500), (-600, 3100), (200, 400)]

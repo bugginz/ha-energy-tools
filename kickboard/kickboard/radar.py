@@ -114,13 +114,17 @@ class Pose:
     theta_rad: float
     tx_mm: float
     ty_mm: float
+    mirror_x: bool = False   # sensor mounted flipped: its +x is room-left
 
     @classmethod
     def from_cfg(cls, pose_cfg) -> "Pose":
         return cls(theta_rad=math.radians(float(pose_cfg.theta_deg)),
-                   tx_mm=float(pose_cfg.tx_mm), ty_mm=float(pose_cfg.ty_mm))
+                   tx_mm=float(pose_cfg.tx_mm), ty_mm=float(pose_cfg.ty_mm),
+                   mirror_x=bool(pose_cfg.get("mirror_x", False)))
 
     def to_room(self, x_mm: float, y_mm: float) -> tuple[float, float]:
+        if self.mirror_x:
+            x_mm = -x_mm
         c, s = math.cos(self.theta_rad), math.sin(self.theta_rad)
         return (c * x_mm - s * y_mm + self.tx_mm,
                 s * x_mm + c * y_mm + self.ty_mm)

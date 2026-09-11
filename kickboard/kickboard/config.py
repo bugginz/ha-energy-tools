@@ -30,8 +30,11 @@ DEFAULTS: dict[str, Any] = {
         # down-tilted mount (ceiling at one end), mount_height_mm enables the
         # slant-range -> floor projection; 0 disables it (wall mount at torso
         # height needs none). target_height_mm is the assumed torso height.
+        # mirror_x: the sensor is mounted flipped (its +x reads room-left);
+        # calibrate.py detects this — a rigid fit cannot absorb a reflection.
         "pose": {"theta_deg": -90.0, "tx_mm": 0.0, "ty_mm": 900.0,
-                 "mount_height_mm": 0.0, "target_height_mm": 1000.0},
+                 "mount_height_mm": 0.0, "target_height_mm": 1000.0,
+                 "mirror_x": False},
         # Multiple sensors: one entry per radar node, keyed by the sender IP
         # of its UDP frames. Each source's pose merges over the top-level
         # pose above, so an entry only states what differs. Empty list =
