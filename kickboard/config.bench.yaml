@@ -48,17 +48,17 @@ nodes:
     num_leds: 300
     color_order: RGB
     budget_ma: 1500           # USB-C PD brick through the XIAO 5V pad; firmware MAX_MA matches
-    waypoints:                # LED 0 at the fridge end; ~0.5 m tucked away past 4.5 m
-      - [0, 0, 0]
-      - [299, 4983, 0]        # 299 x 16.67 mm pitch
+    waypoints:                # LED 0 at the far (radar-b) end, runs toward the fridge;
+      - [0, 4983, 0]          # ~0.5 m tucked away beyond the 4.5 m wall at the far end
+      - [299, 0, 0]           # 299 x 16.67 mm pitch
   - name: kick-right          # second C6 + reel, flashed 2026-09-10, USB power
     host: 192.168.1.122
     num_leds: 300
     color_order: RGB
     budget_ma: 450            # on the Mac's USB port; firmware MAX_MA matches
-    waypoints:                # far toe kick, ~1.2 m across; direction ASSUMED same as A
-      - [0, 0, 1200]
-      - [299, 4983, 1200]
+    waypoints:                # far toe kick, ~1.2 m across; same direction as A
+      - [0, 4983, 1200]
+      - [299, 0, 1200]
 
 mqtt:
   enabled: false
