@@ -56,9 +56,9 @@ nodes:
     num_leds: 300
     color_order: RGB
     budget_ma: 450            # on the Mac's USB port; firmware MAX_MA matches
-    waypoints:                # far toe kick, ~1.2 m across; same direction as A
-      - [0, 4983, 1200]
-      - [299, 0, 1200]
+    waypoints:                # far toe kick, ~1.2 m across, LED 0 at the far wall;
+      - [0, 4500, 1200]       # the spare ~0.5 m (LEDs 270-299) is tucked away at the
+      - [299, -483, 1200]     # fridge end. If cut there: num_leds 270, end [269, 0, 1200]
 
 mqtt:
   enabled: false
