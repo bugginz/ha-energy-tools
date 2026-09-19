@@ -22,10 +22,10 @@ radar:
   sources:
     - name: radar-a           # RD-03D on the XIAO S3 Sense (xiao-s3-cam)
       ip: 192.168.1.119
-      pose: {theta_deg: -95.6, tx_mm: -155, ty_mm: -85, mirror_x: false, mount_height_mm: 1780}
+      pose: {theta_deg: -95.6, tx_mm: -425, ty_mm: -85, mirror_x: false, mount_height_mm: 1780}
     - name: radar-b           # RD-03D on the plain XIAO C6 (kick-radar)
       ip: 192.168.1.123
-      pose: {theta_deg: 90.1, tx_mm: 5310, ty_mm: 1415, mirror_x: true, mount_height_mm: 1780}
+      pose: {theta_deg: 90.1, tx_mm: 5040, ty_mm: 1415, mirror_x: true, mount_height_mm: 1780}
     - name: radar-b-sense     # second Sense board (xiao-s3-cam-2), if powered
       ip: 192.168.1.120
       pose: {theta_deg: 90, tx_mm: 5000, ty_mm: 1000}
