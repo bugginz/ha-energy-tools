@@ -1,0 +1,8 @@
+[Unit]
+Description=Fetch Aldi Mobile SIM usage into HA
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=robwil
+ExecStart=/usr/bin/python3 /opt/stack/aldi/aldi_usage.py

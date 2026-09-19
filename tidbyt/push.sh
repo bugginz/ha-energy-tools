@@ -75,7 +75,19 @@ def fc(kind):
     return list(json.load(urllib.request.urlopen(req, timeout=10))['service_response'].values())[0]['forecast']
 try:
     daily = fc('daily')
-    tmin = int(round(daily[0]['templow']))
+    # Coming-night low: min of hourly temps between now and the next 9am.
+    # daily[0].templow is the CALENDAR day's low - by evening that's this
+    # morning's already-past number (showed 13 when tonight was 9).
+    now = datetime.datetime.now().astimezone()
+    cutoff = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if now.hour >= 9:
+        cutoff += datetime.timedelta(days=1)
+    temps = []
+    for h in fc('hourly'):
+        d = datetime.datetime.fromisoformat(h['datetime'].replace('Z', '+00:00')).astimezone()
+        if now <= d <= cutoff:
+            temps.append(h['temperature'])
+    tmin = int(round(min(temps))) if temps else int(round(daily[1]['templow']))
     tmax = int(round(daily[1]['temperature']))
     ctmrw = daily[1].get('condition', '')
     cnight = daily[0].get('condition', '')

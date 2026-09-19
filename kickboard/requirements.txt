@@ -1,0 +1,7 @@
+numpy>=1.26
+PyYAML>=6.0
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12.0
+paho-mqtt>=1.6
+pyserial>=3.5

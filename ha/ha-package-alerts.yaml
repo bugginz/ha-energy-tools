@@ -1,0 +1,173 @@
+# Critical phone alerts — everything lands on notify.mobile_app_phoney.
+# Deployed at /opt/stack/ha/config/packages/alerts.yaml; this repo copy is the
+# source of truth. One automation per condition, each with a clear re-arm
+# story, so adding the next alert (eufy cameras, someday) is one more block.
+automation:
+  # ---- WAN -----------------------------------------------------------
+  # binary_sensor.internet_via_lte = X2000 eth1 (the fibre) reads Down.
+  # 2-min holdoff both ways so a router reboot doesn't fire both messages.
+  - id: alert_wan_on_lte
+    alias: "Alert: internet on LTE failover"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_via_lte
+        to: "on"
+        for: "00:02:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Internet on LTE"
+          message: >-
+            Fibre is down (X2000 eth1) — house is on cellular failover.
+            Metered and slower; the tronbyts show the amber LTE badge.
+
+  - id: alert_wan_restored
+    alias: "Alert: fibre restored"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_via_lte
+        from: "on"
+        to: "off"
+        for: "00:02:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "✅ Fibre restored"
+          message: >-
+            Wired WAN is back; traffic is off the SIM.
+
+  # ---- FoxESS --------------------------------------------------------
+  # foxctl publishes sensor.foxess_foxctl_last_poll (device_class timestamp)
+  # on every successful cycle since 1.77.3 — a true heartbeat that always
+  # changes, so "no response" and "value unchanged" are different things.
+  # (Keying off data sensors false-alarmed on 2026-09-11: HA only bumps
+  # last_updated when a value changes, and SoC was parked at 100%.)
+  - id: alert_foxess_stale
+    alias: "Alert: FoxESS telemetry stale"
+    mode: single
+    trigger:
+      - platform: template
+        value_template: >-
+          {% set hb = states('sensor.foxess_foxctl_last_poll') | as_datetime %}
+          {{ hb is not none and (now() - hb) > timedelta(minutes=15) }}
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ FoxESS telemetry stale"
+          message: >-
+            foxctl has not completed a poll since
+            {{ (states('sensor.foxess_foxctl_last_poll') | as_datetime)
+               .strftime('%H:%M') }} — modbus AND cloud silent, or the
+            energy-tools container is down.
+
+  # ---- Car 12V -------------------------------------------------------
+  # The WiCAN reports the Fiat's 12V battery: ~12.6V resting, 13.8-14.6V
+  # whenever the DC-DC runs (car on, or HV charging). Two alerts:
+  #
+  # Draining: any sustained reading under 11.9V is a battery heading flat
+  # (the WiCAN itself may sleep at low voltage, so this fires on the last
+  # report that arrives — treat it as urgent).
+  - id: alert_car_12v_low
+    alias: "Alert: car 12V battery low"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.wican_batt_voltage
+        below: 11.9
+        for: "00:10:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "🚨 Car 12V battery low"
+          message: >-
+            Fiat 12V at {{ states('sensor.wican_batt_voltage') }}V —
+            draining toward flat. Something is on, or the battery is dying.
+
+  # Left on: DC-DC voltage held for 45+ min while the car is HOME and the
+  # charger switch is OFF. Driving is excluded by the home condition;
+  # legitimate HV charging is excluded by the charger condition.
+  - id: alert_car_left_on
+    alias: "Alert: car left on"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.wican_batt_voltage
+        above: 13.2
+        for: "00:45:00"
+    condition:
+      - condition: state
+        entity_id: device_tracker.wican_wican_14c19fd8a711
+        state: "home"
+      - condition: state
+        entity_id: switch.ogemray25a_70af09ed9950
+        state: "off"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Car left on?"
+          message: >-
+            Fiat 12V has sat at {{ states('sensor.wican_batt_voltage') }}V
+            (DC-DC running) for 45+ min at home with the charger off —
+            the car looks like it was left switched on.
+
+  # ---- Failover SIM --------------------------------------------------
+  # sensor.aldi_sim_data_remaining is posted by /opt/stack/aldi/aldi_usage.py
+  # (systemd timer, 4x/day). The plan is yearly, so data only really moves
+  # during LTE failover — 5GB of headroom is the "top it up before the next
+  # outage" line. 6h holdoff: one nudge per check cycle, not a drumbeat.
+  - id: alert_sim_data_low
+    alias: "Alert: failover SIM data low"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.aldi_sim_data_remaining
+        below: 5
+        for: "06:00:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Failover SIM below 5GB"
+          message: >-
+            Aldi SIM has {{ states('sensor.aldi_sim_data_remaining') }}GB left
+            ({{ state_attr('sensor.aldi_sim_data_remaining', 'days_remaining') }}
+            days to expiry). Next fibre outage runs on this.
+
+  # ---- SMS to the failover SIM ---------------------------------------
+  # The X2000 receives SMS for 0494809319 (the Aldi account number) — which
+  # is where password-reset links and codes for that account arrive. Forward
+  # every new message to the phone: don't automate the reset, automate the
+  # RECEIPT. Trigger is the unread count increasing; get_sms returns full
+  # message content in its action response.
+  - id: alert_sim_sms
+    alias: "Alert: SMS on the failover SIM"
+    mode: queued
+    trigger:
+      - platform: state
+        entity_id: sensor.gl_inet_x2000_unread_messages
+    condition:
+      - condition: template
+        value_template: >-
+          {{ trigger.from_state is not none and trigger.to_state is not none
+             and (trigger.to_state.state | int(0))
+               > (trigger.from_state.state | int(0)) }}
+    action:
+      - service: glinet_router.get_sms
+        data: {}
+        response_variable: sms
+      - variables:
+          unread: >-
+            {{ (sms.messages | selectattr('status', 'eq', 'Unread')
+                | list) if sms is defined else [] }}
+      - service: notify.mobile_app_phoney
+        data:
+          title: "📨 SMS to failover SIM"
+          message: >-
+            {% if unread | count > 0 -%}
+            {% for m in unread[-3:] %}{{ m.phone_number }}: {{ m.text }}
+            {% endfor %}
+            {%- else -%}
+            New SMS arrived but the content fetch came back empty — check the
+            X2000 admin UI.
+            {%- endif %}

@@ -214,6 +214,15 @@ except Exception:
     d = {}
 print(1 if 'charger ON' in str(d.get('ev_divert') or '') else 0)" || echo 0)
 
+# WAN failover: binary_sensor.internet_via_lte (template.yaml) is the single
+# owner of the "which WAN is carrying us" logic — the fibre enters the GL.iNet
+# X2000 and fails over to cellular there, and the flag is on when no wired
+# uplink is Up while the modem holds an IPv4. Consuming the HA entity (rather
+# than recomputing here) keeps the badge, HA dashboards and any notification
+# automations reading the same truth. Missing entity -> 0: no false alarms.
+LTE_STATE=$(get binary_sensor.internet_via_lte 2>/dev/null || echo off)
+WANFAIL=$([ "$LTE_STATE" = "on" ] && echo 1 || echo 0)
+
 mkdir -p "$(dirname "$OUT")"
 TMP=$(mktemp "$OUT.XXXXXX")
 cat > "$TMP" << EOF
@@ -230,6 +239,7 @@ SRC=$SRC
 CAR=$CAR
 CARKW=$CARKW
 EVDIV=$EVDIV
+WANFAIL=$WANFAIL
 COAST=$COAST
 KWH=$KWH
 TNOW=$TNOW
