@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.4"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -133,6 +133,10 @@ DEFAULT_CONFIG = {
         # Export (feed-in) is OFF by default — feed-in is poor on these plans. Turn on per profile's
         # export window only if sell_enabled. Selling never drains below the coast floor.
         "sell_enabled": False,
+        # Hard clock cutoff for MANUAL sells (the grid-upload button): the feed-in tariff is
+        # 0c outside peak, so a sell never runs past this hour whatever duration was asked for,
+        # and one requested after it is refused. Local time, fractional hours allowed.
+        "sell_cutoff_hour": 23,
     },
     "control": {
         "allow_control": False,     # master switch for ANY write to the inverter
@@ -1250,12 +1254,33 @@ def save_ov(cfg):
         print(f"overrides persist failed: {e}", file=sys.stderr)
 
 
-def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None, floor_coast=False):
+def sell_cutoff_epoch(strat, now=None):
+    """Epoch of TODAY's hard sell cutoff (strategy.sell_cutoff_hour, local time)."""
+    hour = float(strat.get("sell_cutoff_hour", 23))
+    nowl = datetime.fromtimestamp(now if now is not None else time.time())
+    cut = nowl.replace(hour=int(hour) % 24, minute=int(round((hour % 1) * 60)),
+                       second=0, microsecond=0)
+    return cut.timestamp()
+
+
+def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None, floor_coast=False, now=None):
     load_ov(cfg)
+    now = time.time() if now is None else now
     if mode is None:
         _OV["manual"] = None
     else:
-        _OV["manual"] = {"mode": mode, "until": time.time() + hours * 3600,
+        until = now + hours * 3600
+        if mode == "sell":
+            # FIT is 0c after the cutoff: never sell past it, refuse to start after it.
+            cutoff = sell_cutoff_epoch(cfg["strategy"], now)
+            cut_txt = datetime.fromtimestamp(cutoff).strftime("%H:%M")
+            if now >= cutoff:
+                log_event("override", f"manual sell refused — past the {cut_txt} cutoff (FIT 0c)")
+                raise ValueError(f"sell refused: past the {cut_txt} cutoff, feed-in is 0c")
+            if until > cutoff:
+                log_event("override", f"manual sell {hours}h clamped to the {cut_txt} cutoff")
+                until = cutoff
+        _OV["manual"] = {"mode": mode, "until": until,
                          "power": power_kw, "min_soc": int(min_soc),
                          "cap": int(cap) if cap is not None else None,
                          "floor_coast": bool(floor_coast)}
@@ -3332,6 +3357,16 @@ def manual_tick(cfg, snap):
         _CHARGE["until"] = 0.0
         _OV["manual"] = None; save_ov(cfg)
         log_event("override", f"manual {mo['mode']} expired → revert to auto")
+        return None
+    # Backstop for the sell cutoff (covers an override persisted by an older version whose
+    # `until` was never clamped): once the clock passes it, stop regardless of `until`.
+    if mo["mode"] == "sell" and now >= sell_cutoff_epoch(cfg["strategy"], now):
+        try:
+            control_clear_own(cfg, fox)
+        except Exception as e:
+            print(f"sell cutoff revert failed: {e}", file=sys.stderr)
+        _OV["manual"] = None; save_ov(cfg)
+        log_event("override", "manual sell hit the FIT cutoff → stop")
         return None
     want = "ForceCharge" if mo["mode"] == "charge" else "ForceDischarge"
     inv_floor = int(cfg["strategy"].get("inverter_min_soc", 10))   # constant device floor — never computed
