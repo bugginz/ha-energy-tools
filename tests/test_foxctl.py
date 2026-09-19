@@ -1109,5 +1109,49 @@ class SellOverridePersistenceTest(unittest.TestCase):
         self.assertIn('value="0.65"', html)         # the saved override, not the 0.50 default
 
 
+class SellCutoffTest(unittest.TestCase):
+    """1.77.4: manual sells never run past strategy.sell_cutoff_hour (FIT is 0c after it)."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = {"state_dir": self.tmp, "strategy": {"sell_cutoff_hour": 23}}
+        foxctl._OV.update({"floor": None, "sell": None, "manual": None, "loaded": True})
+        self._log = foxctl.log_event
+        foxctl.log_event = lambda *a, **k: None
+
+    def tearDown(self):
+        foxctl.log_event = self._log
+        foxctl._OV.update({"floor": None, "sell": None, "manual": None, "loaded": False})
+
+    @staticmethod
+    def _at(hour, minute=0):
+        return datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0).timestamp()
+
+    def test_cutoff_epoch_is_today_at_the_hour(self):
+        cut = foxctl.sell_cutoff_epoch({"sell_cutoff_hour": 23}, now=self._at(20))
+        self.assertEqual(datetime.fromtimestamp(cut).strftime("%H:%M"), "23:00")
+        cut = foxctl.sell_cutoff_epoch({"sell_cutoff_hour": 22.5}, now=self._at(20))
+        self.assertEqual(datetime.fromtimestamp(cut).strftime("%H:%M"), "22:30")
+
+    def test_six_hour_sell_at_20_ends_at_23(self):
+        mo = foxctl.set_manual(self.cfg, "sell", 6, 5.0, 20, floor_coast=True, now=self._at(20))
+        self.assertEqual(mo["until"], self._at(23))
+
+    def test_short_sell_before_cutoff_is_untouched(self):
+        now = self._at(18)
+        mo = foxctl.set_manual(self.cfg, "sell", 1, 5.0, 20, now=now)
+        self.assertEqual(mo["until"], now + 3600)
+
+    def test_sell_after_cutoff_is_refused(self):
+        with self.assertRaises(ValueError):
+            foxctl.set_manual(self.cfg, "sell", 2, 5.0, 20, now=self._at(23, 30))
+        self.assertIsNone(foxctl._OV["manual"])
+
+    def test_force_charge_is_not_clamped(self):
+        now = self._at(20)
+        mo = foxctl.set_manual(self.cfg, "charge", 6, 10.5, 10, cap=90, now=now)
+        self.assertEqual(mo["until"], now + 6 * 3600)
+
+
 if __name__ == "__main__":
     unittest.main()

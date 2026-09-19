@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.77.4 — manual sells stop hard at 23:00 (FIT is 0c after it)
+
+The grid-upload button asks foxctl for a sell of up to 6 h, so one pressed
+at 20:00 kept force-discharging until 02:00 — for nothing, since the
+feed-in tariff outside peak is 0c. `strategy.sell_cutoff_hour` (default 23,
+local time) now caps every manual sell: its end is clamped to today's
+cutoff, a sell requested after the cutoff is refused with an error, and
+manual_tick stops a running sell at the cutoff regardless of its recorded
+end (covers overrides persisted by older versions). Force-charge and the
+automatic export window are unaffected.
+
+## 1.77.3 — publish a heartbeat: sensor "Last poll"
+
+A timestamp sensor (device_class timestamp) written on every successful
+publish cycle. Exists because staleness alerts keyed off data sensors false-
+alarm: HA only bumps last_updated when a VALUE changes, so a battery parked
+at 100% "went stale" on 2026-09-11 while telemetry flowed. The heartbeat
+always changes, so "no response" and "unchanged value" are finally different
+things. The HA alert now watches sensor.foxess_foxctl_last_poll alone.
+
 ## 1.77.2 — manual sell power follows the slider while active
 
 Re-pressing the grid-upload button with a new power while a sell was already

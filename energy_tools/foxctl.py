@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.2"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.77.4"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -133,6 +133,10 @@ DEFAULT_CONFIG = {
         # Export (feed-in) is OFF by default — feed-in is poor on these plans. Turn on per profile's
         # export window only if sell_enabled. Selling never drains below the coast floor.
         "sell_enabled": False,
+        # Hard clock cutoff for MANUAL sells (the grid-upload button): the feed-in tariff is
+        # 0c outside peak, so a sell never runs past this hour whatever duration was asked for,
+        # and one requested after it is refused. Local time, fractional hours allowed.
+        "sell_cutoff_hour": 23,
     },
     "control": {
         "allow_control": False,     # master switch for ANY write to the inverter
@@ -1250,12 +1254,33 @@ def save_ov(cfg):
         print(f"overrides persist failed: {e}", file=sys.stderr)
 
 
-def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None, floor_coast=False):
+def sell_cutoff_epoch(strat, now=None):
+    """Epoch of TODAY's hard sell cutoff (strategy.sell_cutoff_hour, local time)."""
+    hour = float(strat.get("sell_cutoff_hour", 23))
+    nowl = datetime.fromtimestamp(now if now is not None else time.time())
+    cut = nowl.replace(hour=int(hour) % 24, minute=int(round((hour % 1) * 60)),
+                       second=0, microsecond=0)
+    return cut.timestamp()
+
+
+def set_manual(cfg, mode, hours, power_kw, min_soc, cap=None, floor_coast=False, now=None):
     load_ov(cfg)
+    now = time.time() if now is None else now
     if mode is None:
         _OV["manual"] = None
     else:
-        _OV["manual"] = {"mode": mode, "until": time.time() + hours * 3600,
+        until = now + hours * 3600
+        if mode == "sell":
+            # FIT is 0c after the cutoff: never sell past it, refuse to start after it.
+            cutoff = sell_cutoff_epoch(cfg["strategy"], now)
+            cut_txt = datetime.fromtimestamp(cutoff).strftime("%H:%M")
+            if now >= cutoff:
+                log_event("override", f"manual sell refused — past the {cut_txt} cutoff (FIT 0c)")
+                raise ValueError(f"sell refused: past the {cut_txt} cutoff, feed-in is 0c")
+            if until > cutoff:
+                log_event("override", f"manual sell {hours}h clamped to the {cut_txt} cutoff")
+                until = cutoff
+        _OV["manual"] = {"mode": mode, "until": until,
                          "power": power_kw, "min_soc": int(min_soc),
                          "cap": int(cap) if cap is not None else None,
                          "floor_coast": bool(floor_coast)}
@@ -2336,6 +2361,11 @@ def read_log(n: int = 50) -> list:
 MQTT_DISCOVERY = "homeassistant"
 # (object_id, friendly, unit, device_class, state_class). state_class total_increasing → Energy dashboard.
 _MQTT_SENSORS = [
+    # The heartbeat: a timestamp that changes EVERY successful cycle. Alerts
+    # must key off this, not off a data sensor — HA only bumps last_updated
+    # when a value changes, so SoC parked at 100% looks "stale" while
+    # telemetry flows fine (false alarm, 2026-09-11).
+    ("foxctl_last_poll", "Last poll", "", "timestamp", ""),
     ("foxctl_soc", "Battery SoC", "%", "battery", "measurement"),
     ("foxctl_pv_power", "Solar power", "kW", "power", "measurement"),
     ("foxctl_load_power", "House load", "kW", "power", "measurement"),
@@ -2398,8 +2428,10 @@ def mqtt_publish(cfg, snap):
                 conf = {"name": name, "unique_id": oid, "object_id": oid,
                         "state_topic": "foxctl/telemetry",
                         "value_template": "{{ value_json.%s }}" % oid[len("foxctl_"):],
-                        "unit_of_measurement": unit, "availability_topic": "foxctl/availability",
+                        "availability_topic": "foxctl/availability",
                         "device": dev}
+                if unit:
+                    conf["unit_of_measurement"] = unit   # timestamps have none
                 if dclass:
                     conf["device_class"] = dclass
                 if sclass:
@@ -2411,7 +2443,8 @@ def mqtt_publish(cfg, snap):
         dyn = snap.get("dynamic") or {}
         et = snap.get("energy_totals") or {}
         ps = snap.get("pv_strings") or {}
-        tele = {"soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
+        tele = {"last_poll": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "soc": round(snap.get("soc", 0)), "pv_power": snap.get("pv_kw"),
                 "load_power": snap.get("load_kw"), "grid_power": snap.get("grid_power"),
                 "feedin_power": snap.get("feedin_power"), "battery_power": snap.get("battery_power"),
                 "battery_charge_power": snap.get("bat_charge_power"),
@@ -3324,6 +3357,16 @@ def manual_tick(cfg, snap):
         _CHARGE["until"] = 0.0
         _OV["manual"] = None; save_ov(cfg)
         log_event("override", f"manual {mo['mode']} expired → revert to auto")
+        return None
+    # Backstop for the sell cutoff (covers an override persisted by an older version whose
+    # `until` was never clamped): once the clock passes it, stop regardless of `until`.
+    if mo["mode"] == "sell" and now >= sell_cutoff_epoch(cfg["strategy"], now):
+        try:
+            control_clear_own(cfg, fox)
+        except Exception as e:
+            print(f"sell cutoff revert failed: {e}", file=sys.stderr)
+        _OV["manual"] = None; save_ov(cfg)
+        log_event("override", "manual sell hit the FIT cutoff → stop")
         return None
     want = "ForceCharge" if mo["mode"] == "charge" else "ForceDischarge"
     inv_floor = int(cfg["strategy"].get("inverter_min_soc", 10))   # constant device floor — never computed
