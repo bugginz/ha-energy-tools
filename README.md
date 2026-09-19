@@ -27,6 +27,9 @@ with a FoxESS inverter + battery:
 
 - HA OS / Supervised (it's an add-on).
 - **Mosquitto broker** add-on + MQTT integration (for nemfuel's sensors).
+  On this home's actual setup (Container HA, dockerised mosquitto) see
+  [docs/mqtt.md](docs/mqtt.md) for the broker details and the standard
+  device-onboarding recipe — read that before wiring any new MQTT device.
 - The **FoxESS-HA** integration (`macxq/foxess-ha`) providing `sensor.foxess_*`.
 - The **Amber Electric** integration (price/forecast/demand-window) and, optionally,
   the **AEMO NEM Pricing** HACS integration (wholesale forecast).
