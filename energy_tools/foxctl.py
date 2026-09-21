@@ -1654,10 +1654,19 @@ def smart_fill_tick(cfg, fox, snap):
     if not sch.get("read_ok"):
         return None
     groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
-    keep = [g for g in groups
-            if not (g.get("workMode") == "ForceCharge" and g.get("startHour") == int(fs)
-                    and (g.get("startMinute") or 0) == 0 and g.get("endHour") == int(fe)
-                    and (g.get("endMinute") or 0) == 0)]
+    sm = int(strat.get("base_fill_start_margin_min", 5))
+    em = int(strat.get("base_fill_end_margin_min", 5))
+    bs = divmod(int(fs) * 60 + sm, 60)
+    be = divmod(int(fe) * 60 - em, 60)
+    def _is_base(g):
+        if g.get("workMode") != "ForceCharge":
+            return False
+        st = (g.get("startHour") or 0, g.get("startMinute") or 0)
+        en = (g.get("endHour") or 0, g.get("endMinute") or 0)
+        # current margins, or the legacy on-the-hour group (pre-2026-09-22)
+        return (st, en) in (((bs[0], bs[1]), (be[0], be[1])),
+                            ((int(fs), 0), (int(fe), 0)))
+    keep = [g for g in groups if not _is_base(g)]
     if len(keep) == len(groups):
         return None                                     # base group not present
     try:
@@ -1668,7 +1677,7 @@ def smart_fill_tick(cfg, fox, snap):
     except Exception as e:
         print(f"smart_fill remove failed: {e}", file=sys.stderr)
         return None
-    m = (f"smart-fill: battery full — {int(fs):02d}:00\u2013{int(fe):02d}:00 base group parked; "
+    m = (f"smart-fill: battery full — {bs[0]:02d}:{bs[1]:02d}\u2013{be[0]:02d}:{be[1]:02d} base group parked; "
          f"SelfUse (real PV/export) until SoC < {strat.get('smart_fill_rearm_soc', 98):g}%")
     log_event("smart_fill", m)
     return m
@@ -3559,7 +3568,14 @@ def ensure_base_schedule(cfg, fox, snap):
         if g.get("workMode") == "ForceCharge" and gs < fe and ge > fs:
             return None     # base group present, or another FC group already intersects the
                             # window (e.g. foxctl's own rolling fill) — don't risk an overlap
-    base = _sched_group((int(fs), 0), (int(fe), 0), "ForceCharge",
+    # Start late / end early (default 5 min each side): the mode transition at each
+    # boundary briefly puts house load on the grid (measured 1-2kW for minutes at the
+    # 14:00 exit, battery full) - keep both transitions INSIDE the free window.
+    sm = int(strat.get("base_fill_start_margin_min", 5))
+    em = int(strat.get("base_fill_end_margin_min", 5))
+    bs = divmod(int(fs) * 60 + sm, 60)
+    be = divmod(int(fe) * 60 - em, 60)
+    base = _sched_group(bs, be, "ForceCharge",
                         int(strat.get("inverter_min_soc", 10)),
                         min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 100))),
                         float(strat.get("force_charge_power_kw", 10.5)))
@@ -3574,7 +3590,7 @@ def ensure_base_schedule(cfg, fox, snap):
         ug.append(base)
     _SCHED["user_groups"] = ug
     _sched_save(cfg)
-    m = (f"base fill group was MISSING — restored {int(fs):02d}:00–{int(fe):02d}:00 ForceCharge "
+    m = (f"base fill group was MISSING — restored {bs[0]:02d}:{bs[1]:02d}–{be[0]:02d}:{be[1]:02d} ForceCharge "
          f"(user-authorized 2026-07-13)")
     log_event("base_schedule", m)
     return m
