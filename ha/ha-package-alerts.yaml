@@ -197,35 +197,58 @@ automation:
             10 minutes. One of them is lying — grid-derived displays and
             solar derivation are suspect until resolved.
 
-  # em16p outage: when the integration loses the device its entities go
-  # 'unavailable' (seen 2026-09-21 ~22:00 local, ~5h outage). Keyed on
-  # availability, NOT last_updated — a constant 0.0 W reading is healthy
-  # and would false-alarm a staleness check.
-  - id: alert_em16p_offline
-    alias: "Alert: em16p energy monitor offline"
+  # em16p "wedged" = ALL clamps dark. This integration only bumps
+  # last_updated when a value CHANGES, so a single constant channel looks
+  # stale while the device is fine. The real signal is that NOTHING across
+  # all 18 power channels OR the signal-strength heartbeat has moved for
+  # 30 min - impossible for a live 18-circuit house even overnight (fridge,
+  # standby, RSSI drift). Covers both a true unavailable outage and a frozen
+  # device, without the single-channel false alarms of the old version.
+  # (The 2026-09-21 "outage" was actually a healthy 0 W hold - not a fault.)
+  - id: alert_em16p_wedged
+    alias: "Alert: em16p energy monitor wedged"
     mode: single
     trigger:
-      - platform: state
-        entity_id: sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1
-        to: "unavailable"
-        for: "00:05:00"
+      - platform: template
+        value_template: >-
+          {% set ns = namespace(fresh=false) %}
+          {% for e in states.sensor
+             if e.entity_id.startswith('sensor.em16p_26041762237810740701c4e7ae2e4c89_power_')
+             or e.entity_id == 'sensor.em16p_26041762237810740701c4e7ae2e4c89_signal_strength' %}
+            {% if (now() - e.last_updated).total_seconds() < 1800 %}
+              {% set ns.fresh = true %}
+            {% endif %}
+          {% endfor %}
+          {{ not ns.fresh }}
     action:
       - service: notify.mobile_app_phoney
         data:
-          title: "⚠️ em16p offline"
+          title: "⚠️ em16p wedged"
           message: >-
-            The 16-channel CT monitor has been unavailable for 5 minutes.
-            grid_main_power_local is running on the inverter-modbus fallback;
-            per-circuit data is dark. It needed a power-cycle last time.
+            No em16p channel has changed in 30 minutes - the CT monitor is
+            frozen or offline. grid_main_power_local is on the inverter-modbus
+            fallback; per-circuit data is dark. It needed a power-cycle before.
 
-  - id: alert_em16p_restored
-    alias: "Alert: em16p restored"
+  - id: alert_em16p_recovered
+    alias: "Alert: em16p recovered"
     mode: single
     trigger:
-      - platform: state
-        entity_id: sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1
-        from: "unavailable"
+      - platform: template
+        value_template: >-
+          {% set ns = namespace(fresh=false) %}
+          {% for e in states.sensor
+             if e.entity_id.startswith('sensor.em16p_26041762237810740701c4e7ae2e4c89_power_')
+             or e.entity_id == 'sensor.em16p_26041762237810740701c4e7ae2e4c89_signal_strength' %}
+            {% if (now() - e.last_updated).total_seconds() < 1800 %}
+              {% set ns.fresh = true %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.fresh }}
         for: "00:02:00"
+    condition:
+      - condition: template
+        value_template: >-
+          {{ state_attr('automation.alert_em16p_wedged', 'last_triggered') is not none }}
     action:
       - service: notify.mobile_app_phoney
         data:
