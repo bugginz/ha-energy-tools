@@ -101,6 +101,22 @@ Caveats that have bitten:
 - If the log shows `Connecting to MQTT...` looping: it's auth (check the
   broker log per step 3), or the device can't resolve `.local` — use the IP.
 
+## The energy/snapshot topic (retained)
+
+`tidbyt/snapshot.sh` on the Pi publishes the reconciled energy figures — the
+exact set the tronbyt/tidbyt displays render — to **`energy/snapshot`**,
+retained, once a minute: `soc`, `load_kw`, `grid_kw`, `batt_kw`, `solar_kw`,
+`src`, `ts`. Signed display conventions: `grid_kw` +import/−export,
+`batt_kw` +charging/−discharging. Any display on any machine that reads this
+topic shows the same numbers from the same instant as the wall displays.
+First consumer: the e-paper dashboard's `ha_soc_fetcher.py` (its old source,
+`foxctl/telemetry`, splits import/export into separate unsigned fields, so
+the e-paper never showed EXPORT).
+
+Setup: mint broker user `snapshot` (step 1) and write its password to
+`/opt/stack/tidbyt/snapshot_mqtt_pw` (mode 600). No file → snapshot.sh
+skips the publish and the local displays are unaffected.
+
 ## Existing broker users (as of 2026-09-19)
 
 `robwil`, `ac_main` (living room AC), `ac_br1` (main bedroom AC), `iz_ac`

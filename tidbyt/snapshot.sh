@@ -249,3 +249,31 @@ GRIDOUT=$GRIDOUT
 LOAD_CLOUD=$LOAD_CLOUD
 EOF
 mv -f "$TMP" "$OUT"          # atomic: a reader never sees a half-written file
+
+# Publish the same figures to MQTT (retained) so displays on OTHER machines
+# render from the identical reconciled set. First consumer: the e-paper
+# dashboard (Pi Zero), whose fetcher used to read foxctl/telemetry — that blob
+# carries import (grid_power) and export (feedin_power) as separate unsigned
+# fields, so the display's signed-grid convention never saw an export. This
+# topic carries the display conventions directly:
+#   grid_kw  +import / -export      batt_kw  +charging / -discharging
+# Broker: the mosquitto container (docs/mqtt.md), user `snapshot` minted per
+# the runbook, password in $MQTT_PW_FILE (mode 600, next to tronbyt_key).
+# Best-effort by design: no password file or a dead broker only costs remote
+# parity — the local displays still read the env file above.
+MQTT_PW_FILE=/opt/stack/tidbyt/snapshot_mqtt_pw
+if [ -f "$MQTT_PW_FILE" ]; then
+  PAYLOAD=$(python3 -c "
+import json
+def num(v):
+    try:
+        return float(v)
+    except ValueError:
+        return None
+print(json.dumps({'ts': $(date +%s), 'soc': num('$SOC'), 'load_kw': num('$LOAD'),
+                  'grid_kw': num('$GRID'), 'batt_kw': num('$NET'),
+                  'solar_kw': num('$SOLAR'), 'src': '$SRC'}))")
+  docker exec mosquitto mosquitto_pub -u snapshot -P "$(cat "$MQTT_PW_FILE")" \
+    -t energy/snapshot -r -m "$PAYLOAD" \
+    || echo "mqtt publish failed — remote displays go stale, local ones fine" >&2
+fi
