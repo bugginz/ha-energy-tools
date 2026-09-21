@@ -171,3 +171,64 @@ automation:
             New SMS arrived but the content fetch came back empty — check the
             X2000 admin UI.
             {%- endif %}
+
+  # ---- Grid CT cross-check -------------------------------------------
+  # Two independent grid CTs: the Meross em16p clamp (ch1, feeds
+  # grid_main_power_local) and the inverter's own CT over modbus
+  # (sensor.grid_ct). sensor.grid_ct_delta is their difference in W.
+  # They disagreed by ~2kW for an hour on 2026-09-21 with no one noticing —
+  # this makes the next disagreement announce itself. Re-arms when the
+  # delta drops back under the threshold.
+  - id: alert_grid_ct_disagree
+    alias: "Alert: grid CTs disagree"
+    mode: single
+    trigger:
+      - platform: template
+        value_template: >-
+          {{ states('sensor.grid_ct_delta') | float(0) | abs > 200 }}
+        for: "00:10:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Grid CTs disagree"
+          message: >-
+            em16p clamp and inverter modbus CT have differed by
+            {{ states('sensor.grid_ct_delta') | float(0) | round(0) }} W for
+            10 minutes. One of them is lying — grid-derived displays and
+            solar derivation are suspect until resolved.
+
+  # em16p outage: when the integration loses the device its entities go
+  # 'unavailable' (seen 2026-09-21 ~22:00 local, ~5h outage). Keyed on
+  # availability, NOT last_updated — a constant 0.0 W reading is healthy
+  # and would false-alarm a staleness check.
+  - id: alert_em16p_offline
+    alias: "Alert: em16p energy monitor offline"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1
+        to: "unavailable"
+        for: "00:05:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ em16p offline"
+          message: >-
+            The 16-channel CT monitor has been unavailable for 5 minutes.
+            grid_main_power_local is running on the inverter-modbus fallback;
+            per-circuit data is dark. It needed a power-cycle last time.
+
+  - id: alert_em16p_restored
+    alias: "Alert: em16p restored"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: sensor.em16p_26041762237810740701c4e7ae2e4c89_power_1
+        from: "unavailable"
+        for: "00:02:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "✅ em16p back"
+          message: >-
+            CT monitor is reporting again; per-circuit data restored.
