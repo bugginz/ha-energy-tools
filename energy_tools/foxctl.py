@@ -2887,6 +2887,11 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
     # heating saps the battery). Applies to BOTH the free-window fill and the pre-peak shoulder top-up, so
     # the free 0c window fills to target first — never pay shoulder for capacity the free window could give.
     charge_target = min(100, int(strat.get("charge_target_soc") or max_soc))
+    # Pre-peak shoulder top-up aims LOWER than the free-window fill: there's no
+    # arbitrage (morning grid is as cheap as pre-peak shoulder) and the battery
+    # rides peak comfortably from here, so buying the top 20% in shoulder just
+    # burns money + parks the battery off-discharge (house on grid). USER 2026-09-23.
+    topup_target = min(charge_target, int(strat.get("shoulder_topup_target_soc", 80)))
     cap_kwh = float(strat.get("battery_capacity_kwh", 41.44))
     topup_on = bool(strat.get("shoulder_topup", True))
     # export to grid (feed-in) — off by default; needs both the master toggle AND a profile export window
@@ -2899,6 +2904,7 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
     in_prepeak = fe <= h < ps               # shoulder after free ends, before peak starts (cheapest pre-peak import)
     action, target_mode, fc, fd = "SET_MODE", (work_mode or "SelfUse"), False, False
     fc_win = None
+    fc_target = charge_target        # force-charge cap; pre-peak top-up lowers it
     reasons = []
     # Force-charge from grid in the FREE window (0c), or — if free + solar won't fill by peak — in the
     # cheaper pre-peak shoulder. Never before 11:00 and never in the peak itself.
@@ -2913,17 +2919,18 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
         action, fd = "SELL", True
         reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
                        f"(keeps enough to coast to 11:00).")
-    elif (topup_on and in_prepeak and soc < charge_target
+    elif (topup_on and in_prepeak and soc < topup_target
           and isinstance(shoulder_c, (int, float)) and isinstance(peak_c, (int, float)) and shoulder_c < peak_c
-          and (solar_remaining or 0.0) < max(0.0, (charge_target - soc) / 100.0 * cap_kwh)):
-        # Free window ended below target and remaining solar won't finish the fill → top up now, in the
-        # pre-peak shoulder (cheapest import left before peak), so we ride peak off battery not grid.
+          and (solar_remaining or 0.0) < max(0.0, (topup_target - soc) / 100.0 * cap_kwh)):
+        # Only if the battery is below the pre-peak floor AND solar won't lift it there. Caps at
+        # topup_target (not 100%) — enough to ride peak; the rest refills free tomorrow morning.
         action, fc = "FORCE_CHARGE", True
+        fc_target = topup_target
         fc_win = f"{fe:02d}:00–{ps:02d}:00 shoulder top-up"
-        gap = max(0.0, (charge_target - soc) / 100.0 * cap_kwh)
-        reasons.append(f"ZeroHero pre-peak shoulder {fe:02d}:00–{ps:02d}:00 ({sh_txt}) — battery {soc:.0f}% < {charge_target}% "
-                       f"and solar won't fill ({(solar_remaining or 0.0):.1f}kWh left, need {gap:.1f}kWh) → top up now "
-                       f"before peak ({pc_txt}).")
+        gap = max(0.0, (topup_target - soc) / 100.0 * cap_kwh)
+        reasons.append(f"ZeroHero pre-peak shoulder {fe:02d}:00–{ps:02d}:00 ({sh_txt}) — battery {soc:.0f}% < {topup_target}% floor "
+                       f"and solar won't fill ({(solar_remaining or 0.0):.1f}kWh left, need {gap:.1f}kWh) → top up to {topup_target}% "
+                       f"before peak ({pc_txt}); rest refills free tomorrow.")
     elif in_peak:
         reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 ({pc_txt}) → cover load from battery, ZERO grid "
                        f"import (no force-charge, no feed-in). SelfUse.")
@@ -2936,7 +2943,7 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
            "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
            "reason": " ".join(reasons)}
     if fc:
-        rec["force_charge_plan"] = {"window": fc_win or f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": charge_target,
+        rec["force_charge_plan"] = {"window": fc_win or f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": fc_target,
                                     "min_soc_on_grid": strat.get("min_soc_on_grid", 10),
                                     "power_kw": strat.get("force_charge_power_kw", 10.5)}
     return rec
@@ -3621,7 +3628,8 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
     strat = cfg["strategy"]
     # Charge cap for force-charge windows: the tariff profile's max SoC (free-window fill target).
-    eff_target = (snap.get("dynamic") or {}).get("target_soc") or strat.get("max_soc", 90)
+    _fcp = (snap.get("recommendation") or {}).get("force_charge_plan") or {}
+    eff_target = _fcp.get("max_soc") or (snap.get("dynamic") or {}).get("target_soc") or strat.get("max_soc", 90)
     sch = snap.get("scheduler") or {}
     if ctrl.get("set_force_charge"):
         try:
