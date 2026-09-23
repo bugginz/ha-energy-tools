@@ -28,6 +28,8 @@ options:
   charge_target_soc: 100
   shoulder_topup: true
   shoulder_topup_target_soc: 80   # pre-peak shoulder top-up aims here, not 100% (free window fills to 100)
+  base_fill_start_margin_min: 1   # free-window fill starts 10:01 (keep boundary transition inside free time)
+  base_fill_end_margin_min: 1     # ...and ends 13:59
   inverter_min_soc: 10
   topup_to_target: true
   battery_capacity_kwh: 41.44
@@ -111,6 +113,8 @@ schema:
   charge_target_soc: int(0,100)
   shoulder_topup: bool
   shoulder_topup_target_soc: int
+  base_fill_start_margin_min: int
+  base_fill_end_margin_min: int
   inverter_min_soc: int(0,100)
   topup_to_target: bool
   battery_capacity_kwh: float

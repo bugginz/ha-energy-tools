@@ -1654,18 +1654,19 @@ def smart_fill_tick(cfg, fox, snap):
     if not sch.get("read_ok"):
         return None
     groups = [g for g in (sch.get("groups") or []) if not _is_filler(g)]
-    sm = int(strat.get("base_fill_start_margin_min", 5))
-    em = int(strat.get("base_fill_end_margin_min", 5))
+    sm = int(strat.get("base_fill_start_margin_min", 1))
+    em = int(strat.get("base_fill_end_margin_min", 1))
     bs = divmod(int(fs) * 60 + sm, 60)
     be = divmod(int(fe) * 60 - em, 60)
     def _is_base(g):
+        # Margin-tolerant: any ForceCharge group anchored within the first/last
+        # 10 min of the free window is the base fill group - matches whatever
+        # margins were planted (0/1/5 min) so a margin change never orphans it.
         if g.get("workMode") != "ForceCharge":
             return False
-        st = (g.get("startHour") or 0, g.get("startMinute") or 0)
-        en = (g.get("endHour") or 0, g.get("endMinute") or 0)
-        # current margins, or the legacy on-the-hour group (pre-2026-09-22)
-        return (st, en) in (((bs[0], bs[1]), (be[0], be[1])),
-                            ((int(fs), 0), (int(fe), 0)))
+        gs = (g.get("startHour") or 0) + (g.get("startMinute") or 0) / 60.0
+        ge = (g.get("endHour") or 0) + (g.get("endMinute") or 0) / 60.0
+        return int(fs) <= gs <= int(fs) + 0.17 and int(fe) - 0.17 <= ge <= int(fe)
     keep = [g for g in groups if not _is_base(g)]
     if len(keep) == len(groups):
         return None                                     # base group not present
@@ -3578,8 +3579,8 @@ def ensure_base_schedule(cfg, fox, snap):
     # Start late / end early (default 5 min each side): the mode transition at each
     # boundary briefly puts house load on the grid (measured 1-2kW for minutes at the
     # 14:00 exit, battery full) - keep both transitions INSIDE the free window.
-    sm = int(strat.get("base_fill_start_margin_min", 5))
-    em = int(strat.get("base_fill_end_margin_min", 5))
+    sm = int(strat.get("base_fill_start_margin_min", 1))
+    em = int(strat.get("base_fill_end_margin_min", 1))
     bs = divmod(int(fs) * 60 + sm, 60)
     be = divmod(int(fe) * 60 - em, 60)
     base = _sched_group(bs, be, "ForceCharge",
