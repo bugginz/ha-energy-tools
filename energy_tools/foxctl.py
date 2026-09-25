@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.77.3"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.78.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -154,6 +154,10 @@ DEFAULT_CONFIG = {
                   # house + car must fit under the grid connection's max import (~60A observed 14.5kW).
                   "supply_cap_kw": 14.5,
                   "min_export_kw": 1.0, "min_dwell_min": 10,
+                  # Tariff-aware threshold: while the feed-in rate is 0c (outside four4free's
+                  # 16:00-23:00 paid window) export is pure waste, so this lower bar applies
+                  # instead of min_export_kw. (Supersedes the never-wired feedin_max intent.)
+                  "min_export_free_kw": 0.3,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
                   # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
@@ -1990,9 +1994,18 @@ def ev_divert_decision(snap, ev):
     if (rec.get("force_charge") or active.get("mode") == "ForceCharge") and isinstance(soc, (int, float)) \
             and isinstance(target, (int, float)) and soc < target - 5:
         return False, f"battery force-charging to {target}% (now {soc:.0f}%) — car held off"
-    # 2) Spare solar
-    if feedin_power < ev.get("min_export_kw", 1.0):
-        return False, "no spare solar export"
+    # 2) Spare solar. The threshold is tariff-aware (2026-09-25): while the feed-in
+    #    rate is 0c (four4free pays only inside the 16:00-23:00 peak) ANY export is
+    #    pure waste, so a token threshold hoovers it into the car; while export
+    #    actually pays, the full min_export_kw applies so the car doesn't nibble
+    #    away paid export for the sake of a few hundred watts.
+    now = datetime.now()
+    rate_c = export_rate_c(dyn.get("tariff") or {}, now.hour + now.minute / 60.0)
+    min_kw = float(ev.get("min_export_kw", 1.0))
+    if rate_c <= 0.0:
+        min_kw = min(min_kw, float(ev.get("min_export_free_kw", 0.3)))
+    if feedin_power < min_kw:
+        return False, f"no spare solar export (<{min_kw:g}kW at {rate_c:g}c feed-in)"
     # Battery priority: give the spare solar to the battery until it reaches the survival floor before
     # diverting to the car.
     gate = ev.get("min_soc", 0) or 0
@@ -2001,7 +2014,7 @@ def ev_divert_decision(snap, ev):
         gate = max(gate, surv - 2)
     if isinstance(soc, (int, float)) and soc < gate:
         return False, f"battery {soc:.0f}% < target {gate:.0f}% (solar to battery first)"
-    return True, f"spare solar {feedin_power:.1f}kW ≥ {ev.get('min_export_kw', 1.0):.1f}kW → car"
+    return True, f"spare solar {feedin_power:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
 
 
 def ev_divert_tick(cfg, snap):
@@ -2042,8 +2055,15 @@ def ev_divert_tick(cfg, snap):
         cb = snap.get("car_budget") or {}
         budget = cb.get("kwh")
         if want and "spare solar" in why and cb.get("outlook_gate", True) and isinstance(budget, (int, float)):
+            # Full-coverage bypass (2026-09-25): when export alone covers the car's whole
+            # draw, diverting it cannot touch the battery, so tonight's budget is
+            # irrelevant — before this, a 100% battery on a cold-night forecast sat
+            # exporting at 0c while the car stayed empty.
+            fp = snap.get("feedin_power") or 0.0
             margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
-            if budget < 0:
+            if fp >= _car_draw_est(snap) + 0.2:
+                why += f" · export {fp:.1f}kW covers car draw"
+            elif budget < 0:
                 want, why = False, f"outlook: battery+solar short {abs(budget):.1f}kWh for tonight (heating) — car held to protect reserve"
             elif budget < margin and not _EV.get("on"):
                 want, why = False, f"outlook: only +{budget:.1f}kWh surplus (need >{margin:.0f}kWh to start car)"
@@ -3246,7 +3266,10 @@ def gather_and_decide(cfg: dict) -> dict:
         "dynamic": {"source": profile_key or "tariff", "mode": "tariff",
                     "tariff_label": profile.get("label"),
                     "tariff": {"free": profile.get("free"), "peak": profile.get("peak"),
-                               "shoulder_c": profile.get("shoulder_c"), "export": profile.get("export")},
+                               "shoulder_c": profile.get("shoulder_c"), "export": profile.get("export"),
+                               # feed-in rates so ev_divert can price export (export_rate_c)
+                               "fit_peak_c": profile.get("fit_peak_c"),
+                               "fit_else_c": profile.get("fit_else_c")},
                     "target_soc": min(100, int(strat.get("charge_target_soc") or strat.get("max_soc", 90))),
                     "max_soc": strat.get("max_soc", 90),
                     "survival_soc": survival_soc,

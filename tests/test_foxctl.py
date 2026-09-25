@@ -19,6 +19,7 @@ import tempfile
 import unittest
 import urllib.error
 from datetime import datetime
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "energy_tools"))
@@ -586,64 +587,135 @@ class RenderSmokeTest(unittest.TestCase):
         self.assertIn("EXPORTING @ $0.67", foxctl.render(exporting, cfg))
 
 
-class EvDivertTest(unittest.TestCase):
-    """Solar-diversion policy: divert to the car when export is cheap/grid is cheap, but yield to the
-    house battery while it's charging toward the planner target before a sell."""
+def _frozen_clock(hour, minute=0):
+    """Freeze foxctl's datetime.now() so tariff-window tests don't depend on wall time."""
+    real = foxctl.datetime
 
-    EV = {"feedin_max": 0.10, "allow_grid": True, "min_export_kw": 1.0,
+    class FrozenDT(real):
+        @classmethod
+        def now(cls, tz=None):
+            return real(2026, 9, 25, hour, minute, tzinfo=tz)
+    return mock.patch.object(foxctl, "datetime", FrozenDT)
+
+
+# four4free: free 10-14, peak 16-23; feed-in pays 8c ONLY in peak, 0c elsewhere.
+FOUR4FREE = {"free": {"start": 10, "end": 14, "free_kwh": 50, "excess_c": 26.4},
+             "peak": {"start": 16, "end": 23, "c": 59.95},
+             "shoulder_c": 37.51, "fit_peak_c": 8.0, "fit_else_c": 0.0}
+
+
+class EvDivertTest(unittest.TestCase):
+    """Solar-diversion policy (tariff-window model): worthless (0c) export goes to the car at
+    a token threshold, paid export keeps the conservative one, and the safety holds still win."""
+
+    EV = {"allow_grid": True, "min_export_kw": 1.0, "min_export_free_kw": 0.3,
           "min_soc": 0, "battery_priority": True, "min_dwell_min": 10}
 
     def _snap(self, **kw):
-        s = {"feedin": 0.30, "feedin_power": 0.0, "price": 0.25, "soc": 98,
-             "dynamic": {"charge_start_price": 0.12}, "plan": {"target_now": 95}}
+        s = {"feedin_power": 0.0, "soc": 98,
+             "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 40}}
         s.update(kw)
         return s
 
-    def test_diverts_on_cheap_export_surplus(self):
-        want, _ = foxctl.ev_divert_decision(self._snap(feedin=0.05, feedin_power=3.0), self.EV)
+    def test_zero_rate_export_diverts_at_token_threshold(self):
+        # 15:00 — outside free and peak, feed-in 0c: 0.5kW export is pure waste → car
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=0.5), self.EV)
         self.assertTrue(want)
+        self.assertIn("spare solar", why)
 
-    def test_diverts_on_cheap_grid(self):
-        want, _ = foxctl.ev_divert_decision(self._snap(price=0.10), self.EV)   # buy ≤ charge_start
+    def test_zero_rate_export_below_token_threshold_holds(self):
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=0.2), self.EV)
+        self.assertFalse(want)
+        self.assertIn("0c", why)
+
+    def test_paid_export_keeps_conservative_threshold(self):
+        # 17:00 — peak, feed-in 8c: 0.5kW stays sold; 1.5kW clears min_export_kw → car
+        with _frozen_clock(17):
+            want, _ = foxctl.ev_divert_decision(self._snap(feedin_power=0.5), self.EV)
+        self.assertFalse(want)
+        with _frozen_clock(17):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=1.5), self.EV)
         self.assertTrue(want)
+        self.assertIn("8c", why)
 
-    def test_battery_priority_blocks_solar_surplus_below_target(self):
-        # SOLAR surplus + planner wants 100% and SoC is 80% → battery gets the spare solar first, car off
-        want, why = foxctl.ev_divert_decision(
-            self._snap(feedin=0.05, feedin_power=3.0, price=0.25, soc=80, plan={"target_now": 100}), self.EV)
+    def test_battery_priority_blocks_below_survival(self):
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=3.0, soc=30), self.EV)
         self.assertFalse(want)
         self.assertIn("solar to battery first", why)
 
-    def test_cheap_grid_charges_alongside_battery(self):
-        # CHEAP GRID (buy ≤ charge_start) does NOT yield — car charges while the battery tops off too
-        want, why = foxctl.ev_divert_decision(
-            self._snap(price=0.10, soc=80, plan={"target_now": 100}), self.EV)
-        self.assertTrue(want)
-        self.assertIn("car + battery", why)
-
     def test_held_off_while_selling(self):
-        s = self._snap(price=0.10, recommendation={"force_discharge": True})   # cheap grid, but we're selling
-        want, why = foxctl.ev_divert_decision(s, self.EV)
+        s = self._snap(feedin_power=3.0, recommendation={"force_discharge": True})
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(s, self.EV)
         self.assertFalse(want)
         self.assertIn("selling", why)
 
     def test_held_off_while_force_charging_below_target(self):
-        s = self._snap(price=0.10, soc=80, recommendation={"force_charge": True},
-                       dynamic={"charge_start_price": 0.12, "target_soc": 100})
-        want, why = foxctl.ev_divert_decision(s, self.EV)
+        s = self._snap(feedin_power=3.0, soc=80, recommendation={"force_charge": True})
+        s["dynamic"]["target_soc"] = 100
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(s, self.EV)
         self.assertFalse(want)
         self.assertIn("force-charging", why)
 
     def test_charges_when_force_charge_near_target(self):
         # 98% with target 100 → within 5% of target, battery top-off nearly done → car may charge too
-        s = self._snap(price=0.10, soc=98, recommendation={"force_charge": True},
-                       dynamic={"charge_start_price": 0.12, "target_soc": 100})
-        self.assertTrue(foxctl.ev_divert_decision(s, self.EV)[0])
+        s = self._snap(feedin_power=3.0, soc=98, recommendation={"force_charge": True})
+        s["dynamic"]["target_soc"] = 100
+        with _frozen_clock(15):
+            self.assertTrue(foxctl.ev_divert_decision(s, self.EV)[0])
 
-    def test_no_divert_when_nothing_cheap(self):
-        want, why = foxctl.ev_divert_decision(self._snap(), self.EV)   # dear export, dear grid
-        self.assertFalse(want)
-        self.assertIn("not cheap", why)
+    def test_free_window_charges_alongside_battery(self):
+        with _frozen_clock(11):    # inside the 10-14 free window
+            want, why = foxctl.ev_divert_decision(
+                self._snap(grid_power=2.0, money={"free_left_kwh": 40.0}), self.EV)
+        self.assertTrue(want)
+        self.assertIn("car + battery", why)
+
+
+class EvOutlookBypassTest(unittest.TestCase):
+    """The outlook gate's hold is skipped when export alone covers the car's whole draw —
+    diverting fully-covered export cannot touch the battery, whatever tonight's budget says."""
+
+    def setUp(self):
+        self._orig = foxctl.ha_call_service
+        foxctl.ha_call_service = lambda cfg, d, s, e: None
+        self._ev_state = dict(foxctl._EV)
+        foxctl._EV.update({"on": None, "last_change": 0.0, "override_until": 0.0,
+                           "session_day": None, "session_start_kwh": None, "capped": False,
+                           "guard_cut_ts": 0.0, "lowdraw_since": 0.0})
+        self.cfg = {"control": {"allow_control": True},
+                    "ev_divert": {"switch": "switch.x", "allow_grid": True,
+                                  "min_export_kw": 1.0, "min_export_free_kw": 0.3,
+                                  "min_dwell_min": 0, "battery_priority": True, "min_soc": 0}}
+
+    def tearDown(self):
+        foxctl.ha_call_service = self._orig
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev_state)
+
+    def _snap(self, feedin, budget):
+        return {"feedin_power": feedin, "soc": 100,
+                "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 40},
+                "car": {"sessions": [{"peak_kw": 2.4}]},     # draw estimate → 2.4kW
+                "car_budget": {"kwh": budget, "outlook_gate": True}}
+
+    def test_covered_export_bypasses_short_budget(self):
+        # export 3.0kW ≥ car draw 2.4 + 0.2 → outlook's -2kWh budget is irrelevant, car ON
+        with _frozen_clock(15):
+            msg = foxctl.ev_divert_tick(self.cfg, self._snap(feedin=3.0, budget=-2.0))
+        self.assertIn("covers car draw", msg)
+        self.assertTrue(foxctl._EV["on"])
+
+    def test_uncovered_export_still_held_by_outlook(self):
+        # export 1.5kW < car draw: the 0.9kW shortfall would drain the battery → hold stands
+        with _frozen_clock(15):
+            msg = foxctl.ev_divert_tick(self.cfg, self._snap(feedin=1.5, budget=-2.0))
+        self.assertIn("outlook", msg)
+        self.assertFalse(foxctl._EV["on"])
 
 
 class EvDailyCapTest(unittest.TestCase):
