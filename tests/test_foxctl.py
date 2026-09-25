@@ -612,7 +612,9 @@ class EvDivertTest(unittest.TestCase):
           "min_soc": 0, "battery_priority": True, "min_dwell_min": 10}
 
     def _snap(self, **kw):
-        s = {"feedin_power": 0.0, "soc": 98,
+        # soc defaults to 100: below battery_full_soc the fill-first gate holds any
+        # UNCOVERED divert, which the threshold tests here deliberately isolate from.
+        s = {"feedin_power": 0.0, "soc": 100,
              "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 40}}
         s.update(kw)
         return s
@@ -639,6 +641,22 @@ class EvDivertTest(unittest.TestCase):
             want, why = foxctl.ev_divert_decision(self._snap(feedin_power=1.5), self.EV)
         self.assertTrue(want)
         self.assertIn("8c", why)
+
+    def test_below_full_uncovered_export_held_for_battery(self):
+        # 90% battery, 1.5kW export vs ~2.5kW car draw: the uncovered 1kW would come
+        # off the solar fill and be bought back from the grid at 16:00 → car held
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=1.5, soc=90), self.EV)
+        self.assertFalse(want)
+        self.assertIn("sun finishes the battery first", why)
+
+    def test_below_full_covered_export_still_diverts(self):
+        # 90% battery but 3.0kW export covers the whole car draw: the battery couldn't
+        # absorb it anyway, so diverting can't slow the fill → car ON
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=3.0, soc=90), self.EV)
+        self.assertTrue(want)
+        self.assertIn("spare solar", why)
 
     def test_battery_priority_blocks_below_survival(self):
         with _frozen_clock(15):

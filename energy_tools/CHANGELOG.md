@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.78.1 — battery fills to 100% before the car gets uncovered export
+
+Below `battery_full_soc` (new knob, default 100%) spare-solar diversion only
+runs when export fully covers the car's draw (`feedin ≥ car draw estimate
++ 0.2 kW`). An uncovered car pulls the difference out of the PV still
+filling the battery, and every kWh the battery is short at 16:00 is bought
+back from the grid — the pre-peak top-up, or peak itself. With genuinely
+surplus sun the export is large, covers the car, and the gate never bites,
+so "hit 100% on sun alone when more sun is coming" needs no forecast test.
+Covered export keeps flowing to the car at any SoC (it can't slow the
+fill — the battery couldn't absorb it anyway). The pre-dawn dump is
+unaffected (it runs on the tick's own branch and deliberately drains
+surplus before the free-window refill).
+
 ## 1.78.0 — ev_divert prices the export it's about to waste
 
 Rob's report (2026-09-25): battery at 100%, solar exporting before 16:00 —

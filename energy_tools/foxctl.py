@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.78.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.78.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -158,6 +158,9 @@ DEFAULT_CONFIG = {
                   # 16:00-23:00 paid window) export is pure waste, so this lower bar applies
                   # instead of min_export_kw. (Supersedes the never-wired feedin_max intent.)
                   "min_export_free_kw": 0.3,
+                  # Below this SoC the car only gets export that fully covers its draw —
+                  # an uncovered car slows the solar fill and forces a grid top-up at 16:00.
+                  "battery_full_soc": 100,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
                   # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
@@ -2014,6 +2017,17 @@ def ev_divert_decision(snap, ev):
         gate = max(gate, surv - 2)
     if isinstance(soc, (int, float)) and soc < gate:
         return False, f"battery {soc:.0f}% < target {gate:.0f}% (solar to battery first)"
+    # Battery-first to FULL (Rob, 2026-09-25): below full the car may only take export
+    # the battery cannot absorb anyway (export >= car draw). An uncovered car pulls the
+    # difference out of the PV still filling the battery, and every kWh the battery is
+    # short at 16:00 is bought back from the grid (pre-peak top-up, or peak itself).
+    # With genuinely surplus sun the export is large, covers the car, and this never
+    # bites — so "hit 100% without grid when we expect more sun" falls out for free.
+    full = float(ev.get("battery_full_soc", 100) or 100)
+    if (isinstance(soc, (int, float)) and soc < full - 0.5
+            and feedin_power < _car_draw_est(snap) + 0.2):
+        return False, (f"battery {soc:.0f}% < {full:.0f}% and export {feedin_power:.1f}kW "
+                       f"doesn't cover the car — sun finishes the battery first")
     return True, f"spare solar {feedin_power:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
 
 
