@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.78.0 — ev_divert prices the export it's about to waste
+
+Rob's report (2026-09-25): battery at 100%, solar exporting before 16:00 —
+where four4free pays 0c — while the car sat unplugged from the logic. Two
+gates were export-price-blind:
+
+- **Tariff-aware spare-solar threshold.** `ev_divert_decision` now reads the
+  feed-in rate (`export_rate_c` via the snapshot's tariff, which now carries
+  `fit_peak_c`/`fit_else_c`) and, while export pays 0c, swaps the 1.0 kW
+  `min_export_kw` bar for `min_export_free_kw` (default 0.3 kW): worthless
+  export gets hoovered into the car; paid export (8c inside 16:00–23:00)
+  keeps the conservative bar. The decision strings now name the threshold
+  and rate in force. (This supersedes the never-wired `feedin_max` intent.)
+- **Outlook-gate full-coverage bypass.** The outlook gate held the car off
+  whenever tonight's budget was short — even when export alone exceeded the
+  car's whole draw, where diverting cannot touch the battery (it has nowhere
+  else to bank: at 100% the spill is grid or car). When
+  `feedin_power ≥ car draw estimate + 0.2 kW`, the gate is skipped and the
+  reason string shows "export covers car draw". Below that, the gate holds
+  exactly as before, since the shortfall would come out of the battery.
+
+Also: `tests/test_foxctl.py`'s EvDivertTest rewritten against the current
+tariff-window decision signature (it still exercised the retired
+price-based one) plus new cases for both changes. The pre-existing
+`buy_target_kwh` test-suite drift is untouched.
+
 ## 1.77.3 — publish a heartbeat: sensor "Last poll"
 
 A timestamp sensor (device_class timestamp) written on every successful
