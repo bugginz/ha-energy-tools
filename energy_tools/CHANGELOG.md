@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.79.0 — nightly 21:00 export rule (four4free)
+
+Rob's rule (2026-09-26): sell surplus battery to the grid from 21:00 until
+the usual thresholds, with a phone notification.
+
+All existing machinery — this release only arms it for four4free:
+- The profile gains an export window `21:00–23:00 @ 8c`. `decide_zerohero`'s
+  SELL branch runs inside it while SoC > survival+1 and stops at the
+  survival/coast floor ("the usual threshold rules"); the coast watchdog
+  backstops it. 23:00 end matches the feed-in dropping to 0c. Not earlier
+  than 21:00 because 16:00–21:00 the battery's job is carrying the house
+  through peak.
+- `strategy.sell_enabled` default flips to **true** (per-profile window +
+  master switch were both required; the switch remains the kill switch).
+- The notification already existed: `maybe_notify`'s `on_sell` notice
+  ("💰 foxctl auto-selling … down to N%") fires once per sell episode —
+  it needs `notify.enabled: true` and a valid notify service in the live
+  options.json.
+- New `Four4FreeEveningSellTest` against the current `decide_zerohero`
+  signature (the old ZeroHero sell tests call the retired 4-arg one and
+  stay in the known-stale group).
+
+## 1.78.1 — battery fills to 100% before the car gets uncovered export
+
+Below `battery_full_soc` (new knob, default 100%) spare-solar diversion only
+runs when export fully covers the car's draw (`feedin ≥ car draw estimate
++ 0.2 kW`). An uncovered car pulls the difference out of the PV still
+filling the battery, and every kWh the battery is short at 16:00 is bought
+back from the grid — the pre-peak top-up, or peak itself. With genuinely
+surplus sun the export is large, covers the car, and the gate never bites,
+so "hit 100% on sun alone when more sun is coming" needs no forecast test.
+Covered export keeps flowing to the car at any SoC (it can't slow the
+fill — the battery couldn't absorb it anyway). The pre-dawn dump is
+unaffected (it runs on the tick's own branch and deliberately drains
+surplus before the free-window refill).
+
 ## 1.78.0 — ev_divert prices the export it's about to waste
 
 Rob's report (2026-09-25): battery at 100%, solar exporting before 16:00 —

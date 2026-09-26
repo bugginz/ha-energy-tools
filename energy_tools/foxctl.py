@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.78.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.79.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -101,6 +101,12 @@ DEFAULT_CONFIG = {
                 "peak": {"start": 16, "end": 23, "c": 59.95},
                 "shoulder_c": 37.51,
                 "fit_peak_c": 8.0, "fit_else_c": 0.0,
+                # Nightly sell rule (Rob 2026-09-26): from 21:00 export surplus battery at the
+                # 8c feed-in, down to the usual floor (survival/coast — decide_zerohero's SELL
+                # stops at survival_soc, and the coast watchdog backstops it). Not earlier:
+                # 16:00-21:00 the battery's job is carrying the house through peak; by 21:00
+                # the remaining need is known and small. Ends 23:00 when feed-in drops to 0c.
+                "export": {"start": 21, "end": 23, "c": 8.0},
             },
         },
         "max_soc": 100,             # hard charge cap — never grid-charge above this
@@ -130,9 +136,11 @@ DEFAULT_CONFIG = {
         # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival is
         # enforced in software (when to stop charging/selling), never on the device.
         "inverter_min_soc": 10,
-        # Export (feed-in) is OFF by default — feed-in is poor on these plans. Turn on per profile's
-        # export window only if sell_enabled. Selling never drains below the coast floor.
-        "sell_enabled": False,
+        # Export (feed-in) runs only inside the active profile's export window AND with this
+        # master switch on. Selling never drains below the coast floor, and maybe_notify's
+        # on_sell notice pages the phone when an episode starts. ON since 2026-09-26 for the
+        # 21:00 nightly sell rule (four4free export window); set false to kill all selling.
+        "sell_enabled": True,
     },
     "control": {
         "allow_control": False,     # master switch for ANY write to the inverter
@@ -158,6 +166,9 @@ DEFAULT_CONFIG = {
                   # 16:00-23:00 paid window) export is pure waste, so this lower bar applies
                   # instead of min_export_kw. (Supersedes the never-wired feedin_max intent.)
                   "min_export_free_kw": 0.3,
+                  # Below this SoC the car only gets export that fully covers its draw —
+                  # an uncovered car slows the solar fill and forces a grid top-up at 16:00.
+                  "battery_full_soc": 100,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
                   # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
@@ -2014,6 +2025,17 @@ def ev_divert_decision(snap, ev):
         gate = max(gate, surv - 2)
     if isinstance(soc, (int, float)) and soc < gate:
         return False, f"battery {soc:.0f}% < target {gate:.0f}% (solar to battery first)"
+    # Battery-first to FULL (Rob, 2026-09-25): below full the car may only take export
+    # the battery cannot absorb anyway (export >= car draw). An uncovered car pulls the
+    # difference out of the PV still filling the battery, and every kWh the battery is
+    # short at 16:00 is bought back from the grid (pre-peak top-up, or peak itself).
+    # With genuinely surplus sun the export is large, covers the car, and this never
+    # bites — so "hit 100% without grid when we expect more sun" falls out for free.
+    full = float(ev.get("battery_full_soc", 100) or 100)
+    if (isinstance(soc, (int, float)) and soc < full - 0.5
+            and feedin_power < _car_draw_est(snap) + 0.2):
+        return False, (f"battery {soc:.0f}% < {full:.0f}% and export {feedin_power:.1f}kW "
+                       f"doesn't cover the car — sun finishes the battery first")
     return True, f"spare solar {feedin_power:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
 
 

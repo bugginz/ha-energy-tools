@@ -612,7 +612,9 @@ class EvDivertTest(unittest.TestCase):
           "min_soc": 0, "battery_priority": True, "min_dwell_min": 10}
 
     def _snap(self, **kw):
-        s = {"feedin_power": 0.0, "soc": 98,
+        # soc defaults to 100: below battery_full_soc the fill-first gate holds any
+        # UNCOVERED divert, which the threshold tests here deliberately isolate from.
+        s = {"feedin_power": 0.0, "soc": 100,
              "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 40}}
         s.update(kw)
         return s
@@ -639,6 +641,22 @@ class EvDivertTest(unittest.TestCase):
             want, why = foxctl.ev_divert_decision(self._snap(feedin_power=1.5), self.EV)
         self.assertTrue(want)
         self.assertIn("8c", why)
+
+    def test_below_full_uncovered_export_held_for_battery(self):
+        # 90% battery, 1.5kW export vs ~2.5kW car draw: the uncovered 1kW would come
+        # off the solar fill and be bought back from the grid at 16:00 → car held
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=1.5, soc=90), self.EV)
+        self.assertFalse(want)
+        self.assertIn("sun finishes the battery first", why)
+
+    def test_below_full_covered_export_still_diverts(self):
+        # 90% battery but 3.0kW export covers the whole car draw: the battery couldn't
+        # absorb it anyway, so diverting can't slow the fill → car ON
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(self._snap(feedin_power=3.0, soc=90), self.EV)
+        self.assertTrue(want)
+        self.assertIn("spare solar", why)
 
     def test_battery_priority_blocks_below_survival(self):
         with _frozen_clock(15):
@@ -674,6 +692,36 @@ class EvDivertTest(unittest.TestCase):
                 self._snap(grid_power=2.0, money={"free_left_kwh": 40.0}), self.EV)
         self.assertTrue(want)
         self.assertIn("car + battery", why)
+
+
+class Four4FreeEveningSellTest(unittest.TestCase):
+    """The 21:00 nightly export rule: SELL inside four4free's 21:00-23:00 export window,
+    down to the survival floor, gated on the master switch — and never during peak-proper."""
+
+    def _rec(self, hour, soc, survival=40, sell_enabled=True, minute=30):
+        strat = base_strat()
+        strat["sell_enabled"] = sell_enabled
+        profile = strat["tariffs"]["four4free"]
+        with _frozen_clock(hour, minute):
+            return foxctl.decide_zerohero(soc, "SelfUse", strat, profile, survival)
+
+    def test_sells_at_2130_above_floor(self):
+        r = self._rec(21, 80)
+        self.assertTrue(r["force_discharge"])
+        self.assertEqual(r["sell_floor"], 40)
+
+    def test_no_sell_during_peak_before_21(self):
+        r = self._rec(19, 80)
+        self.assertFalse(r["force_discharge"])   # 16-21: battery carries the house
+
+    def test_holds_at_survival_floor(self):
+        self.assertFalse(self._rec(21, 40)["force_discharge"])
+
+    def test_master_switch_kills_selling(self):
+        self.assertFalse(self._rec(21, 80, sell_enabled=False)["force_discharge"])
+
+    def test_no_sell_after_window_ends(self):
+        self.assertFalse(self._rec(23, 80, minute=10)["force_discharge"])
 
 
 class EvOutlookBypassTest(unittest.TestCase):
