@@ -694,6 +694,36 @@ class EvDivertTest(unittest.TestCase):
         self.assertIn("car + battery", why)
 
 
+class Four4FreeEveningSellTest(unittest.TestCase):
+    """The 21:00 nightly export rule: SELL inside four4free's 21:00-23:00 export window,
+    down to the survival floor, gated on the master switch — and never during peak-proper."""
+
+    def _rec(self, hour, soc, survival=40, sell_enabled=True, minute=30):
+        strat = base_strat()
+        strat["sell_enabled"] = sell_enabled
+        profile = strat["tariffs"]["four4free"]
+        with _frozen_clock(hour, minute):
+            return foxctl.decide_zerohero(soc, "SelfUse", strat, profile, survival)
+
+    def test_sells_at_2130_above_floor(self):
+        r = self._rec(21, 80)
+        self.assertTrue(r["force_discharge"])
+        self.assertEqual(r["sell_floor"], 40)
+
+    def test_no_sell_during_peak_before_21(self):
+        r = self._rec(19, 80)
+        self.assertFalse(r["force_discharge"])   # 16-21: battery carries the house
+
+    def test_holds_at_survival_floor(self):
+        self.assertFalse(self._rec(21, 40)["force_discharge"])
+
+    def test_master_switch_kills_selling(self):
+        self.assertFalse(self._rec(21, 80, sell_enabled=False)["force_discharge"])
+
+    def test_no_sell_after_window_ends(self):
+        self.assertFalse(self._rec(23, 80, minute=10)["force_discharge"])
+
+
 class EvOutlookBypassTest(unittest.TestCase):
     """The outlook gate's hold is skipped when export alone covers the car's whole draw —
     diverting fully-covered export cannot touch the battery, whatever tonight's budget says."""

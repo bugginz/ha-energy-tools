@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.78.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.79.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -101,6 +101,12 @@ DEFAULT_CONFIG = {
                 "peak": {"start": 16, "end": 23, "c": 59.95},
                 "shoulder_c": 37.51,
                 "fit_peak_c": 8.0, "fit_else_c": 0.0,
+                # Nightly sell rule (Rob 2026-09-26): from 21:00 export surplus battery at the
+                # 8c feed-in, down to the usual floor (survival/coast — decide_zerohero's SELL
+                # stops at survival_soc, and the coast watchdog backstops it). Not earlier:
+                # 16:00-21:00 the battery's job is carrying the house through peak; by 21:00
+                # the remaining need is known and small. Ends 23:00 when feed-in drops to 0c.
+                "export": {"start": 21, "end": 23, "c": 8.0},
             },
         },
         "max_soc": 100,             # hard charge cap — never grid-charge above this
@@ -130,9 +136,11 @@ DEFAULT_CONFIG = {
         # computed survival level. Keep it low and matching the FoxESS app's own min-SoC; survival is
         # enforced in software (when to stop charging/selling), never on the device.
         "inverter_min_soc": 10,
-        # Export (feed-in) is OFF by default — feed-in is poor on these plans. Turn on per profile's
-        # export window only if sell_enabled. Selling never drains below the coast floor.
-        "sell_enabled": False,
+        # Export (feed-in) runs only inside the active profile's export window AND with this
+        # master switch on. Selling never drains below the coast floor, and maybe_notify's
+        # on_sell notice pages the phone when an episode starts. ON since 2026-09-26 for the
+        # 21:00 nightly sell rule (four4free export window); set false to kill all selling.
+        "sell_enabled": True,
     },
     "control": {
         "allow_control": False,     # master switch for ANY write to the inverter

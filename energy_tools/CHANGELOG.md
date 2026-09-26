@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.79.0 — nightly 21:00 export rule (four4free)
+
+Rob's rule (2026-09-26): sell surplus battery to the grid from 21:00 until
+the usual thresholds, with a phone notification.
+
+All existing machinery — this release only arms it for four4free:
+- The profile gains an export window `21:00–23:00 @ 8c`. `decide_zerohero`'s
+  SELL branch runs inside it while SoC > survival+1 and stops at the
+  survival/coast floor ("the usual threshold rules"); the coast watchdog
+  backstops it. 23:00 end matches the feed-in dropping to 0c. Not earlier
+  than 21:00 because 16:00–21:00 the battery's job is carrying the house
+  through peak.
+- `strategy.sell_enabled` default flips to **true** (per-profile window +
+  master switch were both required; the switch remains the kill switch).
+- The notification already existed: `maybe_notify`'s `on_sell` notice
+  ("💰 foxctl auto-selling … down to N%") fires once per sell episode —
+  it needs `notify.enabled: true` and a valid notify service in the live
+  options.json.
+- New `Four4FreeEveningSellTest` against the current `decide_zerohero`
+  signature (the old ZeroHero sell tests call the retired 4-arg one and
+  stay in the known-stale group).
+
 ## 1.78.1 — battery fills to 100% before the car gets uncovered export
 
 Below `battery_full_soc` (new knob, default 100%) spare-solar diversion only
