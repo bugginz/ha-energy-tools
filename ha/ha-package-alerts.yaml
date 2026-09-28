@@ -62,6 +62,60 @@ automation:
                .strftime('%H:%M') }} — modbus AND cloud silent, or the
             energy-tools container is down.
 
+  # Garbage-with-a-heartbeat (2026-09-26): the RS485/foxess_modbus link can
+  # wedge into publishing IMPOSSIBLE values that keep updating — battery
+  # "discharging" 15kW+ for 9 hours while load and grid read a flat 0 — so
+  # every staleness detector sails past it. Two sanity alerts on physics,
+  # not freshness. Remedy for both: reload the foxess_modbus integration,
+  # then power-cycle the Waveshare RS485→ETH adapter if it comes back wrong.
+  # (foxctl arbitrates its own telemetry; these guard the raw sensors the
+  # dashboards and snapshot fallbacks read.)
+  - id: alert_modbus_impossible_battery_power
+    alias: "Alert: battery power reading impossible (modbus garbage)"
+    mode: single
+    trigger:
+      # KH10.5 ceiling is ~10.5kW; 12 leaves margin so a real full-tilt
+      # force charge or sell can never trip it.
+      - platform: numeric_state
+        entity_id: sensor.battery_discharge
+        above: 12
+        for: "00:10:00"
+      - platform: numeric_state
+        entity_id: sensor.battery_charge
+        above: 12
+        for: "00:10:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "🗑️ Modbus talking garbage"
+          message: >-
+            Battery power reads
+            {{ [states('sensor.battery_discharge') | float(0),
+                states('sensor.battery_charge') | float(0)] | max }} kW —
+            beyond the inverter's ~10.5kW ceiling, so the RS485 link is
+            publishing garbage (not stale — updating!). Dashboards and any
+            modbus-fed decision are lying until it's reloaded/power-cycled.
+
+  - id: alert_modbus_zero_load
+    alias: "Alert: house load flat zero (modbus garbage)"
+    mode: single
+    trigger:
+      # The house baseload never touches true 0 (fridge, network, Pi).
+      # 30 min of exactly-zero is the 2026-09-26 wedge signature, not life.
+      - platform: numeric_state
+        entity_id: sensor.load_power
+        below: 0.05
+        for: "00:30:00"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "🗑️ Modbus talking garbage"
+          message: >-
+            sensor.load_power has read ~0 kW for 30 min — the house is never
+            at zero, so the RS485 link has likely wedged (the 2026-09-26
+            signature: zeros on load/grid, garbage on battery power).
+            Reload foxess_modbus / power-cycle the Waveshare adapter.
+
   # ---- Car 12V -------------------------------------------------------
   # The WiCAN reports the Fiat's 12V battery: ~12.6V resting, 13.8-14.6V
   # whenever the DC-DC runs (car on, or HV charging). Two alerts:
