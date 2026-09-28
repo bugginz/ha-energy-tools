@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.79.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.79.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -1139,6 +1139,17 @@ def _window_end_epoch(group):
     if end <= now:
         end += timedelta(days=1)
     return end.timestamp()
+
+
+def sell_window_end_m(nowm, mins, export_end_h):
+    """End minute-of-day for an auto-sell write: now+mins, CLAMPED to the export window's
+    end — the sell must never outlive the paid window in hardware, even if every software
+    stop misses (foxctl dead, stale hold, flaky reads). Mirrors the force-charge path's
+    never-cross-into-peak clamp; the sell path lacked it and ran to 23:30 on 2026-09-27."""
+    tot = nowm + mins
+    if isinstance(export_end_h, (int, float)) and nowm < int(export_end_h * 60):
+        tot = min(tot, int(export_end_h * 60))
+    return tot
 
 
 def control_write_own(cfg, fox, group):
@@ -3669,6 +3680,21 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
         return "control disabled (control.allow_control=false) — not applying"
     # Safety: never act on stale telemetry (FoxESS poll failed → using cached/old values).
     if "stale" in (snap.get("telemetry_source") or "") or "down" in (snap.get("telemetry_source") or ""):
+        # ...except to STOP our own force mode once the recommendation no longer wants it.
+        # The window decision is pure clock, not telemetry, and "hold everything" used to
+        # mean a running sell kept exporting through an outage (2026-09-27: 23:30). Only
+        # clearing needs no fresh data; starting anything still waits for good telemetry.
+        if not rec.get("force_discharge") and not rec.get("force_charge"):
+            try:
+                _mbctl_load(cfg)
+                _sched_load(cfg)
+                if _MBCTL.get("active") or _SCHED.get("mine_key"):
+                    control_clear_own(cfg, FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"]))
+                    log_event("disable", "telemetry stale but force window over — cleared own force mode")
+                    return "telemetry STALE — cleared foxctl's own force mode (window over); all else held"
+            except Exception as e:
+                print(f"stale-hold clear failed (inverter watchdog / HA automation backstop): {e}",
+                      file=sys.stderr)
         return "telemetry STALE (FoxESS poll failed) — not applying (safety hold)"
     msgs = []
     fox = FoxESS(cfg["foxess"]["token"], cfg["foxess"]["sn"])
@@ -3700,8 +3726,15 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
                             and sch["active"].get("mode") == "ForceCharge")
     already_selling = bool(sch.get("enabled") and sch.get("active")
                            and sch["active"].get("mode") == "ForceDischarge")
-    # AUTO-SELL: export to grid on a silly-high feed-in, down to the survival floor.
+    # AUTO-SELL: export to grid inside the export window, down to the survival floor.
     if rec.get("force_discharge"):
+        # A flaky work-mode/scheduler read must never restart the clock on a sell that is
+        # already OURS and running: each re-write used to carry a fresh now+120min end, so
+        # a 22:58 re-read-miss ran the window to ~00:58 (2026-09-27, exporting at 23:30).
+        _mbctl_load(cfg)
+        _sched_load(cfg)
+        if _MBCTL.get("active") == "ForceDischarge" or _SCHED.get("mine_key"):
+            already_selling = True
         if not ctrl.get("set_force_charge"):
             msgs.append("auto-sell wanted but control.set_force_charge=false — skipped")
         elif already_selling:
@@ -3709,7 +3742,8 @@ def apply_recommendation(cfg: dict, snap: dict) -> str:
         else:
             now = datetime.now()
             mins = int(strat.get("force_charge_minutes", 120))
-            tot = now.hour * 60 + now.minute + mins
+            expw = ((snap.get("dynamic") or {}).get("tariff") or {}).get("export") or {}
+            tot = sell_window_end_m(now.hour * 60 + now.minute, mins, expw.get("end"))
             eh, em = (tot // 60) % 24, tot % 60
             inv_floor = int(strat.get("inverter_min_soc", 10))   # constant device floor — never the survival number
             control_write_own(cfg, fox, _sched_group((now.hour, now.minute), (eh, em),

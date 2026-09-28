@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.79.1 — the sell can no longer outlive its window (2026-09-27: exported to 23:30)
+
+First night of the 21:00 rule ran past 23:00. Three compounding defects, all
+in the auto-sell path (the force-charge path had the equivalents already):
+
+- **Hardware window clamp** (`sell_window_end_m`, unit-tested): every sell
+  write's end is now min(now+`force_charge_minutes`, export window end). The
+  force-charge path got its never-cross-into-peak clamp after the identical
+  2026-07-12 incident; the sell path lacked it, so the written window was a
+  flat now+120min.
+- **Re-writes no longer restart the clock.** `already_selling` came from the
+  scheduler/work-mode read; with the RS485 link flaky (all week), a re-read
+  miss made each cycle write a FRESH now+120 window — a 22:58 miss ran the
+  end to ~00:58. Now `_MBCTL.active == ForceDischarge` or our own scheduler
+  group counts as already selling: a running sell of ours is never
+  re-written. (With the clamp, even a re-write couldn't pass 23:00 — both
+  fixes hold independently.)
+- **The stale-telemetry hold no longer keeps a sell running.** The hold
+  returned before ANY clear, so an outage after 23:00 left ForceDischarge
+  asserted until the written window elapsed. Ending a time-boxed action is a
+  clock decision, not a telemetry one: when the recommendation wants neither
+  force mode and our own mode/group is active, the hold now clears it (and
+  only clears — nothing starts on stale data).
+
 ## 1.79.0 — nightly 21:00 export rule (four4free)
 
 Rob's rule (2026-09-26): sell surplus battery to the grid from 21:00 until
