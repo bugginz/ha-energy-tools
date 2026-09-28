@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.79.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.80.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -2947,7 +2947,13 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
     # burns money + parks the battery off-discharge (house on grid). USER 2026-09-23.
     topup_target = min(charge_target, int(strat.get("shoulder_topup_target_soc", 80)))
     cap_kwh = float(strat.get("battery_capacity_kwh", 41.44))
-    topup_on = bool(strat.get("shoulder_topup", True))
+    # OFF by default since 2026-09-28 (Rob: "don't import before 4pm even below 90% SoC").
+    # If the battery runs out overnight, house pass-through imports at the SAME shoulder
+    # rate the top-up would have paid — deferring buys only what is actually needed, and a
+    # deliberate after-23:00 top-up remains available as a manual force charge. Set
+    # strategy.shoulder_topup=true to restore. The HA watchdog package enforces the same
+    # rule independently (ha/ha-package-energy-watchdogs.yaml).
+    topup_on = bool(strat.get("shoulder_topup", False))
     # export to grid (feed-in) — off by default; needs both the master toggle AND a profile export window
     sell_on = bool(strat.get("sell_enabled", False)) and bool(expw)
     nowl = datetime.now()
