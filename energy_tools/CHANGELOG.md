@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.81.0 — zerohero is gone
+
+The retired ZeroHero profile's figures (2c peak feed-in, 18:00–21:00 Super
+Export window, 11:00 free start) kept getting confused with the live plan —
+most recently a "2c-margin" mis-analysis of the four4free 8c sell. Rob:
+"remove any zerohero logic."
+
+- `tariffs.zerohero` deleted from the defaults and from the sample
+  `foxctl_config.json`; `tariff_profile` defaults to `four4free`. A future
+  plan change adds a new entry rather than resurrecting this one.
+- `decide_zerohero` renamed **`decide_tou`** (it was always the generic
+  ToU model — free/peak/export windows from the active profile); reason
+  strings say "ToU …", `band` is now `"tou"` (was `"zerohero"`, cosmetic
+  in event logs and the snapshot).
+- The stale `ZeroHeroTest` class deleted (it exercised a signature retired
+  months ago and sat in the known-broken bucket; errors 59 → 51). The live
+  behaviour is covered by `Four4FreeEveningSellTest`.
+- Live `options.json` note: it already pins `four4free` (the 21:00 sell
+  proves it); if it still carries a `zerohero` tariffs entry, that's now
+  dead weight safe to delete, and `band: zerohero` disappears from new
+  event-log lines after deploy.
+
 ## 1.80.0 — backup watchdogs (HA-side) + pre-peak top-up off by default
 
 Rob's three backstop rules (2026-09-28), enforced in HA so they hold even

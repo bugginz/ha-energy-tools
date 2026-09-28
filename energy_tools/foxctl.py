@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.80.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.81.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -81,19 +81,13 @@ DEFAULT_CONFIG = {
         # --- Tariff-driven time-of-use (the ONLY decision model) -------------------------------------
         # The home is on a GloBird time-of-use plan with a FREE midday import window. We grid-charge the
         # battery (and car) only in that window, run off battery through the expensive peak/shoulder, and
-        # bank only what the demand estimator says we need to coast to the next free window. Swap plans by
-        # changing `tariff_profile`; both profiles live in `tariffs`. No price forecasting.
-        "tariff_profile": "zerohero",
+        # bank only what the demand estimator says we need to coast to the next free window. ONE
+        # profile lives in `tariffs` — the retired ToU entry was deleted 2026-09-28 after its
+        # 2c feed-in and 18-21 Super Export figures kept getting confused with the live plan
+        # (Rob: "remove any zerohero logic"). A future plan change adds a new entry + flips
+        # `tariff_profile`. No price forecasting.
+        "tariff_profile": "four4free",
         "tariffs": {
-            "zerohero": {
-                "label": "GloBird ZeroHero",
-                "supply_c": 181.5,                                  # daily supply charge (c/day)
-                "free": {"start": 11, "end": 14, "free_kwh": 50, "excess_c": 30.8},
-                "peak": {"start": 16, "end": 23, "c": 59.4},        # cover from battery, ZERO grid import
-                "shoulder_c": 51.7,                                 # everything outside free + peak
-                "fit_peak_c": 2.0, "fit_else_c": 0.0,              # feed-in tariff (export earnings)
-                "export": {"start": 18, "end": 21, "c": 10.0, "cap_kwh": 15},  # Super Export window
-            },
             "four4free": {
                 "label": "GloBird Four4Free",
                 "supply_c": 134.2,
@@ -102,7 +96,7 @@ DEFAULT_CONFIG = {
                 "shoulder_c": 37.51,
                 "fit_peak_c": 8.0, "fit_else_c": 0.0,
                 # Nightly sell rule (Rob 2026-09-26): from 21:00 export surplus battery at the
-                # 8c feed-in, down to the usual floor (survival/coast — decide_zerohero's SELL
+                # 8c feed-in, down to the usual floor (survival/coast — decide_tou's SELL
                 # stops at survival_soc, and the coast watchdog backstops it). Not earlier:
                 # 16:00-21:00 the battery's job is carrying the house through peak; by 21:00
                 # the remaining need is known and small. Ends 23:00 when feed-in drops to 0c.
@@ -2918,7 +2912,7 @@ def charge_advisor(snap, profile, strat):
     return _r("avoid", f"shoulder {sh}c, no surplus — battery is for the house{warm}")
 
 
-def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remaining=None):
+def decide_tou(soc, work_mode, strat, profile, survival_soc, solar_remaining=None):
     """GloBird time-of-use strategy (import-cost driven, no price forecasting). Reads the ACTIVE tariff
     `profile` (the resolved tariffs[tariff_profile] dict) — free/peak/export windows + per-band cents:
       • FREE window   → grid-charge battery to full (first free_kwh/day are 0c).
@@ -2971,13 +2965,13 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
     if in_free and soc < charge_target:
         action, fc = "FORCE_CHARGE", True
         fc_win = f"{fs:02d}:00–{fe:02d}:00 free"
-        reasons.append(f"ZeroHero FREE window {fs:02d}:00–{fe:02d}:00 (0c, first {free.get('free_kwh', 50):g}kWh) → "
+        reasons.append(f"ToU FREE window {fs:02d}:00–{fe:02d}:00 (0c, first {free.get('free_kwh', 50):g}kWh) → "
                        f"grid-charge to {charge_target}% — full by {fe:02d}:00.")
     elif in_free:
-        reasons.append(f"ZeroHero free window, battery full ({soc:.0f}% ≥ {charge_target}%). SelfUse.")
+        reasons.append(f"ToU free window, battery full ({soc:.0f}% ≥ {charge_target}%). SelfUse.")
     elif in_eve and sell_on and soc > survival_soc + 1:
         action, fd = "SELL", True
-        reasons.append(f"ZeroHero export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
+        reasons.append(f"ToU export {es:02d}:00–{ee:02d}:00 → export surplus down to {survival_soc}% "
                        f"(keeps enough to coast to 11:00).")
     elif (topup_on and in_prepeak and soc < topup_target
           and isinstance(shoulder_c, (int, float)) and isinstance(peak_c, (int, float)) and shoulder_c < peak_c
@@ -2988,19 +2982,19 @@ def decide_zerohero(soc, work_mode, strat, profile, survival_soc, solar_remainin
         fc_target = topup_target
         fc_win = f"{fe:02d}:00–{ps:02d}:00 shoulder top-up"
         gap = max(0.0, (topup_target - soc) / 100.0 * cap_kwh)
-        reasons.append(f"ZeroHero pre-peak shoulder {fe:02d}:00–{ps:02d}:00 ({sh_txt}) — battery {soc:.0f}% < {topup_target}% floor "
+        reasons.append(f"ToU pre-peak shoulder {fe:02d}:00–{ps:02d}:00 ({sh_txt}) — battery {soc:.0f}% < {topup_target}% floor "
                        f"and solar won't fill ({(solar_remaining or 0.0):.1f}kWh left, need {gap:.1f}kWh) → top up to {topup_target}% "
                        f"before peak ({pc_txt}); rest refills free tomorrow.")
     elif in_peak:
-        reasons.append(f"ZeroHero PEAK {ps:02d}:00–{pe:02d}:00 ({pc_txt}) → cover load from battery, ZERO grid "
+        reasons.append(f"ToU PEAK {ps:02d}:00–{pe:02d}:00 ({pc_txt}) → cover load from battery, ZERO grid "
                        f"import (no force-charge, no feed-in). SelfUse.")
     elif soc <= reserve:
-        reasons.append(f"ZeroHero off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
+        reasons.append(f"ToU off-window but SoC {soc:.0f}% ≤ reserve {reserve}% — battery low. SelfUse.")
     else:
-        reasons.append(f"ZeroHero shoulder/overnight ({sh_txt}) → run off battery, avoid grid import until the "
+        reasons.append(f"ToU shoulder/overnight ({sh_txt}) → run off battery, avoid grid import until the "
                        f"{fs:02d}:00 free window. SelfUse.")
     rec = {"action": action, "target_mode": target_mode, "force_charge": fc, "force_discharge": fd,
-           "sell_floor": survival_soc, "band": "zerohero", "min_future_h": None, "peak_future_h": None,
+           "sell_floor": survival_soc, "band": "tou", "min_future_h": None, "peak_future_h": None,
            "reason": " ".join(reasons)}
     if fc:
         rec["force_charge_plan"] = {"window": fc_win or f"{fs:02d}:00–{fe:02d}:00 free", "max_soc": fc_target,
@@ -3228,7 +3222,7 @@ def gather_and_decide(cfg: dict) -> dict:
     coast_load = (pred_free if pred_free is not None else float(typical_load) * (hrs_to_free / 24.0)) * temp_factor
     need_kwh = max(0.0, coast_load - (solar_remaining or 0.0))
     survival_soc = int(min(strat.get("max_soc", 90), reserve + round(need_kwh / cap_kwh * 100)))
-    rec = decide_zerohero(soc, wm.get("value"), strat, profile, survival_soc, solar_remaining)
+    rec = decide_tou(soc, wm.get("value"), strat, profile, survival_soc, solar_remaining)
 
     # Car SoC target: can the car reach target_soc by its weekly deadline on the free-window hours
     # left before then? Informational only — it never changes the free-window power split, because

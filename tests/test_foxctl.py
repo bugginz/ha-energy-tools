@@ -207,70 +207,6 @@ class ChartUsesRelativeBarTest(unittest.TestCase):
         self.assertIn("buy ≤ $0.05", svg)              # graceful fallback
 
 
-class ZeroHeroTest(unittest.TestCase):
-    """GloBird ZeroHero ToU: no import before 11:00, fill to max in the 11–14 free window, export 18–21,
-    and ZERO grid import through the 16–23 peak."""
-
-    def setUp(self):
-        self._orig = foxctl.datetime
-
-    def tearDown(self):
-        foxctl.datetime = self._orig
-
-    def _rec(self, hour, soc, survival=30, sell_enabled=True):
-        import datetime as _dt
-
-        class FDT(_dt.datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return _dt.datetime(2026, 6, 24, hour, 0, 0, tzinfo=tz)
-        foxctl.datetime = FDT
-        strat = copy.deepcopy(foxctl.DEFAULT_CONFIG["strategy"])
-        strat["max_soc"] = 100
-        strat["reserve_soc"] = 20
-        strat["sell_enabled"] = sell_enabled
-        return foxctl.decide_zerohero(soc, "SelfUse", strat, survival)
-
-    def test_free_window_grid_charges_to_max(self):
-        r = self._rec(12, 50)
-        self.assertTrue(r["force_charge"])
-        self.assertIn("FREE", r["reason"])
-
-    def test_free_window_full_holds(self):
-        self.assertFalse(self._rec(12, 100)["force_charge"])
-
-    def test_before_11_no_import(self):
-        r = self._rec(8, 60)
-        self.assertFalse(r["force_charge"])
-        self.assertFalse(r["force_discharge"])
-
-    def test_peak_zero_import_no_charge(self):
-        # 17:00 is peak (16–23) but not the 18–21 export window → hold, never grid-charge, even if low
-        r = self._rec(17, 45)
-        self.assertFalse(r["force_charge"])
-        self.assertIn("PEAK", r["reason"])
-
-    def test_late_peak_after_export_no_import(self):
-        r = self._rec(22, 35)            # 22:00 still peak, past export window
-        self.assertFalse(r["force_charge"])
-        self.assertFalse(r["force_discharge"])
-
-    def test_evening_window_exports_when_enabled(self):
-        r = self._rec(19, 80, survival=30, sell_enabled=True)
-        self.assertTrue(r["force_discharge"])
-
-    def test_evening_holds_at_survival(self):
-        r = self._rec(19, 30, survival=30, sell_enabled=True)   # at survival → don't export below it
-        self.assertFalse(r["force_discharge"])
-
-    def test_no_export_when_feedin_disabled(self):
-        # feed-in is bad → auto_sell off → 18–21 behaves like peak: cover from battery, no export
-        r = self._rec(19, 90, survival=30, sell_enabled=False)
-        self.assertFalse(r["force_discharge"])
-        self.assertFalse(r["force_charge"])
-        self.assertIn("PEAK", r["reason"])
-
-
 class BuyTargetKwhTest(unittest.TestCase):
     """NEED-BASED vs TOP-UP buy sizing. Top-up fills headroom to target (less solar) for spike readiness."""
 
@@ -766,7 +702,7 @@ class Four4FreeEveningSellTest(unittest.TestCase):
         strat["sell_enabled"] = sell_enabled
         profile = strat["tariffs"]["four4free"]
         with _frozen_clock(hour, minute):
-            return foxctl.decide_zerohero(soc, "SelfUse", strat, profile, survival)
+            return foxctl.decide_tou(soc, "SelfUse", strat, profile, survival)
 
     def test_sells_at_2130_above_floor(self):
         r = self._rec(21, 80)

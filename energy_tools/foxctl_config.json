@@ -39,32 +39,8 @@
     "port": 1883
   },
   "strategy": {
-    "tariff_profile": "zerohero",
+    "tariff_profile": "four4free",
     "tariffs": {
-      "zerohero": {
-        "label": "GloBird ZeroHero",
-        "supply_c": 181.5,
-        "free": {
-          "start": 11,
-          "end": 14,
-          "free_kwh": 50,
-          "excess_c": 30.8
-        },
-        "peak": {
-          "start": 16,
-          "end": 23,
-          "c": 59.4
-        },
-        "shoulder_c": 51.7,
-        "fit_peak_c": 2.0,
-        "fit_else_c": 0.0,
-        "export": {
-          "start": 18,
-          "end": 21,
-          "c": 10.0,
-          "cap_kwh": 15
-        }
-      },
       "four4free": {
         "label": "GloBird Four4Free",
         "supply_c": 134.2,
