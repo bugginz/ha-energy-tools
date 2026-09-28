@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.80.0 — backup watchdogs (HA-side) + pre-peak top-up off by default
+
+Rob's three backstop rules (2026-09-28), enforced in HA so they hold even
+when foxctl itself is the thing that's broken — new package
+`ha/ha-package-energy-watchdogs.yaml` (deploy to
+`/opt/stack/ha/config/packages/energy-watchdogs.yaml`), each following the
+grid_upload_coast_watchdog pattern: cancel politely via foxctl, escalate a
+minute later to Self Use directly over modbus, page loudly:
+
+1. **No export past 23:00, or one that starts below coast.** (A sell that
+   crosses the coast floor mid-run was already killed by
+   grid_upload_coast_watchdog.)
+2. **No car charging below the coast level** outside the 10:00–14:00 free
+   window — cuts the Ogemray switch. foxctl's floor_guard is layer 1; this
+   is the independent layer 2.
+3. **No grid force-charge in the 14:00–16:00 pre-peak gap**, whatever the
+   SoC. The blessed top-up band is after 23:00, bought against known need.
+
+To match rule 3 at the source, `strategy.shoulder_topup` now defaults
+**off**: if the battery runs out overnight, house pass-through imports at
+the same shoulder rate the top-up would have paid, so deferring buys only
+what is actually needed; a deliberate after-23:00 top-up stays available as
+a manual force charge. `shoulder_topup: true` restores the old behaviour.
+
 ## 1.79.1 — the sell can no longer outlive its window (2026-09-27: exported to 23:30)
 
 First night of the 21:00 rule ran past 23:00. Three compounding defects, all

@@ -1,0 +1,178 @@
+# Energy backup watchdogs (Rob, 2026-09-28) — HA-side backstops that hold even
+# when foxctl itself is the thing that's broken (the 2026-09-27 sell overrun).
+# Deployed at /opt/stack/ha/config/packages/energy-watchdogs.yaml; this repo
+# copy is the source of truth.
+#
+# Pattern per watchdog (matches grid_upload_coast_watchdog in
+# packages/foxess_upload.yaml): cancel politely through foxctl first, and if
+# the mode still stands a minute later (foxctl dead or ignoring), force Self
+# Use directly over modbus and page loudly. select.work_mode is the
+# foxess_modbus entity, so the escalation needs nothing but HA + RS485.
+#
+# The three rules:
+#   1. Never export (Force Discharge) past 23:00 — or one that STARTS below
+#      the coast level. (A sell that crosses the coast floor mid-run is
+#      already killed by grid_upload_coast_watchdog; this one adds the time
+#      bound and the started-wrong case.)
+#   2. Never charge the car while the battery is below its coast level —
+#      except inside the 10:00–14:00 free window, where grid is 0c and the
+#      battery refills regardless. (foxctl's floor_guard is layer 1; this is
+#      the independent layer 2.)
+#   3. Never grid force-charge in the 14:00–16:00 pre-peak gap. The blessed
+#      top-up band is after 23:00 (shoulder, bought against known need) and
+#      the free window fill; foxctl's shoulder_topup is off by default since
+#      1.80.0 to match, so this firing means something is misbehaving.
+#      (House pass-through import when the battery is flat is not a force
+#      mode and cannot — and should not — be blocked.)
+
+automation:
+  # ---- 1. export window ---------------------------------------------
+  - id: watchdog_export_past_2300
+    alias: "Watchdog: export past 23:00 / started below coast"
+    description: >-
+      Force Discharge standing after 23:00 (or overnight), or one that starts
+      with the coast margin already negative, gets cancelled via foxctl and,
+      failing that, reverted to Self Use directly over modbus.
+    triggers:
+      - trigger: time
+        at: "23:05:00"
+      - trigger: state
+        entity_id: select.work_mode
+        to: "Force Discharge"
+        for:
+          minutes: 2
+    conditions:
+      - condition: state
+        entity_id: select.work_mode
+        state: "Force Discharge"
+      - condition: or
+        conditions:
+          - condition: time
+            after: "23:00:00"
+            before: "10:00:00"
+          - condition: numeric_state
+            entity_id: sensor.battery_coast_margin
+            below: 0
+    actions:
+      - action: rest_command.foxctl_cancel_override
+      - delay:
+          minutes: 1
+      - if:
+          - condition: state
+            entity_id: select.work_mode
+            state: "Force Discharge"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: select.work_mode
+            data:
+              option: "Self Use"
+          - action: notify.mobile_app_phoney
+            data:
+              title: "🛑 Export watchdog"
+              message: >-
+                Battery was exporting outside its window (after 23:00 or
+                below coast) and foxctl didn't stop it — forced Self Use
+                over modbus. Check foxctl.
+        else:
+          - action: notify.mobile_app_phoney
+            data:
+              title: "Export watchdog"
+              message: >-
+                Export outside its window stopped via foxctl (after-23:00 /
+                coast rule).
+    mode: single
+
+  # ---- 2. car vs coast level ----------------------------------------
+  - id: watchdog_car_below_coast
+    alias: "Watchdog: car charging below coast level"
+    description: >-
+      The car charger must not drain a battery that no longer covers the
+      coast requirement — outside the free window, cut the socket and say so.
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.battery_coast_margin
+        below: 0
+        for:
+          minutes: 5
+      - trigger: state
+        entity_id: switch.ogemray25a_70af09ed9950
+        to: "on"
+        for:
+          minutes: 5
+    conditions:
+      - condition: state
+        entity_id: switch.ogemray25a_70af09ed9950
+        state: "on"
+      - condition: numeric_state
+        entity_id: sensor.battery_coast_margin
+        below: 0
+      - condition: not
+        conditions:
+          - condition: time
+            after: "10:00:00"
+            before: "14:00:00"
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.ogemray25a_70af09ed9950
+      - action: notify.mobile_app_phoney
+        data:
+          title: "🛑 Car watchdog"
+          message: >-
+            Car was charging with the coast margin at
+            {{ states('sensor.battery_coast_margin') }} kWh — charger switched
+            off (battery keeps its overnight buffer). Free window resumes it
+            if foxctl still wants it.
+    mode: single
+
+  # ---- 3. pre-peak import -------------------------------------------
+  - id: watchdog_no_charge_prepeak
+    alias: "Watchdog: no grid charge 14:00-16:00"
+    description: >-
+      A grid force-charge in the pre-peak gap buys shoulder power the
+      overnight band could buy later against known need — cancel it,
+      whatever the SoC.
+    triggers:
+      - trigger: state
+        entity_id: select.work_mode
+        to: "Force Charge"
+        for:
+          minutes: 2
+      - trigger: time
+        at: "14:05:00"
+    conditions:
+      - condition: state
+        entity_id: select.work_mode
+        state: "Force Charge"
+      - condition: time
+        after: "14:00:00"
+        before: "16:00:00"
+    actions:
+      - action: rest_command.foxctl_cancel_override
+      - delay:
+          minutes: 1
+      - if:
+          - condition: state
+            entity_id: select.work_mode
+            state: "Force Charge"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: select.work_mode
+            data:
+              option: "Self Use"
+          - action: notify.mobile_app_phoney
+            data:
+              title: "🛑 Pre-peak import watchdog"
+              message: >-
+                Grid force-charge running in the 14:00-16:00 gap and foxctl
+                didn't stop it — forced Self Use over modbus. Top up after
+                23:00 instead if the battery is short.
+        else:
+          - action: notify.mobile_app_phoney
+            data:
+              title: "Pre-peak import watchdog"
+              message: >-
+                Grid force-charge in the 14:00-16:00 gap stopped via foxctl.
+    mode: single
