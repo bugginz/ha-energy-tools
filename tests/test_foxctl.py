@@ -694,6 +694,69 @@ class EvDivertTest(unittest.TestCase):
         self.assertIn("car + battery", why)
 
 
+class SellWindowClampTest(unittest.TestCase):
+    """A sell write's hardware end can never pass the export window's end — the layer
+    that holds even when foxctl is dead, stale-held, or re-writing on flaky reads."""
+
+    def test_full_duration_clamped_to_export_end(self):
+        self.assertEqual(foxctl.sell_window_end_m(21 * 60 + 2, 120, 23), 23 * 60)
+
+    def test_late_rewrite_still_ends_at_window(self):
+        # the 2026-09-27 incident: a 22:58 re-write used to carry an ~00:58 end
+        self.assertEqual(foxctl.sell_window_end_m(22 * 60 + 58, 120, 23), 23 * 60)
+
+    def test_short_sell_keeps_its_own_end(self):
+        self.assertEqual(foxctl.sell_window_end_m(21 * 60, 60, 23), 22 * 60)
+
+    def test_no_export_window_passes_through(self):
+        self.assertEqual(foxctl.sell_window_end_m(21 * 60, 120, None), 23 * 60)
+
+
+class StaleHoldClearsSellTest(unittest.TestCase):
+    """The stale-telemetry hold must stop our own force mode once the window is over —
+    holding everything used to keep a sell exporting through an outage."""
+
+    def test_stale_hold_clears_finished_sell(self):
+        cleared = []
+        orig = (foxctl.control_clear_own, foxctl.FoxESS, foxctl._mbctl_load,
+                foxctl._sched_load, foxctl.log_event, dict(foxctl._MBCTL))
+        foxctl.control_clear_own = lambda cfg, fox: cleared.append(True)
+        foxctl.FoxESS = lambda tok, sn: None
+        foxctl._mbctl_load = lambda cfg: None
+        foxctl._sched_load = lambda cfg: None
+        foxctl.log_event = lambda *a, **k: None
+        foxctl._MBCTL["active"] = "ForceDischarge"
+        try:
+            cfg = {"control": {"allow_control": True},
+                   "foxess": {"token": "t", "sn": "s"}, "strategy": {}}
+            snap = {"telemetry_source": "Modbus (stale)",
+                    "recommendation": {"force_charge": False, "force_discharge": False}}
+            msg = foxctl.apply_recommendation(cfg, snap)
+        finally:
+            (foxctl.control_clear_own, foxctl.FoxESS, foxctl._mbctl_load,
+             foxctl._sched_load, foxctl.log_event, mb) = orig
+            foxctl._MBCTL.clear()
+            foxctl._MBCTL.update(mb)
+        self.assertTrue(cleared)
+        self.assertIn("cleared", msg)
+
+    def test_stale_hold_still_blocks_a_start(self):
+        wrote = []
+        orig = (foxctl.control_write_own, foxctl.FoxESS)
+        foxctl.control_write_own = lambda cfg, fox, g: wrote.append(g)
+        foxctl.FoxESS = lambda tok, sn: None
+        try:
+            cfg = {"control": {"allow_control": True},
+                   "foxess": {"token": "t", "sn": "s"}, "strategy": {}}
+            snap = {"telemetry_source": "FoxESS cloud (stale)",
+                    "recommendation": {"force_charge": False, "force_discharge": True}}
+            msg = foxctl.apply_recommendation(cfg, snap)
+        finally:
+            foxctl.control_write_own, foxctl.FoxESS = orig
+        self.assertFalse(wrote)
+        self.assertIn("STALE", msg)
+
+
 class Four4FreeEveningSellTest(unittest.TestCase):
     """The 21:00 nightly export rule: SELL inside four4free's 21:00-23:00 export window,
     down to the survival floor, gated on the master switch — and never during peak-proper."""
