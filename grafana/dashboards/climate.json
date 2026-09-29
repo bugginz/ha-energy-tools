@@ -1,0 +1,616 @@
+{
+ "uid": "climate",
+ "title": "Climate & house",
+ "tags": [
+  "energy",
+  "climate"
+ ],
+ "timezone": "Australia/Sydney",
+ "editable": true,
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-48h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "Living room",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Room",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'living_room_ac_ac_home' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Target",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'living_room_ac_ac_target' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Outside unit",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'living_room_ac_outside' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Compressor Hz",
+     "query": "SELECT last(\"value\") FROM \"Hz\" WHERE \"entity_id\" = 'living_room_ac_comp' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Compressor Hz"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "rothz"
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Main bedroom",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 0
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Room",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'main_bedroom_ac_ac_home' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Target",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'main_bedroom_ac_ac_target' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Outside unit",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'main_bedroom_ac_outside' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Compressor Hz",
+     "query": "SELECT last(\"value\") FROM \"Hz\" WHERE \"entity_id\" = 'main_bedroom_ac_comp' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Compressor Hz"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "rothz"
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Isobel",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Room",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'isobel_bedroom_ac_home' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Target",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'isobel_bedroom_ac_target' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Outside unit",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'isobel_bedroom_outside' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Compressor Hz",
+     "query": "SELECT last(\"value\") FROM \"Hz\" WHERE \"entity_id\" = 'isobel_bedroom_comp' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Compressor Hz"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "rothz"
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "Mathilda",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 8
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Room",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'mathilda_bedroom_ac_home' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Target",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'mathilda_bedroom_ac_target' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Outside unit",
+     "query": "SELECT last(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'mathilda_bedroom_outside' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Compressor Hz",
+     "query": "SELECT last(\"value\") FROM \"Hz\" WHERE \"entity_id\" = 'mathilda_bedroom_comp' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Compressor Hz"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "rothz"
+       },
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Outside",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Temperature",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'openweathermap_temperature' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Feels like",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'openweathermap_apparent_temperature' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Humidity %",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'openweathermap_humidity' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "celsius",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "A/C circuit power",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "A/C",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_8' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "watt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "UPS",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 6,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Charge %",
+     "query": "SELECT last(\"value\") FROM \"%\" WHERE \"entity_id\" = 'eaton_battery_charge' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Load %",
+     "query": "SELECT last(\"value\") FROM \"%\" WHERE \"entity_id\" = 'eaton_load' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "min": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}

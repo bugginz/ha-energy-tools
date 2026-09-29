@@ -1,0 +1,440 @@
+{
+ "uid": "solar",
+ "title": "Solar",
+ "tags": [
+  "energy",
+  "solar"
+ ],
+ "timezone": "Australia/Sydney",
+ "editable": true,
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "PV strings",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 9,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 1",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_1' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 2",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_2' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 3",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_3' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 4",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_4' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 5",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_5' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "String 6",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_pv_string_6' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 50,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Solar vs generation",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 9
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Solar (foxctl)",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_solar_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "PV (inverter modbus)",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_modbus_pv_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Export",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_grid_export' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Forecast (kWh)",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 9
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Today (1)",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'energy_production_today' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Today (2)",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'energy_production_today_2' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Today (3)",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'energy_production_today_3' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Today (4)",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'energy_production_today_4' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "foxctl remaining today",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_solar_remaining_today_cal' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "foxctl tomorrow",
+     "query": "SELECT mean(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_solar_tomorrow_cal' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatth",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "barchart",
+   "title": "Solar per day",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 17
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Solar",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_solar_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Exported",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_grid_export_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatth",
+     "decimals": 1,
+     "custom": {
+      "fillOpacity": 80,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "vertical",
+    "stacking": "none",
+    "xTickLabelRotation": -45,
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "transformations": [
+    {
+     "id": "formatTime",
+     "options": {
+      "timeField": "Time",
+      "outputFormat": "ddd D MMM"
+     }
+    }
+   ]
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Sky",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 17
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Cloud cover",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'openweathermap_cloud_coverage' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Outside \u00b0C",
+     "query": "SELECT mean(\"value\") FROM \"\u00b0C\" WHERE \"entity_id\" = 'openweathermap_temperature' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}

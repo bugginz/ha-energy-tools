@@ -1,0 +1,433 @@
+{
+ "uid": "market",
+ "title": "NEM market",
+ "tags": [
+  "energy",
+  "nem"
+ ],
+ "timezone": "Australia/Sydney",
+ "editable": true,
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-48h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "NSW wholesale price",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 9,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "5-min",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'aemo_nem_nsw1_current_5min_period_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "30-min avg",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'aemo_nem_nsw1_current_30min_avg' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "30-min forecast",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'aemo_nem_nsw1_current_30min_forecast' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Retail import",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'home_general_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Amber feed-in",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'amber_feed_in_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "decimals": 3
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "NSW generation mix",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 9,
+    "x": 0,
+    "y": 9
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "coal",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_coal' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "gas",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_gas' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "hydro",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_hydro' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "wind",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_wind' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "solar utility",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_solar_utility' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "battery discharging",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_battery_discharging' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "bioenergy",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_bioenergy' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "distillate",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'nem_nsw1_generation_distillate' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "megwatt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 60,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Renewables & carbon",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 9,
+    "x": 12,
+    "y": 9
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Renewables %",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'nem_nsw1_generation_renewables' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Home renewables %",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'home_renewables' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Fossil %",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'electricity_maps_grid_fossil_fuel_percentage' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "min": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "timeseries",
+   "title": "CO2 intensity",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 7,
+    "x": 0,
+    "y": 18
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "gCO2/kWh",
+     "query": "SELECT mean(\"value\") FROM \"gCO2eq/kWh\" WHERE \"entity_id\" = 'electricity_maps_co2_intensity' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "none",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 10,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 5,
+   "type": "timeseries",
+   "title": "Interconnectors",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 7,
+    "x": 12,
+    "y": 18
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "NSW\u2192QLD",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'aemo_nem_nsw1_nsw1_qld1_2' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "VIC\u2192NSW",
+     "query": "SELECT mean(\"value\") FROM \"MW\" WHERE \"entity_id\" = 'aemo_nem_nsw1_vic1_nsw1_2' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "megwatt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}

@@ -1,0 +1,417 @@
+{
+ "uid": "circuits",
+ "title": "Circuits",
+ "tags": [
+  "energy",
+  "circuits"
+ ],
+ "timezone": "Australia/Sydney",
+ "editable": true,
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "timeseries",
+   "title": "House circuits (stacked)",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 11,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "A/C",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_8' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Hot water",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_9' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Oven",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_10' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Upstairs",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_11' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Downstairs",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_12' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Lights",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_14' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Cooktop",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_16' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Car charger",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_18' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "watt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 60,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "normal"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 2,
+   "type": "timeseries",
+   "title": "Supply vs sum of circuits",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 11
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Supply (grid + inverter)",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'house_supply_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Sum of circuits",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'circuits_total_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Residual (unclamped)",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'circuits_residual_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "watt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "type": "timeseries",
+   "title": "Grid and inverter channels",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 11
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Grid",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_1' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Inverter",
+     "query": "SELECT mean(\"value\") FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_7' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "watt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 4,
+   "type": "barchart",
+   "title": "Energy per circuit per day",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 10,
+    "x": 0,
+    "y": 19
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "A/C",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_8' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Hot water",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_9' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Oven",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_10' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Upstairs",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_11' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Downstairs",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_12' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Lights",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_14' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Cooktop",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_16' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Car charger",
+     "query": "SELECT integral(\"value\", 1h) / 1000 FROM \"W\" WHERE \"entity_id\" = 'em16p_26041762237810740701c4e7ae2e4c89_power_18' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatth",
+     "decimals": 1,
+     "custom": {
+      "fillOpacity": 80,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "vertical",
+    "stacking": "normal",
+    "xTickLabelRotation": -45,
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "transformations": [
+    {
+     "id": "formatTime",
+     "options": {
+      "timeField": "Time",
+      "outputFormat": "ddd D MMM"
+     }
+    }
+   ]
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}
