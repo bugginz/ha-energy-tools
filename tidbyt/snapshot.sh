@@ -43,12 +43,18 @@ getn2() {
   python3 -c "print(float('$v'))" 2>/dev/null || getn "$2" "$3"
 }
 
-# AC flows come from the LOCAL Meross 18ch clamps (seconds cadence), not the
-# FoxESS cloud: the cloud takes one instantaneous sample every ~2min, so a
-# cycling load (oven thermostat) makes it flip between 0.5 and 3.6kW while the
-# real average was 2.4kW. What only the inverter knows — SoC, the battery
-# split, DC solar — now comes LIVE over RS485 (foxess_modbus, 10s polls); the
-# cloud is the fallback for those if the link goes away.
+# SOURCE ORDER (2026-10-02): the inverter's own figures over RS485
+# (foxess_modbus, one 10s poll, so PV / AC out / grid CT / battery split are
+# all the SAME instant) come first. The Meross clamps are the fallback, the
+# FoxESS cloud the fallback's fallback. Before this the AC flows were clamp
+# primary and solar was DERIVED as clamp-AC + modbus-battery: two sources, two
+# instants, and with a 2kW load cycling every ~30s that sum published 4.8kW of
+# solar against 2.6kW on the strings, and 0.0 the next minute. The DC strings
+# are measured directly now, so nothing has to be derived.
+PV_MB=$(getn sensor.solar_power_local NA)      # kW, pv1+pv2+pv3 DC
+INV_MB=$(getn sensor.rpower NA)                # kW, inverter AC: +out / -in (grid charging)
+GRID_MB=$(getn sensor.grid_ct NA)              # kW, inverter grid CT: +EXPORT / -import
+LOAD_MB=$(getn sensor.load_power NA)           # kW, inverter's own load figure
 SOC=$(getn2 sensor.battery_soc sensor.foxess_foxctl_battery_soc 0)
 HOUSE_W=$(getn sensor.circuits_total_power NA)
 GRID_W=$(getn sensor.grid_main_power_local NA)
@@ -84,8 +90,10 @@ SUN_STATE=$(get sun.sun 2>/dev/null || echo below_horizon)
 # the real clamp saw exactly one (318W of battery ramp lag). Inverter stays
 # measured too (its clamp feeds the battery figure at night); the ~40W
 # disagreement lands on house, where it is invisible at one decimal place.
-# The cloud is then used for ONE thing: how to split the inverter's output
-# between solar and battery. Everything else follows by arithmetic.
+# With modbus the inverter supplies every figure from one instant, so solar is
+# measured (the strings) rather than derived; the identities above still pin
+# house and battery so the set balances exactly, and the inverter's own load
+# and battery figures are published as the check (BAL_ADJ, BAL).
 # Blip suppression state: the raw grid clamp reading from the PREVIOUS tick.
 # A real import event must hold for two consecutive ticks (~60s) before it is
 # drawn; battery ramp lag lasts seconds and never shows. Lives in tmpfs beside
@@ -93,17 +101,44 @@ SUN_STATE=$(get sun.sun 2>/dev/null || echo below_horizon)
 GRID_PREV_FILE=/dev/shm/tronbyt/grid_prev
 GRID_PREV=$(cat "$GRID_PREV_FILE" 2>/dev/null || echo 0)
 
-read -r LOAD GRID NET SOLAR BAL BAL_ADJ GRID_RAW < <(python3 -c "
+read -r LOAD GRID NET SOLAR BAL BAL_ADJ GRID_RAW TELE < <(python3 -c "
 PV_MAX = 7.0                                # array peaks at 5.64kW; a stale
                                             # cloud figure must not exceed this
 def w(v):
     return None if v == 'NA' else float(v) / 1000.0
+def k(v):
+    return None if v == 'NA' else float(v)
 chg, dis = float('$CHG'), float('$DIS')
 batt_live = chg - dis                       # + charging / - discharging
 house, grid_c, invac = w('$HOUSE_W'), w('$GRID_W'), w('$INV_W')
+pv_mb, inv_mb, grid_mb, load_mb = k('$PV_MB'), k('$INV_MB'), k('$GRID_MB'), k('$LOAD_MB')
 night = '$SUN_STATE' == 'below_horizon'
+prev = float('$GRID_PREV')
 
-if house is None or invac is None:
+def gate(graw):
+    # Grid deadband + two-tick persistence for small readings (see below);
+    # shared by the modbus and clamp paths so the pylon behaves the same.
+    if abs(graw) < 0.10:
+        return 0.0
+    if abs(graw) < 0.50 and (abs(prev) < 0.10 or (graw > 0) != (prev > 0)):
+        return 0.0
+    return graw
+
+if None not in (pv_mb, inv_mb, grid_mb):
+    # MODBUS: one poll, one instant. Strings measured, AC out measured, grid
+    # from the inverter's CT (+export there -> +import here). house and batt
+    # follow from the two identities so the set is exact; the inverter's own
+    # load figure is the published cross-check (adj), its battery figure the
+    # balance (err absorbs inverter losses, a few % of PV).
+    tele = 'modbus'
+    solar = 0.0 if night else min(max(pv_mb, 0.0), PV_MAX)
+    invac = inv_mb
+    graw = -grid_mb
+    grid = gate(graw)
+    house = invac + grid
+    adj = (load_mb - house) if load_mb is not None else 0.0
+    batt = solar - invac
+elif house is None or invac is None:
     # Clamps down. The inverter's own trio came from one modbus poll, so it is
     # at least internally consistent; derive grid from it to close the balance.
     house, solar, batt = float('$LOAD_CLOUD'), float('$SOLAR_LIVE'), batt_live
@@ -112,25 +147,22 @@ if house is None or invac is None:
     grid = house + batt - solar
     graw = grid
     adj = 0.0
+    tele = 'cloud'
 else:
+    tele = 'clamps'
     # Grid from its own CT, gated twice: a deadband (under 100W the clamp is
     # reading meter offset, not flow) and two-tick persistence (a figure only
     # counts if the PREVIOUS tick also saw it, so a seconds-long battery-lag
     # blip cannot flicker the pylon; sustained flow appears one tick late,
     # which nobody can see).
     graw = grid_c if grid_c is not None else house - invac
-    prev = float('$GRID_PREV')
-    grid = graw
-    if abs(graw) < 0.10:
-        grid = 0.0
-    elif abs(graw) < 0.50 and (abs(prev) < 0.10 or (graw > 0) != (prev > 0)):
-        # Persistence applies ONLY to small readings — battery-lag blips are a
-        # few hundred watts for a few seconds. A large reading is trusted
-        # immediately: on 2026-08-30 the free-window charge ramped to 13.6kW
-        # and the gate held grid at 0 for a tick, which forced the busbar
-        # identity to publish house = invac = -7.3kW. A 13kW figure on a
-        # direct, seconds-fresh CT is not a blip.
-        grid = 0.0
+    # Persistence applies ONLY to small readings — battery-lag blips are a
+    # few hundred watts for a few seconds. A large reading is trusted
+    # immediately: on 2026-08-30 the free-window charge ramped to 13.6kW
+    # and the gate held grid at 0 for a tick, which forced the busbar
+    # identity to publish house = invac = -7.3kW. A 13kW figure on a
+    # direct, seconds-fresh CT is not a blip.
+    grid = gate(graw)
     # House absorbs the clamp disagreement so the busbar identity holds
     # exactly. adj records how much it had to move — sustained growth here
     # means a CT is lying.
@@ -155,7 +187,7 @@ err = (solar + max(-batt, 0.0) + max(grid, 0.0)) - (house + max(batt, 0.0) + max
 # adj = how far the grid clamp had to move to close the busbar identity. Normally
 # tens of watts (meter offset); a sustained large value means a CT is lying.
 print(round(house, 2), round(grid, 2), round(batt, 2), round(solar, 2),
-      round(err, 3), round(adj, 3), round(graw if 'graw' in dir() else 0.0, 3))
+      round(err, 3), round(adj, 3), round(graw if 'graw' in dir() else 0.0, 3), tele)
 ")
 echo "$GRID_RAW" > "$GRID_PREV_FILE"
 
@@ -236,6 +268,7 @@ GRID=$GRID
 NET=$NET
 SOLAR=$SOLAR
 SRC=$SRC
+TELE=$TELE
 CAR=$CAR
 CARKW=$CARKW
 EVDIV=$EVDIV
