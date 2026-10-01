@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.81.0"
+version: "1.81.1"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -65,7 +65,7 @@ options:
   ev_charge_kw: 7.0
   ev_expected_kwh: 7.5
   weather_entity: "weather.forecast_home"
-  grid_power_entity: "sensor.grid_main_power_local"
+  grid_power_entity: "sensor.grid_net_power"
   base_schedule_guard: true
   smart_fill: true
   smart_fill_rearm_soc: 98

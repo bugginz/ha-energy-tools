@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.81.1 — fast guard reads the modbus grid CT
+
+`grid_power_entity` now defaults to `sensor.grid_net_power` (the inverter's own
+grid CT over RS485, +import/−export in W) instead of the Meross A1 clamp. The
+clamp only updates on a value change, so during a quiet grid it sat at a
+constant 0 W past the 180 s freshness window and the supply-cap guard saw no
+live figure at all (`grid_power_live: null` for minutes); it also trails the
+inverter by 10–30 s on every step. Verified 2026-09-29 against a live 4 min
+export: the two agree within ~2% in both directions, modbus leading.
+
 ## 1.81.0 — zerohero is gone
 
 The retired ZeroHero profile's figures (2c peak feed-in, 18:00–21:00 Super

@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.81.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.81.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -58,10 +58,14 @@ DEFAULT_CONFIG = {
         "url": "http://homeassistant.local:8123",
         "token_file": "~/.config/sen66/ha_token",
         "demand_window_entity": "binary_sensor.home_demand_window",
-        # Local grid-main CT clamp (Meross A1, seconds-fresh, +import/−export in W). Preferred
-        # over cloud FoxESS grid_power (up to ~5 min stale) for the EV supply-cap headroom
-        # guard and pre-dawn import abort. "" disables → FoxESS only.
-        "grid_power_entity": "sensor.grid_main_power_local",
+        # Live grid power (W, +import/−export) for the EV supply-cap headroom guard and the
+        # pre-dawn import abort. 2026-10-02: the inverter's own CT over modbus (grid_net_power,
+        # 10s polls, changes every poll so freshness works). The Meross A1 clamp it replaced
+        # (sensor.grid_main_power_local) reports on CHANGE only, so a quiet grid sat at a
+        # constant 0 W past the 180s freshness window and the guard saw "no clamp" for
+        # minutes at a time; it also trails the inverter by 10-30s on every step.
+        # "" disables → cloud FoxESS grid figure only.
+        "grid_power_entity": "sensor.grid_net_power",
         # Read inverter telemetry from HA (foxess-ha integration) to avoid a 2nd FoxESS poller.
         "soc_entity": "sensor.foxess_bat_soc",
         "pv_entity": "sensor.foxess_pv_power",
