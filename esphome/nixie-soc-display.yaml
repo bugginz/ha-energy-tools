@@ -146,8 +146,11 @@ text_sensor:
     id: ha_sun
     entity_id: sun.sun
 
-# Inverter figures come from foxess_modbus (RS485, 10s polls) as of 2026-09-04
-# — the sensor.foxess_foxctl_* cloud versions lag ~2min and go stale.
+# Every figure comes from foxess_modbus (RS485, 10s polls, one instant) as of
+# 2026-10-02. The Meross clamps are for per-circuit attribution only: mixing a
+# clamp (40s cadence) with modbus (10s) in one sum put 4.8kW of phantom solar
+# on the tronbyts against 2.6kW on the strings, and 0.0 the next minute. The
+# sensor.foxess_foxctl_* cloud versions lag ~2min and go stale.
 sensor:
   - platform: homeassistant
     id: ha_soc
@@ -160,13 +163,13 @@ sensor:
     entity_id: sensor.battery_discharge
   - platform: homeassistant
     id: ha_load
-    entity_id: sensor.circuits_total_power   # watts, local clamps
+    entity_id: sensor.load_power             # kW, inverter's own load figure (modbus)
   - platform: homeassistant
     id: ha_solar
-    entity_id: sensor.solar_power_local      # kW, pv1-4 sum (template.yaml)
+    entity_id: sensor.solar_power_local      # kW, pv1-4 sum (template.yaml, modbus strings)
   - platform: homeassistant
     id: ha_grid
-    entity_id: sensor.grid_main_power_local  # watts, +import / -export
+    entity_id: sensor.grid_net_power         # watts, +import / -export (inverter grid CT)
 
 # Protocol: "SSSPPPD\n" - SoC 3 digits, |net power| in 0.1kW 3 digits,
 # direction char (C=charging, D=discharging). e.g. "065012C" = 65%, 1.2kW in.
@@ -184,7 +187,7 @@ interval:
           char dir = (net_kw >= 0) ? 'C' : 'D';
           char bright = '0' + (int) id(led_brightness).state;
           char mode = (id(display_mode).state == "Load + SoC") ? '1' : '0';
-          float load_w = id(ha_load).state;
+          float load_w = id(ha_load).state * 1000.0;   // sensor is kW
           int load_tenths = isnan(load_w) ? 0 : (int) round(load_w / 100.0);
           if (load_tenths < 0) load_tenths = 0;
           if (load_tenths > 999) load_tenths = 999;
@@ -192,17 +195,10 @@ interval:
           int grid_tenths = isnan(grid_w) ? 0 : (int) round(fabs(grid_w) / 100.0);
           if (grid_tenths > 999) grid_tenths = 999;
           char gsign = (!isnan(grid_w) && grid_w < 0) ? 'E' : 'I';
-          // solar derived from conservation: load + net battery - grid import.
-          // local clamps are live; the cloud solar sensor lags minutes behind.
-          float solar_w;
-          if (!isnan(load_w) && !isnan(grid_w)) {
-            solar_w = load_w + net_kw * 1000.0 - grid_w;
-          } else {
-            solar_w = id(ha_solar).state * 1000.0;   // fallback sensor is kW
-          }
-          // derivation error shows up as phantom solar: zero it when the sun
-          // is down, and deadband small readings during the day
-          if (id(ha_sun).state == "below_horizon" || solar_w < 250.0) solar_w = 0;
+          // solar is the strings, measured — no derivation, so no phantom
+          // solar from mixing instruments. Zero after dark regardless.
+          float solar_w = id(ha_solar).state * 1000.0;   // sensor is kW
+          if (id(ha_sun).state == "below_horizon") solar_w = 0;
           int solar_tenths = isnan(solar_w) ? 0 : (int) round(solar_w / 100.0);
           if (solar_tenths < 0) solar_tenths = 0;
           if (solar_tenths > 999) solar_tenths = 999;
