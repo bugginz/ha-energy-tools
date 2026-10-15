@@ -1,0 +1,17 @@
+# Grafana datasource provisioning — mounted at /etc/grafana/provisioning/datasources.
+# Home Assistant's influxdb integration writes every entity to the "homeassistant"
+# database on the stack's InfluxDB 1.8 (measurement = unit_of_measurement,
+# tag entity_id, field value; non-numeric states in measurement "state").
+apiVersion: 1
+datasources:
+  - name: InfluxDB (Home Assistant)
+    uid: influxdb-ha
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: homeassistant
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMode: GET
+      timeInterval: "10s"

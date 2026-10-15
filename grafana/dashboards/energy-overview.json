@@ -1,0 +1,848 @@
+{
+ "uid": "energy-overview",
+ "title": "Energy overview",
+ "tags": [
+  "energy",
+  "foxess"
+ ],
+ "timezone": "Australia/Sydney",
+ "editable": true,
+ "schemaVersion": 39,
+ "version": 1,
+ "refresh": "1m",
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Now",
+   "collapsed": false,
+   "gridPos": {
+    "w": 24,
+    "h": 1,
+    "x": 0,
+    "y": 0
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "House load",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 0,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "load",
+     "query": "SELECT last(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_house_load' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 3,
+   "type": "stat",
+   "title": "Solar",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 4,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "solar",
+     "query": "SELECT last(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_solar_power' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Grid import",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 8,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "import",
+     "query": "SELECT last(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_grid_import' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 5,
+   "type": "stat",
+   "title": "Grid export",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 12,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "export",
+     "query": "SELECT last(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_grid_export' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 6,
+   "type": "stat",
+   "title": "Battery SoC",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 16,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "soc",
+     "query": "SELECT last(\"value\") FROM \"%\" WHERE \"entity_id\" = 'foxess_foxctl_battery_soc' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 25
+       },
+       {
+        "color": "green",
+        "value": 50
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 7,
+   "type": "stat",
+   "title": "Price",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 4,
+    "h": 4,
+    "x": 20,
+    "y": 1
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "price",
+     "query": "SELECT last(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'home_general_price' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "decimals": 3,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 0.3
+       },
+       {
+        "color": "red",
+        "value": 0.6
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "colorMode": "value",
+    "graphMode": "area",
+    "textMode": "value"
+   }
+  },
+  {
+   "id": 8,
+   "type": "row",
+   "title": "Power",
+   "collapsed": false,
+   "gridPos": {
+    "w": 24,
+    "h": 1,
+    "x": 0,
+    "y": 5
+   },
+   "panels": []
+  },
+  {
+   "id": 9,
+   "type": "timeseries",
+   "title": "Power flows",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 10,
+    "x": 0,
+    "y": 6
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "House load",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_house_load' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Solar",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_solar_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Grid import",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_grid_import' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Grid export",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_grid_export' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Battery charge",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_battery_charge_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Battery discharge",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_battery_discharge_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Car charger",
+     "query": "SELECT mean(\"value\") FROM \"kW\" WHERE \"entity_id\" = 'foxess_foxctl_ev_charger_power' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatt",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 5,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Battery",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "SoC",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'foxess_foxctl_battery_soc' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Target",
+     "query": "SELECT last(\"value\") FROM \"%\" WHERE \"entity_id\" = 'foxess_foxctl_target_soc' AND time > ${__from}ms - 30d AND time < ${__to}ms GROUP BY time($__interval) fill(previous)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Coast margin",
+     "query": "SELECT mean(\"value\") FROM \"%\" WHERE \"entity_id\" = 'battery_coast_margin' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "min": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Prices",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 12,
+    "h": 8,
+    "x": 12,
+    "y": 16
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Import (GloBird ToU)",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'home_general_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "AEMO 5-min",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'aemo_nem_nsw1_current_5min_period_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Amber feed-in",
+     "query": "SELECT mean(\"value\") FROM \"$/kWh\" WHERE \"entity_id\" = 'amber_feed_in_price' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD",
+     "custom": {
+      "lineWidth": 1,
+      "fillOpacity": 0,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "decimals": 2
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 12,
+   "type": "state-timeline",
+   "title": "Inverter work mode",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 4,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Work mode",
+     "query": "SELECT \"state\" FROM \"state\" WHERE \"entity_id\" = 'work_mode' AND $timeFilter"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "fillOpacity": 70,
+      "lineWidth": 0
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "showValue": "auto",
+    "mergeValues": true,
+    "rowHeight": 0.8,
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    }
+   }
+  },
+  {
+   "id": 13,
+   "type": "row",
+   "title": "Energy per day",
+   "collapsed": false,
+   "gridPos": {
+    "w": 24,
+    "h": 1,
+    "x": 0,
+    "y": 28
+   },
+   "panels": []
+  },
+  {
+   "id": 14,
+   "type": "barchart",
+   "title": "Daily energy",
+   "datasource": {
+    "type": "influxdb",
+    "uid": "influxdb-ha"
+   },
+   "gridPos": {
+    "w": 24,
+    "h": 10,
+    "x": 0,
+    "y": 29
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Solar",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_solar_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "House load",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_house_load_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Grid import",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_grid_import_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Grid export",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_grid_export_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Battery charge",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_battery_charge_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Battery discharge",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_battery_discharge_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    },
+    {
+     "datasource": {
+      "type": "influxdb",
+      "uid": "influxdb-ha"
+     },
+     "rawQuery": true,
+     "resultFormat": "time_series",
+     "alias": "Car charger",
+     "query": "SELECT spread(\"value\") FROM \"kWh\" WHERE \"entity_id\" = 'foxess_foxctl_ev_charger_energy' AND $timeFilter GROUP BY time(1d) fill(none) tz('Australia/Sydney')"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "kwatth",
+     "decimals": 1,
+     "custom": {
+      "fillOpacity": 80,
+      "lineWidth": 1
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "vertical",
+    "stacking": "none",
+    "xTickLabelRotation": -45,
+    "showValue": "never",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "none"
+    }
+   },
+   "transformations": [
+    {
+     "id": "formatTime",
+     "options": {
+      "timeField": "Time",
+      "outputFormat": "ddd D MMM"
+     }
+    }
+   ]
+  }
+ ],
+ "templating": {
+  "list": []
+ },
+ "annotations": {
+  "list": []
+ }
+}
