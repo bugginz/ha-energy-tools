@@ -1,0 +1,242 @@
+# Internet reachability and line quality — ICMP probes from the HA host.
+# Deployed at /opt/stack/ha/config/packages/network.yaml, with the probe script
+# at /opt/stack/ha/config/shell/pingstat.sh; this repo copy is the source of truth.
+#
+# Complements binary_sensor.internet_via_lte (template-internet-via-lte.yaml),
+# which only knows the X2000's eth1 LINK state. This answers the other
+# questions: do packets actually get out and back (a fibre link can be Up
+# with the ISP dead behind it), and how good is the path (loss, latency,
+# jitter — fibre vs LTE shows up plainly in the RTT).
+#
+# Three probes, 10 echoes each, once a minute:
+#   8.8.8.8 / 1.1.1.1  two unrelated anycast networks. Either one answering
+#                      means the internet is up: public resolvers rate-limit
+#                      and deprioritise ICMP, so one target alone would
+#                      false-alarm. Quality figures use the BETTER of the two
+#                      for the same reason.
+#   gw                 the HA host's own default gateway (auto-detected), so
+#                      an outage can be placed: LAN side vs upstream.
+# Cost on the SIM while on LTE: 2 targets x 10 x 84 B each way ≈ 5 MB/day.
+#
+# The Ping integration (UI) would give up/down and RTT but not packet loss,
+# which is the figure that matters for quality, hence command_line.
+# Needs HA's network_mode: host (true for the stack's container) — on a
+# bridged container "gw" would be the docker bridge, not the router.
+#
+# Notification design: phone pushes travel over the internet, so an alert
+# sent DURING an outage is lost. The outage automation captures the diagnosis
+# when it starts, waits, and reports once on recovery with the duration.
+
+command_line:
+  # State is ok / down (no echo came back) / error (the probe itself broke);
+  # every figure is an attribute, surfaced as a numeric sensor below (a
+  # numeric command_line sensor would log an error on every null RTT).
+  - sensor:
+      name: "Ping 8.8.8.8"
+      unique_id: ping_8_8_8_8
+      command: "sh /config/shell/pingstat.sh 8.8.8.8"
+      command_timeout: 20
+      scan_interval: 60
+      value_template: >-
+        {{ 'error' if value_json.error else ('down' if value_json.recv == 0 else 'ok') }}
+      json_attributes: [target, sent, recv, loss, rtt, min, max, jitter, error]
+  - sensor:
+      name: "Ping 1.1.1.1"
+      unique_id: ping_1_1_1_1
+      command: "sh /config/shell/pingstat.sh 1.1.1.1"
+      command_timeout: 20
+      scan_interval: 60
+      value_template: >-
+        {{ 'error' if value_json.error else ('down' if value_json.recv == 0 else 'ok') }}
+      json_attributes: [target, sent, recv, loss, rtt, min, max, jitter, error]
+  - sensor:
+      name: "Ping gateway"
+      unique_id: ping_gateway
+      command: "sh /config/shell/pingstat.sh gw"
+      command_timeout: 20
+      scan_interval: 60
+      value_template: >-
+        {{ 'error' if value_json.error else ('down' if value_json.recv == 0 else 'ok') }}
+      json_attributes: [target, sent, recv, loss, rtt, min, max, jitter, error]
+
+template:
+  - sensor:
+      # Per-probe figures as their own entities so they get long-term
+      # statistics. Unavailable (not 0) when the figure is null: no echo
+      # for latency/jitter, or a broken probe for loss.
+      - name: "Ping 8.8.8.8 latency"
+        unique_id: ping_8_8_8_8_latency
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_8_8_8_8', 'rtt') }}"
+        availability: "{{ state_attr('sensor.ping_8_8_8_8', 'rtt') is number }}"
+      - name: "Ping 8.8.8.8 loss"
+        unique_id: ping_8_8_8_8_loss
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_8_8_8_8', 'loss') }}"
+        availability: "{{ state_attr('sensor.ping_8_8_8_8', 'loss') is number }}"
+      - name: "Ping 8.8.8.8 jitter"
+        unique_id: ping_8_8_8_8_jitter
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_8_8_8_8', 'jitter') }}"
+        availability: "{{ state_attr('sensor.ping_8_8_8_8', 'jitter') is number }}"
+      - name: "Ping 1.1.1.1 latency"
+        unique_id: ping_1_1_1_1_latency
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_1_1_1_1', 'rtt') }}"
+        availability: "{{ state_attr('sensor.ping_1_1_1_1', 'rtt') is number }}"
+      - name: "Ping 1.1.1.1 loss"
+        unique_id: ping_1_1_1_1_loss
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_1_1_1_1', 'loss') }}"
+        availability: "{{ state_attr('sensor.ping_1_1_1_1', 'loss') is number }}"
+      - name: "Ping 1.1.1.1 jitter"
+        unique_id: ping_1_1_1_1_jitter
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_1_1_1_1', 'jitter') }}"
+        availability: "{{ state_attr('sensor.ping_1_1_1_1', 'jitter') is number }}"
+      - name: "Ping gateway latency"
+        unique_id: ping_gateway_latency
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_gateway', 'rtt') }}"
+        availability: "{{ state_attr('sensor.ping_gateway', 'rtt') is number }}"
+      - name: "Ping gateway loss"
+        unique_id: ping_gateway_loss
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_gateway', 'loss') }}"
+        availability: "{{ state_attr('sensor.ping_gateway', 'loss') is number }}"
+      - name: "Ping gateway jitter"
+        unique_id: ping_gateway_jitter
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: "{{ state_attr('sensor.ping_gateway', 'jitter') }}"
+        availability: "{{ state_attr('sensor.ping_gateway', 'jitter') is number }}"
+      # Best-of-two path figures: what the house actually gets.
+      - name: "Internet packet loss"
+        unique_id: internet_packet_loss
+        unit_of_measurement: "%"
+        state_class: measurement
+        state: >-
+          {{ [state_attr('sensor.ping_8_8_8_8', 'loss'), state_attr('sensor.ping_1_1_1_1', 'loss')]
+             | select('number') | min }}
+        availability: >-
+          {{ [state_attr('sensor.ping_8_8_8_8', 'loss'), state_attr('sensor.ping_1_1_1_1', 'loss')]
+             | select('number') | list | count > 0 }}
+      - name: "Internet latency"
+        unique_id: internet_latency
+        unit_of_measurement: "ms"
+        device_class: duration
+        state_class: measurement
+        state: >-
+          {{ [state_attr('sensor.ping_8_8_8_8', 'rtt'), state_attr('sensor.ping_1_1_1_1', 'rtt')]
+             | select('number') | min }}
+        availability: >-
+          {{ [state_attr('sensor.ping_8_8_8_8', 'rtt'), state_attr('sensor.ping_1_1_1_1', 'rtt')]
+             | select('number') | list | count > 0 }}
+
+  - binary_sensor:
+      # On while either public target answers at all. Unavailable when both
+      # probes are broken (script error), so a dead probe is not an outage.
+      - name: "Internet reachable"
+        unique_id: internet_reachable
+        device_class: connectivity
+        state: "{{ states('sensor.internet_packet_loss') | float(100) < 100 }}"
+        availability: "{{ states('sensor.internet_packet_loss') | is_number }}"
+      # Up but poor: best-of-two loss >= 10% (an echo in ten lost to BOTH
+      # networks) or best RTT >= 100 ms. Fibre to these sits around 5-20 ms;
+      # LTE runs higher, which is why the alert stays quiet while
+      # internet_via_lte is on.
+      - name: "Internet degraded"
+        unique_id: internet_degraded
+        device_class: problem
+        state: >-
+          {{ is_state('binary_sensor.internet_reachable', 'on') and
+             (states('sensor.internet_packet_loss') | float(0) >= 10 or
+              states('sensor.internet_latency') | float(0) >= 100) }}
+        availability: "{{ states('sensor.internet_packet_loss') | is_number }}"
+
+automation:
+  - id: alert_internet_outage
+    alias: "Alert: internet outage (reported on recovery)"
+    description: >-
+      Neither 8.8.8.8 nor 1.1.1.1 answering for 2 min. The push can't get out
+      while the outage lasts, so the diagnosis is taken now and the message
+      goes when the internet is back. An HA restart mid-outage drops the
+      report (the wait does not survive it).
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_reachable
+        to: "off"
+        for: "00:02:00"
+    action:
+      - variables:
+          started: "{{ trigger.to_state.last_changed.isoformat() }}"
+          gw_loss: "{{ state_attr('sensor.ping_gateway', 'loss') }}"
+          on_lte: "{{ is_state('binary_sensor.internet_via_lte', 'on') }}"
+      - wait_for_trigger:
+          - platform: state
+            entity_id: binary_sensor.internet_reachable
+            to: "on"
+            for: "00:01:00"
+        timeout: "24:00:00"
+        continue_on_timeout: false
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Internet was down"
+          message: >-
+            {%- set mins = ((now() - started | as_datetime).total_seconds() / 60 - 1) | round(0) | int %}
+            No reply from 8.8.8.8 or 1.1.1.1 from
+            {{ (started | as_datetime | as_local).strftime('%H:%M') }} for ~{{ mins }} min.
+            {% if gw_loss is number and gw_loss >= 100 -%}
+            The router didn't answer either: LAN-side fault (Orbi, switch or
+            the HA host's link), not the ISP.
+            {%- elif on_lte -%}
+            Fibre was down (X2000 eth1) and LTE failover didn't carry traffic.
+            {%- elif gw_loss is number -%}
+            Router answered and the fibre link was Up: upstream/ISP fault that
+            the X2000 failover didn't catch.
+            {%- else -%}
+            Fibre link was Up; the router probe wasn't working, so LAN vs ISP
+            is unknown.
+            {%- endif %}
+
+  - id: alert_internet_degraded
+    alias: "Alert: internet degraded"
+    description: >-
+      Up but lossy or slow for 10 min on fibre. Quiet on LTE, where higher
+      latency is expected and the LTE alert has already spoken.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.internet_degraded
+        to: "on"
+        for: "00:10:00"
+    condition:
+      - condition: state
+        entity_id: binary_sensor.internet_via_lte
+        state: "off"
+    action:
+      - service: notify.mobile_app_phoney
+        data:
+          title: "⚠️ Internet degraded"
+          message: >-
+            Fibre path poor for 10 min: {{ states('sensor.internet_packet_loss') }}%
+            loss, {{ states('sensor.internet_latency') }} ms RTT,
+            jitter {{ states('sensor.ping_8_8_8_8_jitter') }} ms (8.8.8.8).
+            Router loss {{ states('sensor.ping_gateway_loss') }}% — if that is
+            non-zero too, look at the LAN, not the ISP.
