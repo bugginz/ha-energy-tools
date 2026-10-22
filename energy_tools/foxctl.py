@@ -41,7 +41,7 @@ from threading import Lock, Thread
 
 import fillplan
 
-VERSION = "1.81.1"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.82.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
@@ -167,6 +167,11 @@ DEFAULT_CONFIG = {
                   # Below this SoC the car only gets export that fully covers its draw —
                   # an uncovered car slows the solar fill and forces a grid top-up at 16:00.
                   "battery_full_soc": 100,
+                  # Once a solar session is RUNNING the car may pull the battery down to this floor
+                  # (the sun only part-covering it) before it stops — 90% in mild weather, 95% when
+                  # the AC is running or the temp_hot_c/temp_cold_c thresholds are forecast (Rob,
+                  # 2026-10-22). Restart then waits for full again, so the floor is a deadband.
+                  "keep_soc_mild": 90, "keep_soc_hvac": 95,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
                   # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
@@ -1946,6 +1951,45 @@ def _car_draw_est(snap):
     return max(peaks) if peaks else 2.5
 
 
+def ev_solar_surplus_kw(snap, car_on):
+    """Spare solar (kW) the car may take: the export we would see with the car OFF.
+    While the car is charging its own draw has already left the export, so add it back,
+    net of the battery discharge and grid import it is causing (= PV − house load).
+    Judging a running car on raw export switched it off as soon as it absorbed the export
+    it was started on — on/off every dwell all afternoon (2026-10-22). Pure."""
+    fp = snap.get("feedin_power") or 0.0
+    if not car_on:
+        return fp
+    ev_kw = snap.get("ev_kw")
+    ev_kw = ev_kw if isinstance(ev_kw, (int, float)) and ev_kw > 0 else 0.0
+    bp = snap.get("battery_power")                 # +charging / −discharging
+    bp = bp if isinstance(bp, (int, float)) else 0.0
+    gp = _gp_now(snap)
+    imp = gp if isinstance(gp, (int, float)) and gp > 0 else 0.0
+    return round(fp + ev_kw + min(bp, 0.0) - imp, 2)
+
+
+def ev_keep_soc(ev, strat, temp_nudge, ac):
+    """Battery floor (SoC %) a RUNNING solar car session may pull down to before it stops:
+    keep_soc_mild in mild weather, keep_soc_hvac when the AC is running or the current,
+    today's-max or tonight's-low temperature is past temp_hot_c/temp_cold_c (heating or
+    cooling lifts tonight's usage). Pure. Returns (soc, why)."""
+    mild_soc = float(ev.get("keep_soc_mild", 90))
+    hvac_soc = float(ev.get("keep_soc_hvac", 95))
+    if (ac or {}).get("on"):
+        return hvac_soc, "AC running"
+    hot = float(strat.get("temp_hot_c", 28.0))
+    cold = float(strat.get("temp_cold_c", 12.0))
+    tn = temp_nudge or {}
+    for key, label in (("cur_c", "now"), ("max_c", "today's max"), ("eve_c", "tonight's low")):
+        t = tn.get(key)
+        if not isinstance(t, (int, float)):
+            continue
+        if t >= hot or t <= cold:
+            return hvac_soc, f"AC weather: {t:.0f}°C {label}"
+    return mild_soc, "mild"
+
+
 def ev_divert_decision(snap, ev):
     """Policy: should the car charger be ON this cycle? Two ways to say yes:
       1. FREE window — 0c grid: run the car ALONGSIDE the battery fill as long as the supply
@@ -1953,7 +1997,6 @@ def ev_divert_decision(snap, ev):
       2. Spare SOLAR — divert export ≥ min_export_kw into the car (battery fills to survival first).
     Never steals power while the inverter is selling, or force-charging on PAID power.
     Reads _EV["on"] for the headroom deadband. (want, why)."""
-    feedin_power = snap.get("feedin_power") or 0.0
     soc = snap.get("soc")
     # SAFETY: never divert to the car while the inverter is actively SELLING (export→grid) —
     # plugging in would drain export revenue.
@@ -2024,7 +2067,14 @@ def ev_divert_decision(snap, ev):
     min_kw = float(ev.get("min_export_kw", 1.0))
     if rate_c <= 0.0:
         min_kw = min(min_kw, float(ev.get("min_export_free_kw", 0.3)))
-    if feedin_power < min_kw:
+    # A running car is judged on the export it is ABSORBING, not the (now ~0) meter export —
+    # same threshold to keep going as to start.
+    car_on = bool(_EV.get("on"))
+    surplus = ev_solar_surplus_kw(snap, car_on)
+    if surplus < min_kw:
+        if car_on:
+            return False, (f"spare solar fell to {surplus:.1f}kW without the car "
+                           f"(<{min_kw:g}kW at {rate_c:g}c feed-in)")
         return False, f"no spare solar export (<{min_kw:g}kW at {rate_c:g}c feed-in)"
     # Battery priority: give the spare solar to the battery until it reaches the survival floor before
     # diverting to the car.
@@ -2040,12 +2090,22 @@ def ev_divert_decision(snap, ev):
     # short at 16:00 is bought back from the grid (pre-peak top-up, or peak itself).
     # With genuinely surplus sun the export is large, covers the car, and this never
     # bites — so "hit 100% without grid when we expect more sun" falls out for free.
+    # Once RUNNING (Rob, 2026-10-22) the car may pull the battery down to the keep floor —
+    # 90% mild, 95% in AC weather — rather than flapping off at the first uncovered watt.
+    # Below the floor it stops, and the full-or-covered start rule above then applies again,
+    # so the sun refills the battery before the next session (a deadband, not a flap).
     full = float(ev.get("battery_full_soc", 100) or 100)
-    if (isinstance(soc, (int, float)) and soc < full - 0.5
-            and feedin_power < _car_draw_est(snap) + 0.2):
-        return False, (f"battery {soc:.0f}% < {full:.0f}% and export {feedin_power:.1f}kW "
-                       f"doesn't cover the car — sun finishes the battery first")
-    return True, f"spare solar {feedin_power:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
+    if isinstance(soc, (int, float)):
+        if car_on:
+            keep = snap.get("ev_keep") or {}
+            floor = float(keep.get("soc", ev.get("keep_soc_mild", 90)))
+            if soc < floor:
+                return False, (f"battery {soc:.0f}% < {floor:.0f}% keep floor "
+                               f"({keep.get('why', 'mild')}) — sun refills the battery first")
+        elif soc < full - 0.5 and surplus < _car_draw_est(snap) + 0.2:
+            return False, (f"battery {soc:.0f}% < {full:.0f}% and export {surplus:.1f}kW "
+                           f"doesn't cover the car — sun finishes the battery first")
+    return True, f"spare solar {surplus:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
 
 
 def ev_divert_tick(cfg, snap):
@@ -2090,7 +2150,7 @@ def ev_divert_tick(cfg, snap):
             # draw, diverting it cannot touch the battery, so tonight's budget is
             # irrelevant — before this, a 100% battery on a cold-night forecast sat
             # exporting at 0c while the car stayed empty.
-            fp = snap.get("feedin_power") or 0.0
+            fp = ev_solar_surplus_kw(snap, bool(_EV.get("on")))   # a running car's own draw counts
             margin = float(ev.get("start_margin_kwh", 1.0) or 0.0)
             if fp >= _car_draw_est(snap) + 0.2:
                 why += f" · export {fp:.1f}kW covers car draw"
@@ -3376,6 +3436,8 @@ def gather_and_decide(cfg: dict) -> dict:
                           "outlook_gate": bool(ev_cfg.get("outlook_gate", True)),
                           "start_margin_kwh": float(ev_cfg.get("start_margin_kwh", 1.0) or 0.0)}
     snap["predawn_budget"] = predawn_snap
+    _keep_soc, _keep_why = ev_keep_soc(cfg.get("ev_divert") or {}, strat, snap["temp_nudge"], ac)
+    snap["ev_keep"] = {"soc": _keep_soc, "why": _keep_why}
     snap["version"] = VERSION
     snap["charge_advisor"] = charge_advisor(snap, profile, strat)
     # Live AC state + self-calibrating kW-per-Hz learning, and the forward-look forecast table.

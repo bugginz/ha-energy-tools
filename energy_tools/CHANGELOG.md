@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.82.0 — solar car sessions stop flapping; battery may dip to 90/95%
+
+A running spare-solar session was judged on the meter's export — which the car
+itself had just absorbed — so the next tick read "no spare solar export" and
+switched it off. 2026-10-22 14:00–15:21: battery 100%, ~0.5–2.3 kW spare,
+car ~1.9 kW → charger on/off 6 times (5-min dwell), 1.6 kWh delivered, the
+rest exported at 0c. Every sunny afternoon looked the same.
+
+- **`ev_solar_surplus_kw`**: while the car is on, the surplus is the export
+  we'd see with it off — meter export + the car's draw − the battery discharge
+  and grid import it causes (= PV − house). The start/keep threshold is the
+  same (0.3 kW at 0c feed-in, 1 kW once export pays 8c in 16:00–23:00), and
+  the outlook gate's "export covers car draw" bypass uses it too.
+- **Keep floor** (Rob): once running, the car may pull the battery down to
+  `ev_keep_soc_mild` (90%) in mild weather, `ev_keep_soc_hvac` (95%) when the
+  AC is running or now / today's max / tonight's low is past
+  `temp_hot_c`/`temp_cold_c`. Below it the car stops and the existing start
+  rule (battery full, or export covering the whole car) applies again, so the
+  sun refills the battery before the next session. Snapshot: `ev_keep`.
+- A free-window session still charging at 14:00 now carries on into spare
+  solar instead of being cut at the window edge.
+- Starting a stopped car is unchanged. Tariff is four4free throughout.
+
 ## 1.81.1 — fast guard reads the modbus grid CT
 
 `grid_power_entity` now defaults to `sensor.grid_net_power` (the inverter's own

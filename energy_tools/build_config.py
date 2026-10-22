@@ -55,6 +55,9 @@ fc["ev_divert"] = {
     "min_soc": int(opt.get("ev_divert_min_soc", 0)),
     "battery_priority": bool(opt.get("ev_divert_battery_priority", True)),
     "min_dwell_min": int(opt.get("ev_divert_min_dwell_min", 10)),
+    # Battery floor a RUNNING solar car session may pull down to: mild weather / AC weather.
+    "keep_soc_mild": float(opt.get("ev_keep_soc_mild", 90)),
+    "keep_soc_hvac": float(opt.get("ev_keep_soc_hvac", 95)),
     "session_cap_kwh": float(opt.get("ev_session_cap_kwh", 30)),
     # Outlook gate: hold spare-solar diversion to the car while the forward budget (battery + remaining
     # solar − tonight's expected load incl. heating − reserve) can't prove a surplus over the night.

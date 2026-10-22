@@ -1,5 +1,5 @@
 name: Energy Tools (foxctl + nemfuel)
-version: "1.81.1"
+version: "1.82.0"
 slug: energy_tools
 description: GloBird tariff-aware FoxESS controller (foxctl) + NEM fuel-mix feed (nemfuel)
 arch:
@@ -43,6 +43,8 @@ options:
   ev_divert_min_export_kw: 1.0
   ev_divert_battery_priority: true
   ev_divert_min_dwell_min: 10
+  ev_keep_soc_mild: 90
+  ev_keep_soc_hvac: 95
   ev_session_cap_kwh: 30
   ev_outlook_gate: true
   ev_comfort_reserve_kwh: 2.0
@@ -128,6 +130,8 @@ schema:
   ev_divert_min_export_kw: float
   ev_divert_battery_priority: bool
   ev_divert_min_dwell_min: int
+  ev_keep_soc_mild: float
+  ev_keep_soc_hvac: float
   ev_session_cap_kwh: float
   ev_outlook_gate: bool
   ev_comfort_reserve_kwh: float

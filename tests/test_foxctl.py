@@ -547,6 +547,15 @@ class EvDivertTest(unittest.TestCase):
     EV = {"allow_grid": True, "min_export_kw": 1.0, "min_export_free_kw": 0.3,
           "min_soc": 0, "battery_priority": True, "min_dwell_min": 10}
 
+    def setUp(self):
+        # The decision reads _EV["on"] (a running car is judged differently) — start stopped.
+        self._ev_state = dict(foxctl._EV)
+        foxctl._EV["on"] = None
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev_state)
+
     def _snap(self, **kw):
         # soc defaults to 100: below battery_full_soc the fill-first gate holds any
         # UNCOVERED divert, which the threshold tests here deliberately isolate from.
@@ -723,6 +732,123 @@ class Four4FreeEveningSellTest(unittest.TestCase):
         self.assertFalse(self._rec(23, 80, minute=10)["force_discharge"])
 
 
+class EvRunningSolarSessionTest(unittest.TestCase):
+    """A RUNNING solar session is judged on the surplus it absorbs (export + its own draw −
+    battery discharge − import), not on the ~0 export it leaves. 2026-10-22 14:00-15:21: battery
+    100%, ~1.2kW spare, car 1.9kW → on/off 6 times (min dwell 5min), 1.6kWh delivered."""
+
+    EV = {"allow_grid": True, "min_export_kw": 1.0, "min_export_free_kw": 0.3,
+          "min_soc": 0, "battery_priority": False, "min_dwell_min": 5,
+          "keep_soc_mild": 90, "keep_soc_hvac": 95}
+
+    def setUp(self):
+        self._ev_state = dict(foxctl._EV)
+        foxctl._EV["on"] = True
+
+    def tearDown(self):
+        foxctl._EV.clear()
+        foxctl._EV.update(self._ev_state)
+
+    def _snap(self, **kw):
+        s = {"feedin_power": 0.0, "soc": 100, "ev_kw": 1.9, "battery_power": -0.7,
+             "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 40},
+             "car": {"sessions": [{"peak_kw": 1.9}]},
+             "ev_keep": {"soc": 90, "why": "mild"}}
+        s.update(kw)
+        return s
+
+    def test_running_car_keeps_charging_on_the_export_it_absorbs(self):
+        # the 2026-10-22 case: export 0 because the car took it, battery covering 0.7kW
+        with _frozen_clock(14, 5):
+            want, why = foxctl.ev_divert_decision(self._snap(), self.EV)
+        self.assertTrue(want, why)
+        self.assertIn("spare solar 1.2kW", why)
+
+    def test_running_car_stops_when_the_sun_goes(self):
+        # battery now covering 1.8 of the car's 1.9kW → only 0.1kW of real surplus
+        with _frozen_clock(14, 5):
+            want, why = foxctl.ev_divert_decision(self._snap(battery_power=-1.8), self.EV)
+        self.assertFalse(want)
+        self.assertIn("fell to 0.1kW", why)
+
+    def test_grid_import_is_not_surplus(self):
+        with _frozen_clock(14, 5):
+            want, why = foxctl.ev_divert_decision(
+                self._snap(battery_power=-1.0, grid_power=0.8), self.EV)
+        self.assertFalse(want)
+        self.assertIn("fell to 0.1kW", why)
+
+    def test_paid_export_keeps_the_1kw_bar_for_a_running_car(self):
+        # 17:00, feed-in 8c: 0.8kW spare stays exported, 1.2kW goes to the car
+        with _frozen_clock(17):
+            self.assertFalse(foxctl.ev_divert_decision(self._snap(battery_power=-1.1), self.EV)[0])
+            self.assertTrue(foxctl.ev_divert_decision(self._snap(battery_power=-0.7), self.EV)[0])
+
+    def test_mild_weather_lets_the_battery_dip_to_90(self):
+        with _frozen_clock(15):
+            self.assertTrue(foxctl.ev_divert_decision(self._snap(soc=91), self.EV)[0])
+            want, why = foxctl.ev_divert_decision(self._snap(soc=89), self.EV)
+        self.assertFalse(want)
+        self.assertIn("< 90% keep floor (mild)", why)
+
+    def test_ac_weather_holds_the_battery_at_95(self):
+        s = self._snap(soc=93, ev_keep={"soc": 95, "why": "AC running"})
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(s, self.EV)
+        self.assertFalse(want)
+        self.assertIn("95% keep floor (AC running)", why)
+
+    def test_stopped_car_still_waits_for_full_or_covered_export(self):
+        # deadband: once stopped at the floor, restart needs a full battery or export
+        # covering the car — the sun refills the battery first
+        foxctl._EV["on"] = False
+        with _frozen_clock(15):
+            want, why = foxctl.ev_divert_decision(
+                self._snap(soc=92, feedin_power=1.5, ev_kw=0.0, battery_power=2.0), self.EV)
+        self.assertFalse(want)
+        self.assertIn("sun finishes the battery first", why)
+
+    def test_free_window_session_carries_on_after_14_00(self):
+        # car on from the 10-14 free window, battery full, sun still spare at 14:05 → no 14:00 cut
+        with _frozen_clock(14, 5):
+            want, why = foxctl.ev_divert_decision(
+                self._snap(battery_power=-0.3, money={"free_left_kwh": 20.0}), self.EV)
+        self.assertTrue(want)
+        self.assertIn("spare solar", why)
+
+
+class EvSurplusAndKeepFloorTest(unittest.TestCase):
+    """The two pure helpers behind the running-session rule."""
+
+    STRAT = {"temp_hot_c": 28.0, "temp_cold_c": 12.0}
+    EV = {"keep_soc_mild": 90, "keep_soc_hvac": 95}
+
+    def test_stopped_car_surplus_is_plain_export(self):
+        s = {"feedin_power": 1.4, "ev_kw": 2.0, "battery_power": -1.0}
+        self.assertEqual(foxctl.ev_solar_surplus_kw(s, False), 1.4)
+
+    def test_running_car_surplus_adds_back_its_draw(self):
+        s = {"feedin_power": 0.3, "ev_kw": 1.9, "battery_power": 0.5}   # battery still charging
+        self.assertEqual(foxctl.ev_solar_surplus_kw(s, True), 2.2)
+
+    def test_mild_weather_floor_is_90(self):
+        tn = {"cur_c": 22, "max_c": 24, "eve_c": 15}
+        self.assertEqual(foxctl.ev_keep_soc(self.EV, self.STRAT, tn, {"on": False}), (90.0, "mild"))
+
+    def test_unknown_temps_fall_back_to_mild(self):
+        self.assertEqual(foxctl.ev_keep_soc(self.EV, self.STRAT, {}, None)[0], 90.0)
+
+    def test_ac_running_floor_is_95(self):
+        self.assertEqual(foxctl.ev_keep_soc(self.EV, self.STRAT, {"cur_c": 22}, {"on": True}),
+                         (95.0, "AC running"))
+
+    def test_hot_day_or_cold_night_floor_is_95(self):
+        soc, why = foxctl.ev_keep_soc(self.EV, self.STRAT, {"cur_c": 24, "max_c": 31}, {})
+        self.assertEqual((soc, why), (95.0, "AC weather: 31°C today's max"))
+        soc, why = foxctl.ev_keep_soc(self.EV, self.STRAT, {"cur_c": 18, "eve_c": 9}, {})
+        self.assertEqual((soc, why), (95.0, "AC weather: 9°C tonight's low"))
+
+
 class EvOutlookBypassTest(unittest.TestCase):
     """The outlook gate's hold is skipped when export alone covers the car's whole draw —
     diverting fully-covered export cannot touch the battery, whatever tonight's budget says."""
@@ -755,6 +881,28 @@ class EvOutlookBypassTest(unittest.TestCase):
         with _frozen_clock(15):
             msg = foxctl.ev_divert_tick(self.cfg, self._snap(feedin=3.0, budget=-2.0))
         self.assertIn("covers car draw", msg)
+        self.assertTrue(foxctl._EV["on"])
+
+    def test_running_car_covered_by_absorbed_export_stays_on(self):
+        # car already charging: export 0.4 + its own 2.4kW draw (battery still charging) covers
+        # the car → bypass holds on the absorbed surplus, not the 0.4kW left on the meter
+        foxctl._EV.update({"on": True, "last_change": 0.0})
+        s = self._snap(feedin=0.4, budget=-2.0)
+        s.update({"ev_kw": 2.4, "battery_power": 0.3})
+        with _frozen_clock(15):
+            msg = foxctl.ev_divert_tick(self.cfg, s)
+        self.assertIn("covers car draw", msg)
+        self.assertTrue(foxctl._EV["on"])
+
+    def test_running_car_no_longer_flaps_off_on_its_own_draw(self):
+        # the 2026-10-22 flap at tick level: car on, meter export 0, battery covering 0.7kW,
+        # healthy outlook → stays ON (used to switch OFF "no spare solar export")
+        foxctl._EV.update({"on": True, "last_change": 0.0})
+        s = self._snap(feedin=0.0, budget=23.0)
+        s.update({"ev_kw": 1.9, "battery_power": -0.7, "ev_keep": {"soc": 90, "why": "mild"}})
+        with _frozen_clock(14, 5):
+            msg = foxctl.ev_divert_tick(self.cfg, s)
+        self.assertIn("car charger ON", msg)
         self.assertTrue(foxctl._EV["on"])
 
     def test_uncovered_export_still_held_by_outlook(self):
