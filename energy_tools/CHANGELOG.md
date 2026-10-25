@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.83.0 — car charge modes (wall panel)
+
+Explicit car modes chosen from HA (`select.foxess_foxctl_car_charge`) for the new wall panel
+and the phone: **To coast** (spare home battery → car down to the coast floor), **To full**,
+**+3 / +5 / +10 kWh**, and **Auto** (the existing behaviour).
+
+- Outside the 10:00–14:00 free window a mode only spends battery above `survival_soc` (the
+  coast floor) or sun, pausing on sustained import; the free window finishes the rest. Never
+  buys shoulder or peak.
+- Finishing: +N on delivered kWh (EV meter); To full on a fresh WiCAN 99.5 % or 10 min of no
+  draw; To coast at the floor, when the car is full, or when the next free window ends.
+- `sensor.foxess_foxctl_car_charge_status` gives a one-line status plus attributes (`phase`,
+  `delivered_kwh`, `target_kwh`, `floor_soc`, `reason`).
+- Persisted in `car_mode.json`: a container restart no longer cancels a charge. Commands
+  wake the loop at once. Force charge / force off from the web UI reset the mode to Auto
+  (latest wins). Modes skip the Auto daily cap and keep the safety holds.
+- New options `ev_mode_expiry_h` (36) and `ev_mode_full_nodraw_min` (10).
+
 ## 1.82.0 — solar car sessions stop flapping; battery may dip to 90/95%
 
 A running spare-solar session was judged on the meter's export — which the car

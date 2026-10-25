@@ -41,7 +41,7 @@ from threading import Event, Lock, Thread
 
 import fillplan
 
-VERSION = "1.82.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
+VERSION = "1.83.0"   # keep in step with config.yaml `version` + CHANGELOG on every release
 
 CONFIG_PATH = Path(os.environ.get("FOXCTL_CONFIG", Path.home() / ".config/foxctl/config.json"))
 FOX_DOMAIN = "https://www.foxesscloud.com"
