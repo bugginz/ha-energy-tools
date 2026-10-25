@@ -849,6 +849,143 @@ class EvSurplusAndKeepFloorTest(unittest.TestCase):
         self.assertEqual((soc, why), (95.0, "AC weather: 9°C tonight's low"))
 
 
+class CarModePureTest(unittest.TestCase):
+    """Explicit car modes (1.83.0): parsing, when the car may draw, when a mode is done,
+    and the status line the wall panel shows."""
+
+    EV = {"supply_cap_kw": 14.5, "headroom_guard_kw": 0.8, "predawn_import_stop_kw": 0.5}
+
+    def setUp(self):
+        self._fill_plan = foxctl._FILL.get("plan")
+        foxctl._FILL["plan"] = None            # no planner verdict leaking in from other tests
+
+    def tearDown(self):
+        foxctl._FILL["plan"] = self._fill_plan
+
+    def _snap(self, **kw):
+        s = {"soc": 70, "pv_kw": 0.0, "load_kw": 1.0, "ev_kw": 0.0, "feedin_power": 0.0,
+             "battery_power": -1.0, "telemetry_source": "Modbus", "grid_power": 0.0,
+             "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 41, "target_soc": 100},
+             "money": {"free_left_kwh": 40.0}, "car": {"sessions": [{"peak_kw": 1.9}]}}
+        s.update(kw)
+        return s
+
+    def test_parse_accepts_exact_options(self):
+        for m in foxctl.CAR_MODES:
+            self.assertEqual(foxctl.car_mode_parse(m.encode()), m)
+
+    def test_parse_rejects_near_misses(self):
+        for junk in (b"auto", b"+4 kWh", b"", b"  ", None, b"To Full", "+5kWh"):
+            self.assertIsNone(foxctl.car_mode_parse(junk))
+        self.assertEqual(foxctl.car_mode_parse(b" +5 kWh \n"), "+5 kWh")
+
+    def test_target_kwh(self):
+        self.assertEqual(foxctl.car_mode_target_kwh("+3 kWh"), 3.0)
+        self.assertEqual(foxctl.car_mode_target_kwh("+10 kWh"), 10.0)
+        self.assertIsNone(foxctl.car_mode_target_kwh("To full"))
+        self.assertIsNone(foxctl.car_mode_target_kwh("Auto"))
+
+    def test_allowed_on_battery_above_coast_floor(self):
+        with _frozen_clock(19):
+            ok, why, src = foxctl.car_mode_allowed(self._snap(soc=64), self.EV, False, 0)
+        self.assertTrue(ok, why)
+        self.assertEqual(src, "battery")
+
+    def test_paused_at_coast_floor(self):
+        with _frozen_clock(19):
+            ok, why, src = foxctl.car_mode_allowed(self._snap(soc=41), self.EV, True, 0)
+        self.assertFalse(ok)
+        self.assertIn("coast floor", why)
+
+    def test_paused_on_sustained_import(self):
+        with _frozen_clock(19):
+            ok, why, _ = foxctl.car_mode_allowed(self._snap(soc=80), self.EV, True, 2)
+        self.assertFalse(ok)
+        self.assertIn("importing", why)
+
+    def test_free_window_allowed_even_low_battery(self):
+        with _frozen_clock(11):
+            ok, why, src = foxctl.car_mode_allowed(self._snap(soc=20, grid_power=3.0), self.EV, False, 0)
+        self.assertTrue(ok, why)
+        self.assertEqual(src, "free window")
+
+    def test_free_window_respects_supply_cap(self):
+        with _frozen_clock(11):
+            ok, why, _ = foxctl.car_mode_allowed(self._snap(grid_power=13.0), self.EV, False, 0)
+        self.assertFalse(ok)
+        self.assertIn("supply", why)
+
+    def test_free_allowance_used_up(self):
+        with _frozen_clock(11):
+            ok, why, _ = foxctl.car_mode_allowed(self._snap(money={"free_left_kwh": 0.5}), self.EV, False, 0)
+        self.assertFalse(ok)
+        self.assertIn("free allowance", why)
+
+    def test_safety_holds(self):
+        with _frozen_clock(19):
+            self.assertFalse(foxctl.car_mode_allowed(
+                self._snap(recommendation={"force_discharge": True}), self.EV, False, 0)[0])
+            self.assertFalse(foxctl.car_mode_allowed(
+                self._snap(telemetry_source="Modbus (stale)"), self.EV, False, 0)[0])
+            self.assertFalse(foxctl.car_mode_allowed(
+                self._snap(soc=60, recommendation={"force_charge": True}), self.EV, False, 0)[0])
+
+    def test_solar_source_when_sun_covers_most_of_the_car(self):
+        with _frozen_clock(15):
+            ok, _, src = foxctl.car_mode_allowed(
+                self._snap(soc=95, feedin_power=0.0, ev_kw=1.9, battery_power=-0.3), self.EV, True, 0)
+        self.assertTrue(ok)
+        self.assertEqual(src, "solar")
+
+    def _done(self, mode, **kw):
+        base = dict(delivered_kwh=0.0, soc=70, floor_soc=41, in_free=False, car_soc=None,
+                    car_soc_age_min=None, nodraw_min=0.0, free_window_ended=False)
+        base.update(kw)
+        return foxctl.car_mode_done(mode, **base)
+
+    def test_kwh_mode_done_at_target(self):
+        self.assertFalse(self._done("+5 kWh", delivered_kwh=4.9)[0])
+        self.assertTrue(self._done("+5 kWh", delivered_kwh=4.96)[0])
+
+    def test_done_unknown_delivered_is_not_done(self):
+        self.assertFalse(self._done("+3 kWh", delivered_kwh=None)[0])
+
+    def test_full_done_on_fresh_car_soc_or_no_draw(self):
+        self.assertTrue(self._done("To full", car_soc=99.6, car_soc_age_min=12)[0])
+        self.assertTrue(self._done("To full", nodraw_min=10.5)[0])
+        self.assertFalse(self._done("To full", nodraw_min=6)[0])
+
+    def test_full_ignores_stale_car_soc(self):
+        self.assertFalse(self._done("To full", car_soc=100, car_soc_age_min=95)[0])
+        self.assertFalse(self._done("To full", car_soc=100, car_soc_age_min=None)[0])
+
+    def test_coast_done_at_floor_outside_free_window(self):
+        self.assertTrue(self._done("To coast", soc=41)[0])
+        self.assertFalse(self._done("To coast", soc=41, in_free=True)[0])
+        self.assertTrue(self._done("To coast", free_window_ended=True)[0])
+        self.assertTrue(self._done("To coast", nodraw_min=11)[0])
+
+    def test_status_lines(self):
+        s = foxctl.car_mode_status("+5 kWh", phase="charging", delivered_kwh=2.14, source="solar",
+                                   reason="", soc=95, floor_soc=41, car_soc=None, free_start_h=10)
+        self.assertEqual(s, "+5 kWh · 2.1 of 5 · on solar")
+        s = foxctl.car_mode_status("+5 kWh", phase="paused", delivered_kwh=2.1, source=None,
+                                   reason="battery at coast floor (41%)", soc=41, floor_soc=41,
+                                   car_soc=None, free_start_h=10)
+        self.assertEqual(s, "+5 kWh · 2.1 of 5 · paused · finishes free at 10:00")
+        s = foxctl.car_mode_status("To coast", phase="charging", delivered_kwh=3.2, source="battery",
+                                   reason="", soc=58, floor_soc=41, car_soc=None, free_start_h=10)
+        self.assertEqual(s, "To coast · 3.2 kWh · battery 58% → floor 41%")
+        s = foxctl.car_mode_status("To full", phase="charging", delivered_kwh=1.0, source="free window",
+                                   reason="", soc=80, floor_soc=41, car_soc=74.2, free_start_h=10)
+        self.assertEqual(s, "To full · car 74% · free window")
+        s = foxctl.car_mode_status("+3 kWh", phase="charging", delivered_kwh=None, source="battery",
+                                   reason="", soc=80, floor_soc=41, car_soc=None, free_start_h=10)
+        self.assertEqual(s, "+3 kWh · ? of 3 · on battery")
+        for st in (s,):
+            self.assertLessEqual(len(st), 60)
+
+
 class EvOutlookBypassTest(unittest.TestCase):
     """The outlook gate's hold is skipped when export alone covers the car's whole draw —
     diverting fully-covered export cannot touch the battery, whatever tonight's budget says."""

@@ -37,7 +37,7 @@ import urllib.error
 from datetime import datetime, timezone, timedelta, time as dtime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Event, Lock, Thread
 
 import fillplan
 
@@ -2106,6 +2106,130 @@ def ev_divert_decision(snap, ev):
             return False, (f"battery {soc:.0f}% < {full:.0f}% and export {surplus:.1f}kW "
                            f"doesn't cover the car — sun finishes the battery first")
     return True, f"spare solar {surplus:.1f}kW ≥ {min_kw:g}kW ({rate_c:g}c feed-in) → car"
+
+
+# ------------------------------------------------------------ car modes --
+# Explicit car-charge modes (1.83.0, wall panel spec 2026-10-25): chosen from HA via the MQTT
+# select foxctl_car_charge. Outside the free window they only ever spend spare battery above the
+# coast floor (survival_soc) or sun — never shoulder/peak grid; the free window finishes the rest.
+CAR_MODES = ("Auto", "To coast", "To full", "+3 kWh", "+5 kWh", "+10 kWh")
+
+
+def car_mode_parse(payload):
+    """MQTT payload (bytes/str) -> an exact CAR_MODES entry, else None. Pure."""
+    if payload is None:
+        return None
+    s = payload.decode("utf-8", "replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
+    s = s.strip()
+    return s if s in CAR_MODES else None
+
+
+def car_mode_target_kwh(mode):
+    """'+5 kWh' -> 5.0; every other mode -> None. Pure."""
+    if mode.startswith("+") and mode.endswith(" kWh"):
+        try:
+            return float(mode[1:-4])
+        except ValueError:
+            return None
+    return None
+
+
+def car_mode_allowed(snap, ev, charging, import_hits):
+    """May the car draw NOW under an explicit mode? Pure. Returns (ok, reason, source) with
+    source in {"free window", "solar", "battery"} when ok. Order: safety holds, free window
+    (supply cap + free allowance), then battery above the coast floor without sustained import."""
+    rec = snap.get("recommendation") or {}
+    active = (snap.get("scheduler") or {}).get("active") or {}
+    if rec.get("force_discharge") or active.get("mode") == "ForceDischarge":
+        return False, "battery is selling to grid", None
+    ts = snap.get("telemetry_source") or ""
+    if "stale" in ts or "down" in ts:
+        return False, "telemetry stale", None
+    dyn = snap.get("dynamic") or {}
+    soc = snap.get("soc")
+    free = (dyn.get("tariff") or {}).get("free") or {}
+    now = datetime.now()
+    in_free = bool(free) and _in_window(free, now.hour + now.minute / 60.0)
+    target = dyn.get("target_soc")
+    if (not in_free and (rec.get("force_charge") or active.get("mode") == "ForceCharge")
+            and isinstance(soc, (int, float)) and isinstance(target, (int, float)) and soc < target - 5):
+        return False, f"battery force-charging to {target:.0f}%", None
+    if in_free:
+        free_left = (snap.get("money") or {}).get("free_left_kwh")
+        if isinstance(free_left, (int, float)) and free_left <= 1:
+            return False, "free allowance used up", None
+        plan = _FILL.get("plan")
+        if plan and time.time() - (plan.get("ts") or 0) < 600 and not plan.get("car_ok") and not charging:
+            return False, "no supply headroom while the battery fills", None
+        cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
+        gp = _gp_now(snap)
+        if cap_kw > 0 and isinstance(gp, (int, float)):
+            guard = float(ev.get("headroom_guard_kw", 0.8) or 0.0)
+            if charging and gp > cap_kw:
+                return False, f"import {gp:.1f}kW over the {cap_kw:g}kW supply cap", None
+            if not charging and gp + _car_draw_est(snap) + guard > cap_kw:
+                return False, "no supply headroom while the battery fills", None
+        return True, "free window", "free window"
+    floor = dyn.get("survival_soc")
+    if not isinstance(soc, (int, float)) or not isinstance(floor, (int, float)):
+        return False, "battery level unknown", None
+    if soc <= floor:
+        return False, f"battery at coast floor ({floor:.0f}%)", None
+    if import_hits >= 2:
+        return False, "importing from grid", None
+    surplus = ev_solar_surplus_kw(snap, charging)
+    source = "solar" if surplus >= 0.5 * _car_draw_est(snap) else "battery"
+    return True, "spare " + source, source
+
+
+def car_mode_done(mode, *, delivered_kwh, soc, floor_soc, in_free, car_soc, car_soc_age_min,
+                  nodraw_min, free_window_ended, nodraw_limit_min=10):
+    """Has an explicit mode finished? Pure. Returns (done, why)."""
+    target = car_mode_target_kwh(mode)
+    if target is not None:
+        if isinstance(delivered_kwh, (int, float)) and delivered_kwh >= target - 0.05:
+            return True, f"{delivered_kwh:.1f} kWh delivered"
+        return False, ""
+    fresh_full = (isinstance(car_soc, (int, float)) and car_soc >= 99.5
+                  and isinstance(car_soc_age_min, (int, float)) and car_soc_age_min <= 30)
+    car_full = fresh_full or (nodraw_min or 0.0) >= nodraw_limit_min
+    if mode == "To full":
+        return (True, "car full") if car_full else (False, "")
+    if mode == "To coast":
+        if car_full:
+            return True, "car full"
+        if (not in_free and isinstance(soc, (int, float)) and isinstance(floor_soc, (int, float))
+                and soc <= floor_soc):
+            return True, f"battery reached the coast floor ({floor_soc:.0f}%)"
+        if free_window_ended:
+            return True, "free window over"
+    return False, ""
+
+
+def car_mode_status(mode, *, phase, delivered_kwh, source, reason, soc, floor_soc, car_soc,
+                    free_start_h):
+    """One-line status for the panel / HA (<= 60 chars). Pure."""
+    d = f"{delivered_kwh:.1f}" if isinstance(delivered_kwh, (int, float)) else "?"
+    target = car_mode_target_kwh(mode)
+    if target is not None:
+        head = f"{mode} · {d} of {target:g}"
+    elif mode == "To coast":
+        head = f"To coast · {d} kWh"
+    elif mode == "To full":
+        head = (f"To full · car {car_soc:.0f}%" if isinstance(car_soc, (int, float))
+                else f"To full · {d} kWh")
+    else:
+        head = mode
+    if phase == "paused":
+        if "coast floor" in reason or "importing" in reason:
+            tail = f"paused · finishes free at {int(free_start_h):02d}:00"
+        else:
+            tail = f"paused · {reason}"
+        return f"{head} · {tail}"[:60]
+    if mode == "To coast" and isinstance(soc, (int, float)) and isinstance(floor_soc, (int, float)):
+        return f"{head} · battery {soc:.0f}% → floor {floor_soc:.0f}%"[:60]
+    where = "free window" if source == "free window" else f"on {source}"
+    return f"{head} · {where}"[:60]
 
 
 def ev_divert_tick(cfg, snap):
