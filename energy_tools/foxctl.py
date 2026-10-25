@@ -1992,6 +1992,48 @@ def ev_keep_soc(ev, strat, temp_nudge, ac):
     return mild_soc, "mild"
 
 
+def _free_window_car_ok(snap, ev, free):
+    """Inside the free window: may the car run alongside the battery fill? Supply-cap and
+    planner aware; shared by Auto (ev_divert_decision) and the explicit car modes. (ok, why)."""
+    free_left = (snap.get("money") or {}).get("free_left_kwh")
+    if isinstance(free_left, (int, float)) and free_left <= 1:
+        return False, f"free {free.get('free_kwh', 50):g}kWh/day cap used up — car would pay {free.get('excess_c', '')}c"
+    fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
+    cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
+    gp = _gp_now(snap)
+    # "Running" = believed on OR actually drawing — a manual session's draw is already
+    # inside grid_power, so adding the estimate again would double-count it.
+    running = _EV.get("on") or (isinstance(snap.get("ev_kw"), (int, float))
+                                and snap["ev_kw"] >= 0.3)
+    # Anti-flap (2026-07-31): after a fast-guard trip, hold off long enough for the
+    # re-planned fill power to reach the inverter. Restarting into an unchanged fill is
+    # what produced the 10-minute on/off cycle.
+    cool_s = float(ev.get("guard_cooloff_min", 3) or 0) * 60
+    since_cut = time.time() - _EV.get("guard_cut_ts", 0.0)
+    if not running and cool_s > 0 and since_cut < cool_s:
+        return False, (f"free window: cooling off {int((cool_s - since_cut) / 60) + 1}min after a "
+                       f"supply-cap cut — waiting for the fill to step down")
+    # The planner has already reserved house + guard margin and decided whether the car
+    # fits under the cap. Prefer its verdict; the raw comparison below is the fallback
+    # for when no fresh plan exists (planner disabled, or outside a planned cycle).
+    plan = _FILL.get("plan")
+    if plan and time.time() - (plan.get("ts") or 0) < 600:
+        if not plan.get("car_ok") and not running:
+            return False, (f"free window: fill needs {plan.get('must_kw', 0):.1f}kW to reach "
+                           f"{plan.get('target_soc', 90):.0f}% by the deadline — no headroom for the car")
+        if plan.get("car_ok"):
+            return True, (f"free window · car + battery together ({fl} · fill "
+                          f"{plan.get('fill_kw', 0):.1f}kW)")
+    if cap_kw > 0 and isinstance(gp, (int, float)):
+        guard = float(ev.get("headroom_guard_kw", 0.8) or 0.0)
+        if running and gp > cap_kw:
+            return False, f"free window: import {gp:.1f}kW over the {cap_kw:g}kW supply cap — car pauses"
+        if not running and gp + _car_draw_est(snap) + guard > cap_kw:
+            return False, (f"free window: battery+house importing {gp:.1f}kW — no headroom "
+                           f"for the car under the {cap_kw:g}kW supply cap")
+    return True, f"free window · car + battery together ({fl})"
+
+
 def ev_divert_decision(snap, ev):
     """Policy: should the car charger be ON this cycle? Two ways to say yes:
       1. FREE window — 0c grid: run the car ALONGSIDE the battery fill as long as the supply
@@ -2016,43 +2058,7 @@ def ev_divert_decision(snap, ev):
     if free and ev.get("free_window_charge", True) and ev.get("allow_grid", True):
         now = datetime.now(); h = now.hour + now.minute / 60.0
         if _in_window(free, h):
-            free_left = (snap.get("money") or {}).get("free_left_kwh")
-            if isinstance(free_left, (int, float)) and free_left <= 1:
-                return False, f"free {free.get('free_kwh', 50):g}kWh/day cap used up — car would pay {free.get('excess_c', '')}c"
-            fl = f"{free_left:g}kWh free left" if isinstance(free_left, (int, float)) else "free"
-            cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
-            gp = _gp_now(snap)
-            # "Running" = believed on OR actually drawing — a manual session's draw is already
-            # inside grid_power, so adding the estimate again would double-count it.
-            running = _EV.get("on") or (isinstance(snap.get("ev_kw"), (int, float))
-                                        and snap["ev_kw"] >= 0.3)
-            # Anti-flap (2026-07-31): after a fast-guard trip, hold off long enough for the
-            # re-planned fill power to reach the inverter. Restarting into an unchanged fill is
-            # what produced the 10-minute on/off cycle.
-            cool_s = float(ev.get("guard_cooloff_min", 3) or 0) * 60
-            since_cut = time.time() - _EV.get("guard_cut_ts", 0.0)
-            if not running and cool_s > 0 and since_cut < cool_s:
-                return False, (f"free window: cooling off {int((cool_s - since_cut) / 60) + 1}min after a "
-                               f"supply-cap cut — waiting for the fill to step down")
-            # The planner has already reserved house + guard margin and decided whether the car
-            # fits under the cap. Prefer its verdict; the raw comparison below is the fallback
-            # for when no fresh plan exists (planner disabled, or outside a planned cycle).
-            plan = _FILL.get("plan")
-            if plan and time.time() - (plan.get("ts") or 0) < 600:
-                if not plan.get("car_ok") and not running:
-                    return False, (f"free window: fill needs {plan.get('must_kw', 0):.1f}kW to reach "
-                                   f"{plan.get('target_soc', 90):.0f}% by the deadline — no headroom for the car")
-                if plan.get("car_ok"):
-                    return True, (f"free window · car + battery together ({fl} · fill "
-                                  f"{plan.get('fill_kw', 0):.1f}kW)")
-            if cap_kw > 0 and isinstance(gp, (int, float)):
-                guard = float(ev.get("headroom_guard_kw", 0.8) or 0.0)
-                if running and gp > cap_kw:
-                    return False, f"free window: import {gp:.1f}kW over the {cap_kw:g}kW supply cap — car pauses"
-                if not running and gp + _car_draw_est(snap) + guard > cap_kw:
-                    return False, (f"free window: battery+house importing {gp:.1f}kW — no headroom "
-                                   f"for the car under the {cap_kw:g}kW supply cap")
-            return True, f"free window · car + battery together ({fl})"
+            return _free_window_car_ok(snap, ev, free)
     # SAFETY: outside the free window a force-charge runs on PAID power (pre-peak shoulder
     # top-up, manual force charge) — never let the car compete with that fill.
     target = (snap.get("dynamic") or {}).get("target_soc")
@@ -2152,26 +2158,17 @@ def car_mode_allowed(snap, ev, charging, import_hits):
     free = (dyn.get("tariff") or {}).get("free") or {}
     now = datetime.now()
     in_free = bool(free) and _in_window(free, now.hour + now.minute / 60.0)
-    target = dyn.get("target_soc")
-    if (not in_free and (rec.get("force_charge") or active.get("mode") == "ForceCharge")
-            and isinstance(soc, (int, float)) and isinstance(target, (int, float)) and soc < target - 5):
-        return False, f"battery force-charging to {target:.0f}%", None
     if in_free:
-        free_left = (snap.get("money") or {}).get("free_left_kwh")
-        if isinstance(free_left, (int, float)) and free_left <= 1:
-            return False, "free allowance used up", None
-        plan = _FILL.get("plan")
-        if plan and time.time() - (plan.get("ts") or 0) < 600 and not plan.get("car_ok") and not charging:
-            return False, "no supply headroom while the battery fills", None
-        cap_kw = float(ev.get("supply_cap_kw", 14.5) or 0.0)
-        gp = _gp_now(snap)
-        if cap_kw > 0 and isinstance(gp, (int, float)):
-            guard = float(ev.get("headroom_guard_kw", 0.8) or 0.0)
-            if charging and gp > cap_kw:
-                return False, f"import {gp:.1f}kW over the {cap_kw:g}kW supply cap", None
-            if not charging and gp + _car_draw_est(snap) + guard > cap_kw:
-                return False, "no supply headroom while the battery fills", None
-        return True, "free window", "free window"
+        ok, why = _free_window_car_ok(snap, ev, free)
+        return (True, "free window", "free window") if ok else (False, why, None)
+    # Outside the free window a mode may only spend battery/sun: hold while the inverter is
+    # force-charging on paid power (the battery won't discharge, so the car would run on grid)
+    # or isn't in SelfUse (Backup/Feed-in hold the battery back).
+    if rec.get("force_charge") or active.get("mode") == "ForceCharge":
+        return False, "battery force-charging on paid power", None
+    wm = snap.get("work_mode")
+    if isinstance(wm, str) and wm and wm != "SelfUse":
+        return False, f"battery in {wm} mode", None
     floor = dyn.get("survival_soc")
     if not isinstance(soc, (int, float)) or not isinstance(floor, (int, float)):
         return False, "battery level unknown", None
@@ -2234,8 +2231,10 @@ def car_mode_status(mode, *, phase, delivered_kwh, source, reason, soc, floor_so
     return f"{head} · {where}"[:60]
 
 
-_CAR = {"mode": "Auto", "start_kwh": None, "started": 0.0, "pending": None, "loaded": False,
-        "import_hits": 0, "nodraw_since": 0.0, "seen_free": False, "status": "", "attrs": {}}
+_CAR = {"mode": "Auto", "start_kwh": None, "started": 0.0, "pending": None, "pending_ts": 0.0,
+        "loaded": False, "import_hits": 0, "import_latched": False, "nodraw_since": 0.0,
+        "seen_free": False, "status": "", "attrs": {}}
+CAR_PENDING_MAX_S = 300   # a command older than this (arrived while control was off) is dropped
 _CAR_LOCK = Lock()
 _WAKE = Event()     # set by the MQTT command handler: cut the main loop's sleep short
 
@@ -2263,8 +2262,10 @@ def car_mode_load(cfg):
     try:
         d = json.loads(_car_path(cfg).read_text())
         if d.get("mode") in CAR_MODES:
-            _CAR.update({"mode": d["mode"], "start_kwh": d.get("start_kwh"),
-                         "started": float(d.get("started") or 0.0)})
+            sk, st = d.get("start_kwh"), d.get("started")
+            _CAR.update({"mode": d["mode"],
+                         "start_kwh": float(sk) if isinstance(sk, (int, float)) else None,
+                         "started": float(st) if isinstance(st, (int, float)) and st > 0 else time.time()})
     except Exception:
         pass
 
@@ -2272,7 +2273,7 @@ def car_mode_load(cfg):
 def car_mode_request(mode):
     """Thread-safe: queue a mode chosen over MQTT and wake the main loop to apply it."""
     with _CAR_LOCK:
-        _CAR["pending"] = mode
+        _CAR["pending"], _CAR["pending_ts"] = mode, time.time()
     _WAKE.set()
 
 
@@ -2283,7 +2284,8 @@ def car_mode_set(cfg, mode, ev_cum, why, now=None):
     with _CAR_LOCK:
         _CAR.update({"mode": mode, "start_kwh": ev_cum if mode != "Auto" else None,
                      "started": now if mode != "Auto" else 0.0, "import_hits": 0,
-                     "nodraw_since": 0.0, "seen_free": False, "loaded": True})
+                     "import_latched": False, "nodraw_since": 0.0, "seen_free": False,
+                     "loaded": True, "pending": None})
     if mode != "Auto":
         _EV["override_until"] = 0.0
     _EV["last_change"] = 0.0
@@ -2300,7 +2302,10 @@ def car_mode_tick(cfg, snap, ev, now=None):
     ev_cum = float(ev_cum) if isinstance(ev_cum, (int, float)) else None
     with _CAR_LOCK:
         pending, _CAR["pending"] = _CAR["pending"], None
-    if pending:
+        pending_age = now - (_CAR.get("pending_ts") or now)
+    if pending and pending_age > CAR_PENDING_MAX_S:
+        log_event("ev_divert", f"car mode {pending} dropped — arrived {int(pending_age)}s ago while control was off")
+    elif pending:
         car_mode_set(cfg, pending, ev_cum, "selected in HA", now)
     mode = _CAR["mode"]
     dyn = snap.get("dynamic") or {}
@@ -2321,6 +2326,12 @@ def car_mode_tick(cfg, snap, ev, now=None):
         _car_save(cfg)
     delivered = (round(ev_cum - _CAR["start_kwh"], 2)
                  if ev_cum is not None and _CAR["start_kwh"] is not None else None)
+    sw_state = snap.get("ev_switch_state")
+    if _EV.get("on") and sw_state == "off":
+        # Relay cut outside foxctl (watchdog, over-temp, manual toggle): drop the belief so the
+        # edge trigger re-asserts it after the dwell instead of believing it's on forever.
+        log_event("ev_divert", f"car charger found off outside foxctl during {mode} — re-asserting")
+        _EV["on"] = False
     charging = bool(_EV.get("on"))
     nowd = datetime.now()
     in_free = bool(free) and _in_window(free, nowd.hour + nowd.minute / 60.0)
@@ -2332,17 +2343,27 @@ def car_mode_tick(cfg, snap, ev, now=None):
         _CAR["import_hits"] = _CAR.get("import_hits", 0) + 1
     else:
         _CAR["import_hits"] = 0
-    ok, reason, source = car_mode_allowed(snap, ev, charging, _CAR["import_hits"])
+    # An import pause sticks until the free window: once off, the import that caused it is gone,
+    # so re-testing would restart the car into the same peak/shoulder import every dwell.
+    if in_free:
+        _CAR["import_latched"] = False
+    elif _CAR["import_hits"] >= 2:
+        _CAR["import_latched"] = True
+    hits = 2 if _CAR.get("import_latched") else _CAR["import_hits"]
+    ok, reason, source = car_mode_allowed(snap, ev, charging, hits)
     ev_kw = snap.get("ev_kw")
-    if charging and ok and isinstance(ev_kw, (int, float)) and ev_kw < 0.1:
+    if charging and ok and sw_state != "off" and isinstance(ev_kw, (int, float)) and ev_kw < 0.1:
         _CAR["nodraw_since"] = _CAR.get("nodraw_since") or now
     else:
         _CAR["nodraw_since"] = 0.0
     nodraw_min = (now - _CAR["nodraw_since"]) / 60.0 if _CAR["nodraw_since"] else 0.0
     ct = ((snap.get("car") or {}).get("target") or {})
     car_soc = (snap.get("car") or {}).get("soc")
+    tsrc = snap.get("telemetry_source") or ""
+    soc_ok = not ("stale" in tsrc or "down" in tsrc)      # a cold-start soc=0 must not end To coast
     done, done_why = car_mode_done(
-        mode, delivered_kwh=delivered, soc=snap.get("soc"), floor_soc=dyn.get("survival_soc"),
+        mode, delivered_kwh=delivered, soc=snap.get("soc") if soc_ok else None,
+        floor_soc=dyn.get("survival_soc"),
         in_free=in_free, car_soc=car_soc, car_soc_age_min=ct.get("soc_age_min"),
         nodraw_min=nodraw_min, free_window_ended=_CAR["seen_free"] and not in_free,
         nodraw_limit_min=float(ev.get("mode_full_nodraw_min", 10) or 10))
@@ -2369,6 +2390,7 @@ def ev_divert_tick(cfg, snap):
     if not sw:
         return None
     if not cfg["control"].get("allow_control"):
+        _CAR["status"] = "control disabled"
         return "ev divert: control disabled"
     now = time.time()
     # STALE/DOWN telemetry (same convention as maybe_notify / apply_recommendation): soc/grid_power/ev_kw
@@ -2388,7 +2410,11 @@ def ev_divert_tick(cfg, snap):
     if _EV.get("session_start_kwh") is None and ev_cum is not None:
         _EV["session_start_kwh"] = ev_cum
     session = (ev_cum - _EV["session_start_kwh"]) if (ev_cum is not None and _EV.get("session_start_kwh") is not None) else 0.0
-    car = car_mode_tick(cfg, snap, ev, now)           # explicit car mode (None while Auto)
+    try:
+        car = car_mode_tick(cfg, snap, ev, now)       # explicit car mode (None while Auto)
+    except Exception as e:                            # never let a mode bug stop the controller
+        print(f"car mode error: {e}", file=sys.stderr)
+        _CAR["mode"], car = "Auto", None
     if now < _EV.get("override_until", 0):        # manual force-charge: ignore economics, dwell, battery gate, cap
         want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
     elif car is not None:                         # explicit car mode owns the charger

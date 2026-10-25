@@ -859,9 +859,12 @@ class CarModePureTest(unittest.TestCase):
     def setUp(self):
         self._fill_plan = foxctl._FILL.get("plan")
         foxctl._FILL["plan"] = None            # no planner verdict leaking in from other tests
+        self._ev_on = foxctl._EV.get("on")
+        foxctl._EV["on"] = None
 
     def tearDown(self):
         foxctl._FILL["plan"] = self._fill_plan
+        foxctl._EV["on"] = self._ev_on
 
     def _snap(self, **kw):
         s = {"soc": 70, "pv_kw": 0.0, "load_kw": 1.0, "ev_kw": 0.0, "feedin_power": 0.0,
@@ -920,7 +923,7 @@ class CarModePureTest(unittest.TestCase):
         with _frozen_clock(11):
             ok, why, _ = foxctl.car_mode_allowed(self._snap(money={"free_left_kwh": 0.5}), self.EV, False, 0)
         self.assertFalse(ok)
-        self.assertIn("free allowance", why)
+        self.assertIn("cap used up", why)
 
     def test_safety_holds(self):
         with _frozen_clock(19):
@@ -1148,6 +1151,139 @@ class CarModeMqttTest(unittest.TestCase):
         cli = mock.Mock()
         foxctl._car_on_connect(cli, None, None, 0, None)
         cli.subscribe.assert_called_with("foxctl/car_charge/set", qos=1)
+
+
+class CarModeReviewFixTest(unittest.TestCase):
+    """Final-review fixes (1.83.0): import pause latches, paid-power holds, planner-aware free window,
+    relay drift, stale telemetry, stale commands, corrupt state file."""
+
+    def setUp(self):
+        self._orig = foxctl.ha_call_service
+        self.calls = []
+        foxctl.ha_call_service = lambda cfg, d, s, e: self.calls.append(s)
+        self._ev_state = dict(foxctl._EV)
+        foxctl._EV.update({"on": None, "last_change": 0.0, "override_until": 0.0,
+                           "session_day": None, "session_start_kwh": None, "capped": False,
+                           "guard_cut_ts": 0.0, "lowdraw_since": 0.0, "import_hits": 0,
+                           "predawn_parked_day": None})
+        self._car_state = dict(foxctl._CAR)
+        foxctl._CAR.update({"mode": "Auto", "start_kwh": None, "started": 0.0, "pending": None,
+                            "pending_ts": 0.0, "loaded": True, "import_hits": 0, "import_latched": False,
+                            "nodraw_since": 0.0, "seen_free": False, "status": "", "attrs": {}})
+        self._fill_plan = foxctl._FILL.get("plan")
+        foxctl._FILL["plan"] = None
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = {"control": {"allow_control": True}, "state_dir": self.tmp,
+                    "ev_divert": {"switch": "switch.x", "min_export_kw": 1.0, "min_export_free_kw": 0.3,
+                                  "min_dwell_min": 5, "battery_priority": False, "min_soc": 0,
+                                  "session_cap_kwh": 30, "predawn_dump": False, "floor_guard": False}}
+        self.ev = self.cfg["ev_divert"]
+
+    def tearDown(self):
+        foxctl.ha_call_service = self._orig
+        foxctl._EV.clear(); foxctl._EV.update(self._ev_state)
+        foxctl._CAR.clear(); foxctl._CAR.update(self._car_state)
+        foxctl._FILL["plan"] = self._fill_plan
+        foxctl._WAKE.clear()
+
+    def _snap(self, ev_cum=100.0, **kw):
+        s = {"soc": 70, "pv_kw": 0.0, "load_kw": 1.0, "ev_kw": 0.0, "feedin_power": 0.0,
+             "battery_power": -1.0, "telemetry_source": "Modbus", "grid_power": 0.0,
+             "work_mode": "SelfUse", "ev_switch_state": "on",
+             "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 41, "target_soc": 100},
+             "money": {"free_left_kwh": 40.0}, "car": {"sessions": [{"peak_kw": 1.9}]},
+             "energy_totals": {"ev": ev_cum}}
+        s.update(kw)
+        return s
+
+    def _tick(self, **kw):
+        foxctl._EV["last_change"] = 0.0          # make the dwell due so belief changes show at once
+        return foxctl.ev_divert_tick(self.cfg, self._snap(**kw))
+
+    def test_import_pause_latches_until_free_window(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            self._tick()                                   # on
+            self._tick(grid_power=0.9)                     # import hit 1
+            self._tick(grid_power=0.9)                     # import hit 2 -> pause
+            self.assertFalse(foxctl._EV["on"])
+            self._tick(grid_power=0.0)                     # import gone because the car is off
+        self.assertFalse(foxctl._EV["on"], "paused car must not restart on paid power")
+        self.assertIn("finishes free at 10:00", foxctl._CAR["status"])
+        with _frozen_clock(10, 30):
+            self._tick(grid_power=2.0)
+        self.assertTrue(foxctl._EV["on"], "the free window clears the latch")
+
+    def test_mode_held_while_inverter_force_charges_on_paid_power(self):
+        with _frozen_clock(23, 30):
+            ok, why, _ = foxctl.car_mode_allowed(
+                self._snap(soc=98, recommendation={"force_charge": True}), self.ev, False, 0)
+        self.assertFalse(ok)
+        self.assertIn("force-charging", why)
+
+    def test_mode_held_when_battery_not_in_self_use(self):
+        with _frozen_clock(19):
+            ok, why, _ = foxctl.car_mode_allowed(self._snap(work_mode="Backup"), self.ev, False, 0)
+        self.assertFalse(ok)
+        self.assertIn("Backup", why)
+
+    def test_free_window_trusts_planner_car_ok(self):
+        foxctl._FILL["plan"] = {"ts": time.time(), "car_ok": True, "fill_kw": 10.5, "must_kw": 8.0}
+        with _frozen_clock(11):
+            ok, why, src = foxctl.car_mode_allowed(self._snap(grid_power=12.0), self.ev, False, 0)
+        self.assertTrue(ok, why)
+        self.assertEqual(src, "free window")
+
+    def test_free_window_counts_a_drawing_car_as_running(self):
+        # restart mid-window: belief unknown but the car IS drawing → don't double-count its draw
+        with _frozen_clock(11):
+            ok, why, _ = foxctl.car_mode_allowed(self._snap(grid_power=12.5, ev_kw=1.9), self.ev, False, 0)
+        self.assertTrue(ok, why)
+
+    def test_relay_switched_off_outside_foxctl_is_reasserted(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            self._tick()
+            self.assertTrue(foxctl._EV["on"])
+            self.calls.clear()
+            self._tick(ev_switch_state="off")
+        self.assertIn("turn_on", self.calls)
+
+    def test_full_does_not_finish_while_relay_is_off(self):
+        foxctl.car_mode_set(self.cfg, "To full", 100.0, "test")
+        with _frozen_clock(19):
+            self._tick()
+            foxctl._CAR["nodraw_since"] = time.time() - 11 * 60
+            self._tick(ev_switch_state="off", ev_kw=0.0)
+        self.assertEqual(foxctl._CAR["mode"], "To full")
+
+    def test_coast_not_finished_by_cold_start_soc_zero(self):
+        foxctl.car_mode_set(self.cfg, "To coast", 100.0, "test")
+        with _frozen_clock(19):
+            self._tick(soc=0, telemetry_source="FoxESS(down)")
+        self.assertEqual(foxctl._CAR["mode"], "To coast")
+
+    def test_stale_pending_command_is_dropped(self):
+        foxctl.car_mode_request("+5 kWh")
+        foxctl._CAR["pending_ts"] = time.time() - 600     # arrived while control was off
+        with _frozen_clock(19):
+            self._tick()
+        self.assertEqual(foxctl._CAR["mode"], "Auto")
+
+    def test_control_disabled_reports_in_status(self):
+        self.cfg["control"]["allow_control"] = False
+        foxctl.ev_divert_tick(self.cfg, self._snap())
+        self.assertIn("control disabled", foxctl._CAR["status"])
+
+    def test_corrupt_state_file_falls_back_safely(self):
+        Path(self.tmp, "car_mode.json").write_text(json.dumps({"mode": "+5 kWh", "start_kwh": "abc"}))
+        foxctl._CAR.update({"loaded": False, "mode": "Auto"})
+        with _frozen_clock(19):
+            msg = foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=120.0))
+        self.assertIsInstance(msg, str)
+        self.assertIn(foxctl._CAR["mode"], foxctl.CAR_MODES)
+        if foxctl._CAR["mode"] == "+5 kWh":
+            self.assertEqual(foxctl._CAR["start_kwh"], 120.0)
 
 
 class EvOutlookBypassTest(unittest.TestCase):

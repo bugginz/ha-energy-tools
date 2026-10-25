@@ -17,6 +17,12 @@ and the phone: **To coast** (spare home battery → car down to the coast floor)
   wake the loop at once. Force charge / force off from the web UI reset the mode to Auto
   (latest wins). Modes skip the Auto daily cap and keep the safety holds.
 - New options `ev_mode_expiry_h` (36) and `ev_mode_full_nodraw_min` (10).
+- Hardening from review: an import pause latches until the free window (no on/off
+  buying at peak); modes hold while the inverter force-charges on paid power or isn't in
+  SelfUse; the free-window headroom check is one shared helper (planner verdict, a drawing
+  car counts as running) for Auto and modes; a relay switched off outside foxctl is
+  re-asserted; stale telemetry can't end To coast; commands older than 5 min (sent while
+  control was off) are dropped; a corrupt `car_mode.json` can't stop the controller.
 
 ## 1.82.0 — solar car sessions stop flapping; battery may dip to 90/95%
 
