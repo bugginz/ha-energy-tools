@@ -172,6 +172,8 @@ DEFAULT_CONFIG = {
                   # the AC is running or the temp_hot_c/temp_cold_c thresholds are forecast (Rob,
                   # 2026-10-22). Restart then waits for full again, so the floor is a deadband.
                   "keep_soc_mild": 90, "keep_soc_hvac": 95,
+                  # Explicit car modes (1.83.0): backstop expiry, and To full's "car stopped drawing" rule.
+                  "mode_expiry_h": 36, "mode_full_nodraw_min": 10,
                   "battery_priority": True, "min_soc": 0,
                   # Outlook gate: only let SPARE-SOLAR diversion run while the forward surplus budget
                   # (usable battery + remaining solar − tonight's expected load incl. heating − reserve)
@@ -2232,6 +2234,133 @@ def car_mode_status(mode, *, phase, delivered_kwh, source, reason, soc, floor_so
     return f"{head} · {where}"[:60]
 
 
+_CAR = {"mode": "Auto", "start_kwh": None, "started": 0.0, "pending": None, "loaded": False,
+        "import_hits": 0, "nodraw_since": 0.0, "seen_free": False, "status": "", "attrs": {}}
+_CAR_LOCK = Lock()
+_WAKE = Event()     # set by the MQTT command handler: cut the main loop's sleep short
+
+
+def _car_path(cfg):
+    return _state_dir(cfg) / "car_mode.json"
+
+
+def _car_save(cfg):
+    try:
+        p = _car_path(cfg)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps({k: _CAR[k] for k in ("mode", "start_kwh", "started")}))
+        tmp.replace(p)
+    except Exception as e:
+        print(f"car mode save failed: {e}", file=sys.stderr)
+
+
+def car_mode_load(cfg):
+    """Restore a running mode after a restart (once). Unknown/corrupt -> Auto."""
+    if _CAR.get("loaded"):
+        return
+    _CAR["loaded"] = True
+    try:
+        d = json.loads(_car_path(cfg).read_text())
+        if d.get("mode") in CAR_MODES:
+            _CAR.update({"mode": d["mode"], "start_kwh": d.get("start_kwh"),
+                         "started": float(d.get("started") or 0.0)})
+    except Exception:
+        pass
+
+
+def car_mode_request(mode):
+    """Thread-safe: queue a mode chosen over MQTT and wake the main loop to apply it."""
+    with _CAR_LOCK:
+        _CAR["pending"] = mode
+    _WAKE.set()
+
+
+def car_mode_set(cfg, mode, ev_cum, why, now=None):
+    """Apply a mode now (loop thread or HTTP handler). Starting a mode cancels a manual force
+    charge and lets the next switch call skip the dwell."""
+    now = time.time() if now is None else now
+    with _CAR_LOCK:
+        _CAR.update({"mode": mode, "start_kwh": ev_cum if mode != "Auto" else None,
+                     "started": now if mode != "Auto" else 0.0, "import_hits": 0,
+                     "nodraw_since": 0.0, "seen_free": False, "loaded": True})
+    if mode != "Auto":
+        _EV["override_until"] = 0.0
+    _EV["last_change"] = 0.0
+    _car_save(cfg)
+    log_event("ev_divert", f"car mode → {mode} ({why})")
+
+
+def car_mode_tick(cfg, snap, ev, now=None):
+    """Run the explicit mode for this cycle. Returns (want, why) while a mode is active,
+    or None when the mode is Auto (ev_divert_tick then runs the Auto paths)."""
+    now = time.time() if now is None else now
+    car_mode_load(cfg)
+    ev_cum = (snap.get("energy_totals") or {}).get("ev")
+    ev_cum = float(ev_cum) if isinstance(ev_cum, (int, float)) else None
+    with _CAR_LOCK:
+        pending, _CAR["pending"] = _CAR["pending"], None
+    if pending:
+        car_mode_set(cfg, pending, ev_cum, "selected in HA", now)
+    mode = _CAR["mode"]
+    dyn = snap.get("dynamic") or {}
+    free = (dyn.get("tariff") or {}).get("free") or {}
+    free_start_h = free.get("start", 10)
+    if mode == "Auto":
+        _CAR["attrs"] = {"mode": "Auto", "phase": "idle"}
+        return None
+    expiry_h = float(ev.get("mode_expiry_h", 36) or 36)
+    if now - (_CAR.get("started") or now) > expiry_h * 3600:
+        car_mode_set(cfg, "Auto", ev_cum, f"expired after {expiry_h:g}h", now)
+        return None
+    if _CAR.get("start_kwh") is None and ev_cum is not None:
+        _CAR["start_kwh"] = ev_cum
+        _car_save(cfg)
+    if ev_cum is not None and _CAR["start_kwh"] is not None and ev_cum < _CAR["start_kwh"]:
+        _CAR["start_kwh"] = ev_cum          # meter went backwards (reset): rebase, never negative
+        _car_save(cfg)
+    delivered = (round(ev_cum - _CAR["start_kwh"], 2)
+                 if ev_cum is not None and _CAR["start_kwh"] is not None else None)
+    charging = bool(_EV.get("on"))
+    nowd = datetime.now()
+    in_free = bool(free) and _in_window(free, nowd.hour + nowd.minute / 60.0)
+    if in_free:
+        _CAR["seen_free"] = True
+    gp = _gp_now(snap)
+    stop_kw = float(ev.get("predawn_import_stop_kw", 0.5) or 0.0)
+    if charging and not in_free and isinstance(gp, (int, float)) and gp > stop_kw:
+        _CAR["import_hits"] = _CAR.get("import_hits", 0) + 1
+    else:
+        _CAR["import_hits"] = 0
+    ok, reason, source = car_mode_allowed(snap, ev, charging, _CAR["import_hits"])
+    ev_kw = snap.get("ev_kw")
+    if charging and ok and isinstance(ev_kw, (int, float)) and ev_kw < 0.1:
+        _CAR["nodraw_since"] = _CAR.get("nodraw_since") or now
+    else:
+        _CAR["nodraw_since"] = 0.0
+    nodraw_min = (now - _CAR["nodraw_since"]) / 60.0 if _CAR["nodraw_since"] else 0.0
+    ct = ((snap.get("car") or {}).get("target") or {})
+    car_soc = (snap.get("car") or {}).get("soc")
+    done, done_why = car_mode_done(
+        mode, delivered_kwh=delivered, soc=snap.get("soc"), floor_soc=dyn.get("survival_soc"),
+        in_free=in_free, car_soc=car_soc, car_soc_age_min=ct.get("soc_age_min"),
+        nodraw_min=nodraw_min, free_window_ended=_CAR["seen_free"] and not in_free,
+        nodraw_limit_min=float(ev.get("mode_full_nodraw_min", 10) or 10))
+    if done:
+        car_mode_set(cfg, "Auto", ev_cum, f"{mode} done: {done_why}", now)
+        return None
+    phase = "charging" if ok else "paused"
+    _CAR["status"] = car_mode_status(mode, phase=phase, delivered_kwh=delivered, source=source,
+                                     reason=reason, soc=snap.get("soc"),
+                                     floor_soc=dyn.get("survival_soc"), car_soc=car_soc,
+                                     free_start_h=free_start_h)
+    _CAR["attrs"] = {"mode": mode, "phase": phase, "delivered_kwh": delivered,
+                     "target_kwh": car_mode_target_kwh(mode), "car_soc": car_soc,
+                     "floor_soc": dyn.get("survival_soc"), "reason": reason,
+                     "started": datetime.fromtimestamp(_CAR["started"]).isoformat(timespec="seconds")}
+    return ok, _CAR["status"]
+
+
 def ev_divert_tick(cfg, snap):
     """Drive the car-charger switch from ev_divert_decision, edge-triggered with a dwell so it doesn't
     cycle the charger. Honours control.allow_control. No-op unless ev_divert.switch is configured."""
@@ -2259,8 +2388,11 @@ def ev_divert_tick(cfg, snap):
     if _EV.get("session_start_kwh") is None and ev_cum is not None:
         _EV["session_start_kwh"] = ev_cum
     session = (ev_cum - _EV["session_start_kwh"]) if (ev_cum is not None and _EV.get("session_start_kwh") is not None) else 0.0
+    car = car_mode_tick(cfg, snap, ev, now)           # explicit car mode (None while Auto)
     if now < _EV.get("override_until", 0):        # manual force-charge: ignore economics, dwell, battery gate, cap
         want, why = True, f"manual force-charge ({int((_EV['override_until'] - now) / 60)}min left)"
+    elif car is not None:                         # explicit car mode owns the charger
+        want, why = car
     else:
         want, why = ev_divert_decision(snap, ev)
         base_why = why    # captured before the pre-dawn branch can overwrite it (SAFETY-hold check below)
@@ -2387,6 +2519,8 @@ def ev_divert_tick(cfg, snap):
             note = " · ⚠️ no draw — car full or unplugged"
     else:
         _EV["lowdraw_since"] = 0.0
+    if car is None:
+        _CAR["status"] = ("Auto · " + why)[:60]
     return f"car charger {'ON' if _EV['on'] else 'off'} ({why}){note}"
 
 

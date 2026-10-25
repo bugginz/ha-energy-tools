@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 import urllib.error
 from datetime import datetime
@@ -984,6 +985,129 @@ class CarModePureTest(unittest.TestCase):
         self.assertEqual(s, "+3 kWh · ? of 3 · on battery")
         for st in (s,):
             self.assertLessEqual(len(st), 60)
+
+
+class CarModeTickTest(unittest.TestCase):
+    """Stateful car-mode layer: commands, persistence, finishing, and how it sits in ev_divert_tick."""
+
+    def setUp(self):
+        self._orig = foxctl.ha_call_service
+        self.calls = []
+        foxctl.ha_call_service = lambda cfg, d, s, e: self.calls.append(s)
+        self._ev_state = dict(foxctl._EV)
+        foxctl._EV.update({"on": None, "last_change": 0.0, "override_until": 0.0,
+                           "session_day": None, "session_start_kwh": None, "capped": False,
+                           "guard_cut_ts": 0.0, "lowdraw_since": 0.0, "import_hits": 0,
+                           "predawn_parked_day": None})
+        self._car_state = dict(foxctl._CAR)
+        foxctl._CAR.update({"mode": "Auto", "start_kwh": None, "started": 0.0, "pending": None,
+                            "loaded": True, "import_hits": 0, "nodraw_since": 0.0,
+                            "seen_free": False, "status": "", "attrs": {}})
+        self.tmp = tempfile.mkdtemp()
+        self.cfg = {"control": {"allow_control": True}, "state_dir": self.tmp,
+                    "ev_divert": {"switch": "switch.x", "min_export_kw": 1.0, "min_export_free_kw": 0.3,
+                                  "min_dwell_min": 5, "battery_priority": False, "min_soc": 0,
+                                  "session_cap_kwh": 30, "predawn_dump": False, "floor_guard": False}}
+
+    def tearDown(self):
+        foxctl.ha_call_service = self._orig
+        foxctl._EV.clear(); foxctl._EV.update(self._ev_state)
+        foxctl._CAR.clear(); foxctl._CAR.update(self._car_state)
+        foxctl._WAKE.clear()
+
+    def _snap(self, ev_cum=100.0, **kw):
+        s = {"soc": 70, "pv_kw": 0.0, "load_kw": 1.0, "ev_kw": 0.0, "feedin_power": 0.0,
+             "battery_power": -1.0, "telemetry_source": "Modbus", "grid_power": 0.0,
+             "dynamic": {"tariff": copy.deepcopy(FOUR4FREE), "survival_soc": 41, "target_soc": 100},
+             "money": {"free_left_kwh": 40.0}, "car": {"sessions": [{"peak_kw": 1.9}]},
+             "energy_totals": {"ev": ev_cum}}
+        s.update(kw)
+        return s
+
+    def test_request_then_tick_starts_mode_and_switches_on_now(self):
+        foxctl.car_mode_request("+5 kWh")
+        foxctl._EV["last_change"] = time.time()          # dwell would normally block a switch
+        with _frozen_clock(19):
+            msg = foxctl.ev_divert_tick(self.cfg, self._snap())
+        self.assertEqual(foxctl._CAR["mode"], "+5 kWh")
+        self.assertEqual(foxctl._CAR["start_kwh"], 100.0)
+        self.assertIn("turn_on", self.calls)            # mode start bypasses the dwell
+        self.assertIn("+5 kWh", msg)
+        self.assertTrue(Path(self.tmp, "car_mode.json").exists())
+
+    def test_mode_overrides_auto_and_daily_cap(self):
+        foxctl._EV["capped"] = True
+        foxctl.car_mode_set(self.cfg, "+3 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap())
+        self.assertTrue(foxctl._EV["on"])
+
+    def test_kwh_mode_finishes_and_returns_to_auto(self):
+        foxctl.car_mode_set(self.cfg, "+3 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=101.0))
+            self.assertEqual(foxctl._CAR["mode"], "+3 kWh")
+            foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=103.1))
+        self.assertEqual(foxctl._CAR["mode"], "Auto")
+
+    def test_pauses_at_coast_floor_and_reports_free_window(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap(soc=41))
+        self.assertFalse(foxctl._EV["on"])
+        self.assertIn("finishes free at 10:00", foxctl._CAR["status"])
+        self.assertEqual(foxctl._CAR["attrs"]["phase"], "paused")
+
+    def test_import_guard_needs_two_checks(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 100.0, "test")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap())                  # on
+            foxctl._EV["last_change"] = 0.0
+            foxctl.ev_divert_tick(self.cfg, self._snap(grid_power=0.9))    # 1st import hit
+            self.assertTrue(foxctl._EV["on"])
+            foxctl._EV["last_change"] = 0.0
+            foxctl.ev_divert_tick(self.cfg, self._snap(grid_power=0.9))    # 2nd → pause
+        self.assertFalse(foxctl._EV["on"])
+
+    def test_restart_resumes_mode_from_disk(self):
+        foxctl.car_mode_set(self.cfg, "+10 kWh", 95.0, "test")
+        foxctl._CAR.update({"mode": "Auto", "loaded": False, "start_kwh": None})   # fresh process
+        foxctl.car_mode_load(self.cfg)
+        self.assertEqual(foxctl._CAR["mode"], "+10 kWh")
+        self.assertEqual(foxctl._CAR["start_kwh"], 95.0)
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=None))       # totals not loaded yet
+        self.assertEqual(foxctl._CAR["mode"], "+10 kWh")
+        self.assertIn("? of 10", foxctl._CAR["status"])
+
+    def test_meter_reset_rebases_start(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 500.0, "test")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=2.0))         # counter went backwards
+        self.assertEqual(foxctl._CAR["start_kwh"], 2.0)
+        self.assertEqual(foxctl._CAR["attrs"]["delivered_kwh"], 0.0)
+
+    def test_reselect_restarts_count(self):
+        foxctl.car_mode_set(self.cfg, "+5 kWh", 100.0, "test")
+        foxctl.car_mode_request("+10 kWh")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap(ev_cum=103.0))
+        self.assertEqual(foxctl._CAR["mode"], "+10 kWh")
+        self.assertEqual(foxctl._CAR["start_kwh"], 103.0)
+
+    def test_mode_cancels_force_and_expires(self):
+        foxctl._EV["override_until"] = time.time() + 3600
+        foxctl.car_mode_request("To full")
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap())
+        self.assertEqual(foxctl._EV["override_until"], 0.0)
+        foxctl._CAR["started"] = time.time() - 37 * 3600
+        with _frozen_clock(19):
+            foxctl.ev_divert_tick(self.cfg, self._snap())
+        self.assertEqual(foxctl._CAR["mode"], "Auto")
+
+    def test_auto_returns_none_from_car_mode_tick(self):
+        self.assertIsNone(foxctl.car_mode_tick(self.cfg, self._snap(), self.cfg["ev_divert"]))
 
 
 class EvOutlookBypassTest(unittest.TestCase):

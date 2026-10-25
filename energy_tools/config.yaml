@@ -45,6 +45,8 @@ options:
   ev_divert_min_dwell_min: 10
   ev_keep_soc_mild: 90
   ev_keep_soc_hvac: 95
+  ev_mode_expiry_h: 36
+  ev_mode_full_nodraw_min: 10
   ev_session_cap_kwh: 30
   ev_outlook_gate: true
   ev_comfort_reserve_kwh: 2.0
@@ -132,6 +134,8 @@ schema:
   ev_divert_min_dwell_min: int
   ev_keep_soc_mild: float
   ev_keep_soc_hvac: float
+  ev_mode_expiry_h: float
+  ev_mode_full_nodraw_min: float
   ev_session_cap_kwh: float
   ev_outlook_gate: bool
   ev_comfort_reserve_kwh: float
