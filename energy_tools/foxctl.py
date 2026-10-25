@@ -2752,6 +2752,39 @@ _MQTT_SENSORS = [
 ]
 
 
+CAR_SET_TOPIC = "foxctl/car_charge/set"
+
+
+def car_mode_discovery():
+    """(topic, config) pairs for the car-mode select + status sensor. Pure."""
+    dev = {"identifiers": ["foxctl_foxess"], "name": "FoxESS (foxctl)",
+           "manufacturer": "FoxESS", "model": "foxctl single-poller"}
+    sel = {"name": "Car charge", "unique_id": "foxctl_car_charge", "object_id": "foxctl_car_charge",
+           "command_topic": CAR_SET_TOPIC, "state_topic": "foxctl/car_charge/state",
+           "options": list(CAR_MODES), "availability_topic": "foxctl/availability",
+           "icon": "mdi:ev-station", "device": dev}
+    sen = {"name": "Car charge status", "unique_id": "foxctl_car_charge_status",
+           "object_id": "foxctl_car_charge_status", "state_topic": "foxctl/car_charge/status",
+           "json_attributes_topic": "foxctl/car_charge/attrs",
+           "availability_topic": "foxctl/availability", "icon": "mdi:car-electric", "device": dev}
+    return [(f"{MQTT_DISCOVERY}/select/foxctl_car_charge/config", sel),
+            (f"{MQTT_DISCOVERY}/sensor/foxctl_car_charge_status/config", sen)]
+
+
+def _car_on_connect(client, *args):
+    """(Re)subscribe on every connect — paho drops subscriptions across reconnects."""
+    client.subscribe(CAR_SET_TOPIC, qos=1)
+
+
+def _car_on_message(client, userdata, msg):
+    """paho network thread: validate, queue, wake the loop. Never touches the charger here."""
+    mode = car_mode_parse(msg.payload)
+    if mode is None:
+        print(f"car mode: ignored payload {msg.payload!r}", file=sys.stderr)
+        return
+    car_mode_request(mode)
+
+
 def mqtt_publish(cfg, snap):
     """Publish FoxESS telemetry + foxctl status to MQTT discovery so HA gets sensor.foxctl_* — the
     dashboards then read these instead of the flaky foxess-ha integration. Best-effort/non-fatal."""
@@ -2772,6 +2805,8 @@ def mqtt_publish(cfg, snap):
             if mc.get("user"):
                 cli.username_pw_set(mc["user"], mc.get("pass", ""))
             cli.will_set("foxctl/availability", "offline", qos=1, retain=True)
+            cli.on_connect = _car_on_connect
+            cli.on_message = _car_on_message
             cli.connect(mc.get("host", "core-mosquitto"), int(mc.get("port", 1883)), 60)
             cli.loop_start()
             _MQTT["client"] = cli
@@ -2791,6 +2826,8 @@ def mqtt_publish(cfg, snap):
                 if sclass:
                     conf["state_class"] = sclass
                 cli.publish(f"{MQTT_DISCOVERY}/sensor/{oid}/config", json.dumps(conf), qos=1, retain=True)
+            for topic, conf in car_mode_discovery():
+                cli.publish(topic, json.dumps(conf), qos=1, retain=True)
             cli.publish("foxctl/availability", "online", qos=1, retain=True)
             _MQTT["disc"] = True
             print(f"foxctl published MQTT discovery for {len(_MQTT_SENSORS)} sensors", file=sys.stderr)
@@ -2817,6 +2854,10 @@ def mqtt_publish(cfg, snap):
                      "ev_charger": ("on" if _EV.get("on") else "off") if (cfg.get("ev_divert") or {}).get("switch") else "n/a"})
         tele.update({k: round(v, 3) for k, v in ps.items()})
         cli.publish("foxctl/telemetry", json.dumps(tele), qos=0, retain=True)
+        cli.publish("foxctl/car_charge/state", _CAR.get("mode") or "Auto", qos=1, retain=True)
+        cli.publish("foxctl/car_charge/status", (_CAR.get("status") or _CAR.get("mode") or "Auto")[:255],
+                    qos=1, retain=True)
+        cli.publish("foxctl/car_charge/attrs", json.dumps(_CAR.get("attrs") or {}), qos=1, retain=True)
     except Exception as e:
         print(f"mqtt publish failed: {e}", file=sys.stderr)
 
@@ -5174,12 +5215,16 @@ def make_handler(cfg):
                     elif not cfg["control"].get("allow_control"):
                         msg = "control disabled (allow_control=false)"
                     elif self.path.startswith("/api/ev_off"):
+                        car_mode_set(cfg, "Auto", (_ENERGY.get("totals") or {}).get("ev"),
+                                     "manual force/stop from the web UI")
                         _EV["override_until"] = 0.0
                         ha_call_service(cfg, "switch", "turn_off", sw)
                         _EV["on"], _EV["last_change"] = False, time.time()
                         msg = "car charging forced OFF → back to auto divert"
                         log_event("ev_divert", msg)
                     else:
+                        car_mode_set(cfg, "Auto", (_ENERGY.get("totals") or {}).get("ev"),
+                                     "manual force/stop from the web UI")
                         h = 2
                         if "h=" in self.path:
                             h = max(1, min(12, int(float(self.path.split("h=")[1].split("&")[0]))))
@@ -5342,7 +5387,9 @@ def loop(cfg: dict):
                 LAST["next_poll_epoch"] = now + sleep
         end = time.monotonic() + sleep
         while time.monotonic() < end:
-            time.sleep(min(1.0, end - time.monotonic()))
+            if _WAKE.wait(min(1.0, max(0.0, end - time.monotonic()))):
+                _WAKE.clear()          # a car-mode command arrived: act on it now
+                break
 
 
 # ------------------------------------------------------------------- cli -----

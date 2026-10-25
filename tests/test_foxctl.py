@@ -1110,6 +1110,46 @@ class CarModeTickTest(unittest.TestCase):
         self.assertIsNone(foxctl.car_mode_tick(self.cfg, self._snap(), self.cfg["ev_divert"]))
 
 
+class CarModeMqttTest(unittest.TestCase):
+    """MQTT glue: discovery payloads, command handling, and that commands only queue + wake."""
+
+    def setUp(self):
+        self._car_state = dict(foxctl._CAR)
+        foxctl._CAR["pending"] = None
+        foxctl._WAKE.clear()
+
+    def tearDown(self):
+        foxctl._CAR.clear(); foxctl._CAR.update(self._car_state)
+        foxctl._WAKE.clear()
+
+    def test_discovery_has_select_and_status_sensor(self):
+        disc = dict(foxctl.car_mode_discovery())
+        sel = disc["homeassistant/select/foxctl_car_charge/config"]
+        self.assertEqual(sel["command_topic"], "foxctl/car_charge/set")
+        self.assertEqual(sel["state_topic"], "foxctl/car_charge/state")
+        self.assertEqual(sel["options"], list(foxctl.CAR_MODES))
+        sen = disc["homeassistant/sensor/foxctl_car_charge_status/config"]
+        self.assertEqual(sen["state_topic"], "foxctl/car_charge/status")
+        self.assertEqual(sen["json_attributes_topic"], "foxctl/car_charge/attrs")
+
+    def test_valid_command_queues_and_wakes(self):
+        msg = mock.Mock(payload=b"+5 kWh", topic="foxctl/car_charge/set")
+        foxctl._car_on_message(None, None, msg)
+        self.assertEqual(foxctl._CAR["pending"], "+5 kWh")
+        self.assertTrue(foxctl._WAKE.is_set())
+
+    def test_junk_command_is_ignored(self):
+        msg = mock.Mock(payload=b"+4 kWh", topic="foxctl/car_charge/set")
+        foxctl._car_on_message(None, None, msg)
+        self.assertIsNone(foxctl._CAR["pending"])
+        self.assertFalse(foxctl._WAKE.is_set())
+
+    def test_on_connect_subscribes(self):
+        cli = mock.Mock()
+        foxctl._car_on_connect(cli, None, None, 0, None)
+        cli.subscribe.assert_called_with("foxctl/car_charge/set", qos=1)
+
+
 class EvOutlookBypassTest(unittest.TestCase):
     """The outlook gate's hold is skipped when export alone covers the car's whole draw —
     diverting fully-covered export cannot touch the battery, whatever tonight's budget says."""
