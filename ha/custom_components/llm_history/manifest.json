@@ -1,0 +1,11 @@
+{
+  "domain": "llm_history",
+  "name": "LLM History Tools",
+  "codeowners": ["@bugginz"],
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/bugginz/ha-energy-tools/tree/main/ha/custom_components/llm_history",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "requirements": [],
+  "version": "0.1.0"
+}
